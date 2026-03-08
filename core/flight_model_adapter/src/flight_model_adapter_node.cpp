@@ -3,7 +3,12 @@
 class FlightModelAdapterNode : public rclcpp::Node
 {
 public:
-  FlightModelAdapterNode() : Node("flight_model_adapter") {}
+  FlightModelAdapterNode()
+  : Node("flight_model_adapter", rclcpp::NodeOptions().parameter_overrides(
+      {{"use_sim_time", true}}))
+  {
+    RCLCPP_INFO(this->get_logger(), "flight_model_adapter started");
+  }
 };
 
 int main(int argc, char ** argv)

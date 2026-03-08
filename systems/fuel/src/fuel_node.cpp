@@ -3,7 +3,12 @@
 class FuelNode : public rclcpp::Node
 {
 public:
-  FuelNode() : Node("fuel_node") {}
+  FuelNode()
+  : Node("fuel_node", rclcpp::NodeOptions().parameter_overrides(
+      {{"use_sim_time", true}}))
+  {
+    RCLCPP_INFO(this->get_logger(), "fuel_node started");
+  }
 };
 
 int main(int argc, char ** argv)

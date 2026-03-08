@@ -2,6 +2,7 @@
 # Append-only log of structural decisions.
 # Both Claude Code and Claude Chat use this as a shared record.
 #
+#
 # FORMAT:
 #   ## YYYY-MM-DD — [tool: Claude Chat | Claude Code]
 #   - DECIDED: what was locked in
@@ -88,3 +89,32 @@
   for every structural decision made during a session
 - REASON: Claude Chat and Claude Code share no context; this file is the bridge
 - AFFECTS: workflow convention; referenced in CLAUDE.md
+
+## 2026-03-08 — Claude Code
+
+- DECIDED: Package names for systems nodes use `sim_` prefix (sim_fuel, sim_electrical, etc.)
+  not `systems_` prefix
+- REASON: already established in prior scaffold commit, consistent with CLAUDE.md, colcon-verified
+- AFFECTS: all systems/ package.xml, CMakeLists.txt, launch file
+
+- DECIDED: `ios_backend` is an ament_python ROS2 package at ios/backend/
+- REASON: needs rclpy for ROS2 bridge; FastAPI will be added later but ROS2 node structure needed now
+- AFFECTS: ios/backend/package.xml, setup.py, ios_backend_node.py
+
+- DECIDED: All stub nodes set `use_sim_time: true` as a parameter override in their constructor
+- REASON: CLAUDE.md mandates all nodes use sim time; baking it into the node default ensures
+  compliance even without launch file parameter injection
+- AFFECTS: all 15 C++ node stubs, 2 Python node stubs
+
+- DECIDED: `ControlsState.msg` and `FailureState.msg` added as single-field placeholders
+- REASON: needed for scaffold completeness; full definitions deferred until node implementation
+- AFFECTS: sim_msgs/msg/, sim_msgs/CMakeLists.txt
+
+- DECIDED: Launch file lives at top-level `launch/sim_full.launch.py` (not inside a package)
+- REASON: workspace-level integration test; launches all 17 nodes; validates scaffold completeness
+- AFFECTS: launch/sim_full.launch.py
+
+- DECIDED: Existing message files with full content (FdmState, SimState, AtmosphereState,
+  ArbitrationState, WeatherState, etc.) are preserved — not overwritten with placeholders
+- REASON: these were already designed and cross-referenced against ICDs in prior sessions
+- AFFECTS: sim_msgs/msg/

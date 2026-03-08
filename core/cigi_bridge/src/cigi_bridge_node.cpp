@@ -3,7 +3,12 @@
 class CigiBridgeNode : public rclcpp::Node
 {
 public:
-  CigiBridgeNode() : Node("cigi_bridge") {}
+  CigiBridgeNode()
+  : Node("cigi_bridge", rclcpp::NodeOptions().parameter_overrides(
+      {{"use_sim_time", true}}))
+  {
+    RCLCPP_INFO(this->get_logger(), "cigi_bridge started");
+  }
 };
 
 int main(int argc, char ** argv)

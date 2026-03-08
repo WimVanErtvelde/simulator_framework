@@ -3,7 +3,12 @@
 class InputArbitratorNode : public rclcpp::Node
 {
 public:
-  InputArbitratorNode() : Node("input_arbitrator") {}
+  InputArbitratorNode()
+  : Node("input_arbitrator", rclcpp::NodeOptions().parameter_overrides(
+      {{"use_sim_time", true}}))
+  {
+    RCLCPP_INFO(this->get_logger(), "input_arbitrator started");
+  }
 };
 
 int main(int argc, char ** argv)

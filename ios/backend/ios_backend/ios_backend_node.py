@@ -3,17 +3,17 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 
 
-class QtgEngineNode(Node):
+class IosBackendNode(Node):
     def __init__(self):
-        super().__init__('qtg_engine', parameter_overrides=[
+        super().__init__('ios_backend', parameter_overrides=[
             Parameter('use_sim_time', Parameter.Type.BOOL, True),
         ])
-        self.get_logger().info('qtg_engine started')
+        self.get_logger().info('ios_backend started')
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = QtgEngineNode()
+    node = IosBackendNode()
     rclpy.spin(node)
     rclpy.shutdown()
 

@@ -3,7 +3,12 @@
 class HydraulicNode : public rclcpp::Node
 {
 public:
-  HydraulicNode() : Node("hydraulic_node") {}
+  HydraulicNode()
+  : Node("hydraulic_node", rclcpp::NodeOptions().parameter_overrides(
+      {{"use_sim_time", true}}))
+  {
+    RCLCPP_INFO(this->get_logger(), "hydraulic_node started");
+  }
 };
 
 int main(int argc, char ** argv)

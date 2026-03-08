@@ -32,6 +32,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/AtmosphereState.msg"
   "msg/NavSignalTable.msg"
   "msg/TerrainState.msg"
+  "msg/ControlsState.msg"
+  "msg/FailureState.msg"
   DEPENDENCIES builtin_interfaces std_msgs
 )
 

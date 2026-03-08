@@ -3,7 +3,12 @@
 class NavigationNode : public rclcpp::Node
 {
 public:
-  NavigationNode() : Node("navigation_node") {}
+  NavigationNode()
+  : Node("navigation_node", rclcpp::NodeOptions().parameter_overrides(
+      {{"use_sim_time", true}}))
+  {
+    RCLCPP_INFO(this->get_logger(), "navigation_node started");
+  }
 };
 
 int main(int argc, char ** argv)
