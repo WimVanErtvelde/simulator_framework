@@ -118,3 +118,34 @@
   ArbitrationState, WeatherState, etc.) are preserved — not overwritten with placeholders
 - REASON: these were already designed and cross-referenced against ICDs in prior sessions
 - AFFECTS: sim_msgs/msg/
+
+## 2026-03-08 — Claude Code
+
+- DECIDED: sim_manager publishes `/clock` at 50 Hz via wall timer, not sim timer
+- REASON: sim_manager IS the clock source — cannot use sim time to drive its own clock
+- AFFECTS: sim_manager_node.cpp (wall timers), launch file (use_sim_time: false)
+
+- DECIDED: sim_manager state machine uses validated transitions with explicit allowed edges
+- REASON: prevents invalid state transitions; matches CLAUDE.md state diagram
+  (INIT→READY→RUNNING↔FROZEN, RUNNING/FROZEN→RESETTING→READY, any→SHUTDOWN)
+- AFFECTS: sim_manager_node.cpp transition_to()
+
+- DECIDED: Heartbeat monitoring uses 2-second timeout; auto-freeze on required node loss
+- REASON: conservative threshold for safety-critical sim; nodes must publish at 1 Hz
+- AFFECTS: sim_manager_node.cpp check_node_health(), aircraft config required_nodes list
+
+- DECIDED: RESETTING state uses a 100ms wall timer before transitioning to READY
+- REASON: gives downstream nodes time to receive the IC broadcast before sim resumes
+- AFFECTS: sim_manager_node.cpp begin_reset()
+
+- DECIDED: nlohmann/json vendored as single header at core/sim_manager/include/sim_manager/nlohmann/json.hpp
+- REASON: system package (nlohmann-json3-dev) requires sudo; vendoring avoids system dependency
+- AFFECTS: sim_manager CMakeLists.txt (include path), sim_manager_node.cpp
+
+- DECIDED: Aircraft config search path cascade: parameter → workspace-relative → installed share
+- REASON: supports both development (colcon workspace) and installed (share directory) workflows
+- AFFECTS: sim_manager_node.cpp load_aircraft_config()
+
+- DECIDED: New message types added: SimCommand, SimAlert, InitialConditions, ScenarioEvent
+- REASON: needed for IOS→sim_manager command interface, alert broadcasting, IC/scenario handling
+- AFFECTS: sim_msgs/msg/, sim_msgs/CMakeLists.txt

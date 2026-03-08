@@ -8,9 +8,10 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sim_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 add_executable(pressurization_node src/pressurization_node.cpp)
-ament_target_dependencies(pressurization_node rclcpp sim_msgs)
+ament_target_dependencies(pressurization_node rclcpp sim_msgs std_msgs)
 
 install(TARGETS pressurization_node
   DESTINATION lib/${PROJECT_NAME})

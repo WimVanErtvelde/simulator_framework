@@ -11,7 +11,10 @@
 
   <depend>rclcpp</depend>
   <depend>sim_msgs</depend>
+  <depend>std_msgs</depend>
   <depend>rosgraph_msgs</depend>
+  <depend>yaml-cpp</depend>
+  <depend>ament_index_cpp</depend>
 
   <export>
     <build_type>ament_cmake</build_type>

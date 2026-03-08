@@ -1,16 +1,37 @@
-"""Full simulator launch — starts all stub nodes for scaffold validation."""
+"""Full simulator launch — starts sim_manager and all system nodes."""
 
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
 def generate_launch_description():
+    aircraft_id_arg = DeclareLaunchArgument(
+        'aircraft_id', default_value='c172',
+        description='Aircraft type to load (must match aircraft/<id>/config.yaml)')
+
+    aircraft_config_dir_arg = DeclareLaunchArgument(
+        'aircraft_config_dir', default_value='aircraft',
+        description='Path to aircraft config directory')
+
     sim_time = {'use_sim_time': True}
+    aircraft_id = LaunchConfiguration('aircraft_id')
+    config_dir = LaunchConfiguration('aircraft_config_dir')
 
     return LaunchDescription([
-        # Core
+        aircraft_id_arg,
+        aircraft_config_dir_arg,
+
+        # Sim Manager — drives /clock, does NOT use sim time itself
         Node(package='sim_manager', executable='sim_manager_node',
-             name='sim_manager', parameters=[sim_time]),
+             name='sim_manager', parameters=[{
+                 'use_sim_time': False,
+                 'aircraft_id': aircraft_id,
+                 'aircraft_config_dir': config_dir,
+             }]),
+
+        # Core
         Node(package='flight_model_adapter', executable='flight_model_adapter_node',
              name='flight_model_adapter', parameters=[sim_time]),
         Node(package='input_arbitrator', executable='input_arbitrator_node',

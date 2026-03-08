@@ -8,9 +8,10 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sim_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 add_executable(gear_node src/gear_node.cpp)
-ament_target_dependencies(gear_node rclcpp sim_msgs)
+ament_target_dependencies(gear_node rclcpp sim_msgs std_msgs)
 
 install(TARGETS gear_node
   DESTINATION lib/${PROJECT_NAME})

@@ -8,9 +8,10 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sim_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 add_executable(ice_protection_node src/ice_protection_node.cpp)
-ament_target_dependencies(ice_protection_node rclcpp sim_msgs)
+ament_target_dependencies(ice_protection_node rclcpp sim_msgs std_msgs)
 
 install(TARGETS ice_protection_node
   DESTINATION lib/${PROJECT_NAME})
