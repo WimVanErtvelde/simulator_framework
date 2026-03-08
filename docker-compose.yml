@@ -1,0 +1,27 @@
+version: "3.8"
+
+services:
+  sim_core:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sim_core
+    network_mode: host
+    # TODO: add ROS2 domain ID, volumes, environment
+
+  ios_backend:
+    build:
+      context: ./ios/backend
+      dockerfile: Dockerfile
+    container_name: ios_backend
+    network_mode: host
+    # TODO: add port mapping, environment
+
+  ios_frontend:
+    build:
+      context: ./ios/frontend
+      dockerfile: Dockerfile
+    container_name: ios_frontend
+    ports:
+      - "3000:3000"
+    # TODO: add environment variables

@@ -1,0 +1,21 @@
+# Navigation system state
+builtin_interfaces/Time stamp
+float64 vor1_bearing
+float64 vor1_deviation
+bool vor1_valid
+float64 vor2_bearing
+float64 vor2_deviation
+bool vor2_valid
+float64 ils_localizer_deviation
+float64 ils_glideslope_deviation
+bool ils_valid
+float64 gps_latitude_deg
+float64 gps_longitude_deg
+float64 gps_altitude_m
+float64 gps_groundspeed_kts
+float64 gps_track_deg
+bool gps_valid
+float64 adf_bearing
+bool adf_valid
+uint16 transponder_code
+uint8 transponder_mode

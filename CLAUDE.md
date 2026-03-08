@@ -130,7 +130,8 @@ public:
 - `JSBSimAdapter` — wraps JSBSim via its C++ API
 - `XPlaneUDPAdapter` — connects to X-Plane via UDP data
 - `CustomCertifiedAdapter` — placeholder for authority-certified FDM
-
+- - `HelisimUDPAdapter` — receives Helisim 6.0 UDP export buffer (ICD ref: 743-0507),
+  maps 268-word data structure to FdmState. See HelisimICD.pdf for field definitions.
 **Publishes:** `/sim/fdm/state` (position, attitude, velocities, accelerations, aero forces, weight on wheels)
 
 ---
@@ -376,6 +377,10 @@ Defines:
 - Limits (Vne, Vfe, max torque, etc.)
 
 ---
+
+# FdmState field design reference: Helisim 6.0 ICD (743-0507), HelisimICD.pdf
+# Coordinate frames: ECG, WCS, NED, Body — all carried for CIGI and systems node use
+# Rotor fields (rotor_1_rpm, rotor_2_rpm, etc.) populated only when SimCapabilities.is_helicopter = true
 
 ## External Services
 

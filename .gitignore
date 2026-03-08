@@ -1,0 +1,54 @@
+# ROS2 / colcon
+build/
+install/
+log/
+*.pyc
+__pycache__/
+
+# C++
+*.o
+*.a
+*.so
+*.d
+CMakeFiles/
+cmake_install.cmake
+CMakeCache.txt
+Makefile
+compile_commands.json
+
+# Python
+*.egg-info/
+dist/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+
+# Node / React
+node_modules/
+.next/
+.cache/
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.clangd/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/
+
+# ROS2 bags
+*.db3
+*.yaml.lock
+
+# QTG reports (generated)
+qtg/reports/*.pdf
