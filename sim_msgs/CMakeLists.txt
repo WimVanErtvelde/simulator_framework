@@ -8,6 +8,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(builtin_interfaces REQUIRED)
+find_package(std_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/RawFlightControls.msg"
@@ -28,7 +29,10 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/FailureList.msg"
   "msg/WeatherState.msg"
   "msg/CigiPacket.msg"
-  DEPENDENCIES builtin_interfaces
+  "msg/AtmosphereState.msg"
+  "msg/NavSignalTable.msg"
+  "msg/TerrainState.msg"
+  DEPENDENCIES builtin_interfaces std_msgs
 )
 
 ament_package()

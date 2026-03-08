@@ -4,6 +4,25 @@ This file is the working memory for Claude Code sessions.
 Read this at the start of every session before touching any code.
 Update it whenever architectural decisions are made or changed.
 
+## Cross-session continuity — DECISIONS.md
+
+`DECISIONS.md` in the repo root is an **append-only log** shared between Claude Code
+and Claude Chat (claude.ai). They have no shared context — this file is the bridge.
+
+**Claude Code must:**
+- Read `DECISIONS.md` at the start of every session
+- Append an entry whenever a structural decision is made:
+  new message type, changed topic name, deferred feature, refactored node interface, etc.
+- Never delete or edit past entries
+- Format: `## YYYY-MM-DD — Claude Code` followed by `- DECIDED / REASON / AFFECTS` lines
+
+**Claude Chat paste ritual:**
+Before any design session in claude.ai, run:
+```bash
+cat DECISIONS.md
+```
+and paste the output into the chat so Claude Chat knows the current state.
+
 ---
 
 ## Project Goal
@@ -130,8 +149,7 @@ public:
 - `JSBSimAdapter` — wraps JSBSim via its C++ API
 - `XPlaneUDPAdapter` — connects to X-Plane via UDP data
 - `CustomCertifiedAdapter` — placeholder for authority-certified FDM
-- - `HelisimUDPAdapter` — receives Helisim 6.0 UDP export buffer (ICD ref: 743-0507),
-  maps 268-word data structure to FdmState. See HelisimICD.pdf for field definitions.
+
 **Publishes:** `/sim/fdm/state` (position, attitude, velocities, accelerations, aero forces, weight on wheels)
 
 ---
@@ -377,10 +395,6 @@ Defines:
 - Limits (Vne, Vfe, max torque, etc.)
 
 ---
-
-# FdmState field design reference: Helisim 6.0 ICD (743-0507), HelisimICD.pdf
-# Coordinate frames: ECG, WCS, NED, Body — all carried for CIGI and systems node use
-# Rotor fields (rotor_1_rpm, rotor_2_rpm, etc.) populated only when SimCapabilities.is_helicopter = true
 
 ## External Services
 
