@@ -26,8 +26,6 @@ initial_conditions:
   fuel_total_pct: 0.75
   configuration: ready_for_takeoff
 
-gear_cg_offset_m: 1.63          # CG height above ground when static on gear (measured)
-
 gear_points:
   - name: nose
     x_m: 1.85
