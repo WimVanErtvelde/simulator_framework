@@ -83,7 +83,8 @@ export default function StatusStrip() {
         <Badge label={simState} colors={badge} />
         <Sep /><span style={{ color: '#64748b' }}>SIM</span>&nbsp;{dim ? '--:--:--' : fmtTime(simTimeSec)}
         <Sep />{aircraftId.toUpperCase()}
-        <Sep />{v(fdm.altFtMsl)}ft
+        <Sep /><span style={{ color: '#39d0d8', fontSize: '0.7em', fontWeight: 600 }}>TRUTH</span>
+        &nbsp;{v(fdm.altFtMsl)}ft
         <Sep /><span style={{ color: '#64748b' }}>IAS</span>&nbsp;{v(fdm.iasKt)}kt
         <Sep /><span style={{ color: '#64748b' }}>VS</span>&nbsp;{v(fdm.vsFpm)}fpm
         <Sep /><span style={{ color: '#64748b' }}>HDG</span>&nbsp;{v(fdm.hdgMagDeg)}°
