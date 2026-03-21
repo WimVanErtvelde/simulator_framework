@@ -1,9 +1,10 @@
 gear:
   type: fixed_tricycle
+  retractable: false
   legs:
     - name: nose
-      retractable: false
+      index: 0
     - name: left_main
-      retractable: false
+      index: 1
     - name: right_main
-      retractable: false
+      index: 2

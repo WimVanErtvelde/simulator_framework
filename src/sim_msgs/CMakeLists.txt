@@ -24,6 +24,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ArbitrationState.msg"
   "msg/ElectricalState.msg"
   "msg/FuelState.msg"
+  "msg/GearState.msg"
   "msg/HydraulicState.msg"
   "msg/NavigationState.msg"
   "msg/EngineState.msg"

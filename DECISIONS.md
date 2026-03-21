@@ -43,11 +43,9 @@
 - `sim_fuel` — lifecycle node + pluginlib → IFuelModel. C172 plugin with tank selector, pump logic, fuel flow integration, CG calculation. Capability gating and writeback.
 - `sim_failures` — full failure catalog from YAML, armed triggers with delay/condition, per-target routing to flight_model/electrical/navaid commands
 - `sim_navigation` — GPS/VOR/ILS/ADF/DME processing, CDI/TO-FROM computation, DME source selection, failure gating. Aircraft-agnostic, no pluginlib.
+- `sim_gear` — lifecycle node + pluginlib → IGearModel. C172 fixed-tricycle plugin. Capability gating, WoW per leg, nosewheel angle, brake echo, gear_unsafe failure injection.
 - `ios_backend` — FDM, fuel, sim state, nav state, avionics, electrical state forwarding. Panel commands to `/devices/instructor/panel`, avionics to `/devices/instructor/controls/avionics`. Cockpit pages to `/devices/virtual/panel`.
 - `ios_frontend` — map, status strip (dynamic radio row), 9 panel tabs, action bar, electrical switches (FORCE), ground services (tri-state), radio tuning, nav receiver display. Dynamic A/C page driven by aircraft navigation.yaml config. React Router for cockpit pages.
-
-### Partial
-- `sim_gear` — node framework works with pluginlib, but C172 plugin is an empty stub (no retract/extend/WoW logic)
 
 ### Stub / scaffold only
 - `microros_bridge` — skeleton lifecycle node
@@ -1202,6 +1200,11 @@ WHAT DOES NOT CHANGE:
 
 - AFFECTS: sim_msgs (EngineState.msg extended, EngineCommands.msg new), IFlightModelAdapter (new subscription), sim_engine_systems (publish EngineCommands), JSBSimAdapter (apply commands), engine.yaml schema, FlightModelCapabilities struct.
 
+## 2026-03-21 — 00:00:00 - Claude Code
+- DECIDED: GearState.msg created at src/sim_msgs/msg/GearState.msg and registered in sim_msgs CMakeLists.txt
+- REASON: sim_gear node needs a dedicated output message for /sim/gear/state covering both fixed and retractable gear aircraft. Message design mirrors FlightModelState gear arrays (5-leg max, position_pct, weight_on_wheels, status) while adding cockpit-layer concerns: aggregate booleans (on_ground, gear_handle_down, gear_unsafe, gear_warning), brake echoes from FlightControls (brake_left, brake_right, parking_brake), and nosewheel steering angle.
+- AFFECTS: src/sim_msgs/msg/GearState.msg (new), src/sim_msgs/CMakeLists.txt (GearState.msg inserted between FuelState.msg and HydraulicState.msg in alphabetical order)
+
 ## 2026-03-12 — 21:30:00 - Claude Code
 - DECIDED: Implemented engine type architecture future-proofing (all additive, no breaks).
 - CHANGES MADE:
@@ -1797,3 +1800,20 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 **Key insight from C208 ICD:** J2 FDM takes Voltage and Fuel Fraction as inputs from electrical/fuel nodes via FDM adapter, NOT through engines node. EngineInputs provides bus_voltage and fuel_available so plugin state machine knows if starting is possible.
 
 - AFFECTS: sim_msgs, src/systems/engines/, aircraft plugins, engines.yaml, IOS engine page, input_arbitrator
+
+## 2026-03-21 — 00:00:00 - Claude Code
+- DECIDED: Expanded IGearModel interface to include GearSnapshot/GearLegState data structures and full update() signature (gear_on_ground, gear_position_pct, gear_steering_deg, gear_handle_down, on_ground vectors)
+- REASON: Stub interface only had configure/update(double)/apply_failure — no way to pass FDM gear data in or read state out. New interface matches the IElectricalModel pattern with a snapshot struct.
+- AFFECTS: src/core/sim_interfaces/include/sim_interfaces/i_gear_model.hpp, all IGearModel implementors
+
+- DECIDED: gear_node subscribes to /sim/controls/flight for gear_handle_down, brake_left/right, parking_brake — these are echoed into GearState for single-source display
+- REASON: GearState.msg includes brake fields; gear_node is the natural place to aggregate them since it already owns WoW data from FlightModelState
+- AFFECTS: src/systems/gear/src/gear_node.cpp
+
+- DECIDED: C172 GearModel reads gear_type and retractable from gear.yaml; uses wheel_angle_deg[0] from FlightModelState for nosewheel angle; supports "gear_unsafe_indication" failure ID for warning light test
+- REASON: Fixed gear has no retraction logic — all complexity is in correctly reflecting FDM ground contact and steering. Failure injection for unsafe indication needed for IOS failure panel
+- AFFECTS: src/aircraft/c172/src/gear_model.cpp, src/aircraft/c172/config/gear.yaml
+
+- DECIDED: gear_node capability gate uses FlightModelCapabilities::gear_retract field (not a new field)
+- REASON: gear_retract already exists in FlightModelCapabilities.msg — no message changes needed
+- AFFECTS: src/systems/gear/src/gear_node.cpp
