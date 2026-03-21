@@ -135,6 +135,7 @@
       <div class="gauge-cell"><div class="gauge-title">Heading</div><svg id="g-hi" viewBox="0 0 200 200"></svg></div>
       <div class="gauge-cell"><div class="gauge-title">Vert Speed</div><svg id="g-vsi" viewBox="0 0 200 200"></svg></div>
     </div>
+    <div id="pitot-static-status" style="min-height:18px;margin-top:10px;font-size:12px;letter-spacing:0.5px;font-family:inherit"></div>
   </div>
 
   <div class="legend">
@@ -175,6 +176,9 @@ const keysDown = new Set();
 
 // ── Flight model state (from WS) ───────────────────────────────────────
 const fms = { lat: 0, lon: 0, altFtMsl: 0, hdgDeg: 0, iasKt: 0, vsFpm: 0, pitchDeg: 0, rollDeg: 0 };
+
+// ── Air data state (pitot-static instruments, from WS) ──────────────────
+const airData = { iasKt: 0, altIndicatedFt: 0, vsFpm: 0, pitotHealthy: true, staticHealthy: true, pitotIcePct: 0 };
 
 // ── SVG helpers ─────────────────────────────────────────────────────────
 const CX = 100, CY = 100;
@@ -415,6 +419,14 @@ function connect() {
         fms.pitchDeg = msg.pitch_deg ?? 0;
         fms.rollDeg = msg.roll_deg ?? 0;
       }
+      if (msg.type === 'air_data_state') {
+        airData.iasKt = msg.ias_kt ?? 0;
+        airData.altIndicatedFt = msg.alt_indicated_ft ?? 0;
+        airData.vsFpm = msg.vs_fpm ?? 0;
+        airData.pitotHealthy = msg.pitot_healthy ?? true;
+        airData.staticHealthy = msg.static_healthy ?? true;
+        airData.pitotIcePct = msg.pitot_ice_pct ?? 0;
+      }
     } catch {}
   };
   ws.onclose = () => {
@@ -508,13 +520,17 @@ setInterval(() => {
   document.getElementById('pos-alt').textContent = Math.round(fms.altFtMsl);
   document.getElementById('pos-hdg').textContent = Math.round(((fms.hdgDeg % 360) + 360) % 360).toString().padStart(3, '0');
 
-  // Gauges
-  updateASI(fms.iasKt);
+  // Gauges — pitot-static instruments read from air_data_state (affected by icing/failures)
+  updateASI(airData.iasKt);
+  updateALT(airData.altIndicatedFt);
+  updateVSI(airData.vsFpm);
+  // Gyroscopic instruments read from flight_model_state (truth)
   updateAI(fms.pitchDeg, fms.rollDeg);
-  updateALT(fms.altFtMsl);
   updateTC(fms.rollDeg);
   updateHI(fms.hdgDeg);
-  updateVSI(fms.vsFpm);
+
+  // Pitot-static health indicator — content built from bounded integers and fixed strings only
+  updatePitotStaticStatus(airData.pitotHealthy, airData.staticHealthy, airData.pitotIcePct);
 
 }, 1000 / RATE_HZ);
 
@@ -540,6 +556,32 @@ function updateThrottle(value) {
   const val = document.getElementById('val-thr');
   val.textContent = value.toFixed(2);
   bar.style.width = (value * 100) + '%';
+}
+
+// ── Pitot-static health indicator ───────────────────────────────────────
+// Content built from fixed string constants and a bounded integer — no user input.
+function updatePitotStaticStatus(pitotOk, staticOk, icePct) {
+  const el = document.getElementById('pitot-static-status');
+  // Clear existing children
+  while (el.firstChild) el.removeChild(el.firstChild);
+  if (!pitotOk) {
+    const s = document.createElement('span');
+    s.textContent = 'PITOT FAIL';
+    s.style.cssText = 'color:#ff3b30;font-weight:600;margin-right:6px';
+    el.appendChild(s);
+  }
+  if (!staticOk) {
+    const s = document.createElement('span');
+    s.textContent = 'STATIC FAIL';
+    s.style.cssText = 'color:#ff3b30;font-weight:600;margin-right:6px';
+    el.appendChild(s);
+  }
+  if (icePct > 0) {
+    const s = document.createElement('span');
+    s.textContent = 'ICE ' + Math.round(icePct * 100) + '%';
+    s.style.cssText = 'color:#f59e0b;margin-right:6px';
+    el.appendChild(s);
+  }
 }
 </script>
 </body>

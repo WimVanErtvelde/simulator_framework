@@ -26,7 +26,7 @@ from sim_msgs.msg import (FlightModelState, FuelState, SimState, SimCommand, Pan
                           RawFlightControls, RawEngineControls,
                           ElectricalState, SimAlert, EngineState,
                           FailureCommand, FailureState, TerrainSource,
-                          InitialConditions)
+                          InitialConditions, AirDataState)
 from std_msgs.msg import String
 from lifecycle_msgs.srv import ChangeState
 from lifecycle_msgs.msg import Transition
@@ -159,6 +159,10 @@ class IosBackendNode(Node):
         # Terrain source subscription
         self._terrain_source_sub = self.create_subscription(
             TerrainSource, '/sim/terrain/source', self._on_terrain_source, 10)
+
+        # Air data subscription (pitot-static instruments)
+        self._air_data_sub = self.create_subscription(
+            AirDataState, '/sim/air_data/state', self._on_air_data_state, 10)
 
         # Failure command publisher → sim_failures
         self._failure_cmd_pub = self.create_publisher(
@@ -588,6 +592,25 @@ class IosBackendNode(Node):
         }
         with self._lock:
             self._latest['terrain_source'] = data
+
+    def _on_air_data_state(self, msg: AirDataState):
+        data = {
+            'type': 'air_data_state',
+            'ias_kt': msg.indicated_airspeed_ms[0] * 1.94384,
+            'cas_kt': msg.calibrated_airspeed_ms[0] * 1.94384,
+            'mach': msg.mach[0],
+            'alt_indicated_ft': msg.altitude_indicated_m[0] * 3.28084,
+            'alt_pressure_ft': msg.altitude_pressure_m[0] * 3.28084,
+            'vs_fpm': msg.vertical_speed_ms[0] * 196.85,
+            'sat_c': msg.sat_k[0] - 273.15,
+            'tat_c': msg.tat_k[0] - 273.15,
+            'pitot_healthy': bool(msg.pitot_healthy[0]),
+            'static_healthy': bool(msg.static_healthy[0]),
+            'pitot_heat_on': bool(msg.pitot_heat_on[0]),
+            'pitot_ice_pct': float(msg.pitot_ice_pct[0]),
+        }
+        with self._lock:
+            self._latest['air_data_state'] = data
 
     def _load_failures_config(self, aircraft_id: str):
         """Load failure catalog from aircraft package failures.yaml."""
