@@ -98,23 +98,32 @@ failures:
       method: set_instrument_failed
       params: {instrument_id: ATT}
 
-  - id: ata34_altimeter_failed
+  - id: ata34_pitot_blocked
     ata: 34
-    display_name: "Altimeter Failure"
+    display_name: "Pitot Blocked (drain clear)"
     category: instruments
     injection:
-      handler: sim_failures
-      method: set_instrument_failed
-      params: {instrument_id: ALT1}
+      handler: air_data
+      method: pitot_blocked_drain_clear
+      params: {}
 
-  - id: ata34_pitot_failed
+  - id: ata34_pitot_blocked_drain
     ata: 34
-    display_name: "Pitot Tube Failure"
+    display_name: "Pitot Blocked (drain blocked)"
     category: instruments
     injection:
-      handler: flight_model
-      method: set_pitot_failed
-      params: {index: 0}
+      handler: air_data
+      method: pitot_blocked_drain_blocked
+      params: {}
+
+  - id: ata34_static_port_blocked
+    ata: 34
+    display_name: "Static Port Blocked"
+    category: instruments
+    injection:
+      handler: air_data
+      method: static_port_blocked
+      params: {}
 
   - id: ata71_engine_failure
     ata: 71

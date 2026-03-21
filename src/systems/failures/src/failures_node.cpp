@@ -207,6 +207,8 @@ public:
       "/sim/failure/electrical_commands", 10);
     navaid_cmd_pub_ = this->create_publisher<sim_msgs::msg::FailureInjection>(
       "/sim/failure/navaid_commands", 10);
+    air_data_cmd_pub_ = this->create_publisher<sim_msgs::msg::FailureInjection>(
+      "/sim/failure/air_data_commands", 10);
 
     // Subscriptions
     cmd_sub_ = this->create_subscription<sim_msgs::msg::FailureCommand>(
@@ -251,6 +253,7 @@ public:
     fdm_cmd_pub_.reset();
     elec_cmd_pub_.reset();
     navaid_cmd_pub_.reset();
+    air_data_cmd_pub_.reset();
     RCLCPP_INFO(this->get_logger(), "sim_failures deactivated");
     publish_lifecycle_state("inactive");
     return CallbackReturn::SUCCESS;
@@ -462,6 +465,8 @@ private:
       elec_cmd_pub_->publish(inj);
     } else if (inj.handler == "navaid_sim") {
       navaid_cmd_pub_->publish(inj);
+    } else if (inj.handler == "air_data") {
+      air_data_cmd_pub_->publish(inj);
     } else {
       RCLCPP_WARN(this->get_logger(),
         "Unknown handler '%s' for failure '%s'",
@@ -577,6 +582,7 @@ private:
   rclcpp_lifecycle::LifecyclePublisher<sim_msgs::msg::FailureInjection>::SharedPtr fdm_cmd_pub_;
   rclcpp_lifecycle::LifecyclePublisher<sim_msgs::msg::FailureInjection>::SharedPtr elec_cmd_pub_;
   rclcpp_lifecycle::LifecyclePublisher<sim_msgs::msg::FailureInjection>::SharedPtr navaid_cmd_pub_;
+  rclcpp_lifecycle::LifecyclePublisher<sim_msgs::msg::FailureInjection>::SharedPtr air_data_cmd_pub_;
 
   // Subscriptions
   rclcpp::Subscription<sim_msgs::msg::FailureCommand>::SharedPtr cmd_sub_;
