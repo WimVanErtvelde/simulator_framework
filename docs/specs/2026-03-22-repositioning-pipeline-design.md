@@ -53,7 +53,6 @@ flight_model_adapter:
         │
         ├── CIGI path (IG connected):
         │     cigi_bridge sends Entity Control (0x03) to IG
-        │     cigi_bridge sends 3 HOT requests at gear points (no rate gating)
         │     X-Plane plugin:
         │       - Receives Entity Control → detects position jump
         │       - Shows "REPOSITIONING..." overlay on screen
@@ -62,6 +61,7 @@ flight_model_adapter:
         │       - When load complete (debounced 3 frames): IG Status = Operate (1)
         │       - Hides overlay
         │     cigi_bridge reads SOF → IG Status = Operate
+        │     cigi_bridge NOW sends 3 HOT requests at gear points (terrain is loaded)
         │     flight_model_adapter receives 3 HOT responses
         │     Compute ground plane from 3 gear contact points
         │     Set terrain + altitude (terrain + gear z_m offset)
