@@ -36,6 +36,7 @@ def generate_launch_description():
              name='flight_model_adapter', parameters=[sim_time, {
                  'aircraft_id': aircraft_id,
                  'fdm_type': 'jsbsim',
+                 'gear_cg_height_m': 1.63,  # C172: measured CG height above ground on gear
              }]),
         Node(package='input_arbitrator', executable='input_arbitrator_node',
              name='input_arbitrator', parameters=[sim_time]),

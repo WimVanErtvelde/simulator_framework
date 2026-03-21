@@ -437,9 +437,9 @@ private:
     auto modified_ic = ic;
     bool on_ground = modified_ic.altitude_msl_m < terrain_elev_m + 50.0;
     if (on_ground) {
-      // Set CG above terrain by gear height. JSBSim's force-on-ground prevents
-      // falling but doesn't push CG up — we must account for gear geometry.
-      // Use gear_cg_height_m_ loaded from aircraft config (default 1.8m for C172).
+      // Set CG above terrain by measured gear-to-CG offset from aircraft config.
+      // force-on-ground only works when JSBSim is stepping (RUNNING), but IC
+      // is applied in READY state, so we must set the correct height ourselves.
       modified_ic.altitude_msl_m = terrain_elev_m + gear_cg_height_m_;
     }
 
