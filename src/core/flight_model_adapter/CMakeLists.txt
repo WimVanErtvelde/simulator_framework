@@ -10,6 +10,8 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 find_package(sim_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(yaml-cpp REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 
 # --- JSBSim via FetchContent ---
 include(FetchContent)
@@ -52,7 +54,9 @@ target_link_libraries(flight_model_adapter_node PRIVATE
   ${rclcpp_TARGETS}
   ${rclcpp_lifecycle_TARGETS}
   ${sim_msgs_TARGETS}
-  ${std_msgs_TARGETS})
+  ${std_msgs_TARGETS}
+  ${ament_index_cpp_TARGETS}
+  yaml-cpp)
 
 install(TARGETS flight_model_adapter_node
   DESTINATION lib/${PROJECT_NAME})

@@ -16,10 +16,15 @@
 #include <sim_msgs/msg/engine_controls.hpp>
 #include <sim_msgs/msg/hat_hot_response.hpp>
 #include <sim_msgs/msg/terrain_source.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <sim_msgs/srv/get_terrain_elevation.hpp>
+
+#include <yaml-cpp/yaml.h>
+#include <ament_index_cpp/get_package_share_directory.hpp>
 
 #include <map>
 #include <chrono>
+#include <cmath>
 
 #include "flight_model_adapter/IFlightModelAdapter.hpp"
 #include "flight_model_adapter/JSBSimAdapter.hpp"
@@ -34,7 +39,6 @@ public:
       {{"use_sim_time", true}}))
   {
     this->declare_parameter<std::string>("aircraft_id", "c172");
-    this->declare_parameter<double>("gear_cg_height_m", 1.8);  // CG height above gear contact (m)
     this->declare_parameter<std::string>("fdm_type", "jsbsim");
     this->declare_parameter<double>("update_rate_hz", 50.0);
     this->declare_parameter<std::string>("jsbsim_root_dir", "");
@@ -72,6 +76,9 @@ public:
     terrain_source_pub_ = this->create_publisher<sim_msgs::msg::TerrainSource>(
       "/sim/terrain/source", 10);
 
+    terrain_ready_pub_ = this->create_publisher<std_msgs::msg::Bool>(
+      "/sim/terrain/ready", 10);
+
     // CIGI HOT response subscription — terrain data from IG
     hat_response_sub_ = this->create_subscription<sim_msgs::msg::HatHotResponse>(
       "/sim/cigi/hat_responses", 10,
@@ -102,7 +109,7 @@ public:
         }
       });
 
-    // IC subscription — apply with SRTM immediately, then refine with CIGI HOT
+    // IC subscription — apply raw, then refine with terrain (CIGI HOT or SRTM fallback)
     ic_sub_ = this->create_subscription<sim_msgs::msg::InitialConditions>(
       "/sim/initial_conditions", 10,
       [this](const sim_msgs::msg::InitialConditions::SharedPtr msg) {
@@ -110,21 +117,21 @@ public:
         RCLCPP_INFO(this->get_logger(), "Applying initial conditions: config=%s",
                     msg->configuration.c_str());
 
-        // Clear stale CIGI HOT data — it's from the old position
+        // Clear stale terrain data
         terrain_hot_.clear();
         ic_cigi_refined_ = false;
         ic_srtm_applied_ = false;
         srtm_valid_ = false;
+        publish_terrain_ready(false);
 
-        // Step 1: Apply raw IC immediately so JSBSim has a valid position.
-        // This moves the entity to the target lat/lon — IG pages terrain there.
+        // Apply raw IC — entity moves to target lat/lon
         adapter_->apply_initial_conditions(*msg);
 
         // Save IC for terrain refinement
         pending_ic_ = std::make_shared<sim_msgs::msg::InitialConditions>(*msg);
         pending_ic_time_ = std::chrono::steady_clock::now();
 
-        // Step 2: Query SRTM for terrain (async) — apply as soon as it arrives
+        // Query SRTM as fallback (async)
         if (terrain_client_ && terrain_client_->service_is_ready()) {
           auto req = std::make_shared<sim_msgs::srv::GetTerrainElevation::Request>();
           req->latitude_rad = msg->latitude_rad;
@@ -138,7 +145,6 @@ public:
               }
             });
         }
-        // Step 3: CIGI HOT refinement handled in update loop (waits for IG response)
       });
 
     // Engine commands subscription (write-back from sim_engine_systems)
@@ -175,7 +181,6 @@ public:
     // Create the flight model adapter
     auto fdm_type = this->get_parameter("fdm_type").as_string();
     auto aircraft_id = this->get_parameter("aircraft_id").as_string();
-    gear_cg_height_m_ = this->get_parameter("gear_cg_height_m").as_double();
     auto jsbsim_root = this->get_parameter("jsbsim_root_dir").as_string();
 
     RCLCPP_INFO(this->get_logger(), "Configuring flight model: type=%s, aircraft=%s",
@@ -198,6 +203,26 @@ public:
     } else {
       RCLCPP_ERROR(this->get_logger(), "Unknown flight model type: %s", fdm_type.c_str());
       return CallbackReturn::FAILURE;
+    }
+
+    // Load gear CG height from aircraft config.yaml gear_points
+    try {
+      auto pkg_dir = ament_index_cpp::get_package_share_directory("aircraft_" + aircraft_id);
+      auto config_path = pkg_dir + "/config/config.yaml";
+      YAML::Node config = YAML::LoadFile(config_path);
+      auto gear_points = config["gear_points"];
+      if (gear_points && gear_points.IsSequence()) {
+        double max_z = 0.0;
+        for (const auto & gp : gear_points) {
+          double z = std::abs(gp["z_m"].as<double>(0.0));
+          if (z > max_z) max_z = z;
+        }
+        gear_cg_height_m_ = max_z;
+        RCLCPP_INFO(this->get_logger(), "Gear CG height from config: %.2f m", gear_cg_height_m_);
+      }
+    } catch (const std::exception & e) {
+      RCLCPP_WARN(this->get_logger(), "Could not load gear height: %s — using default %.2fm",
+        e.what(), gear_cg_height_m_);
     }
 
     RCLCPP_INFO(this->get_logger(),
@@ -325,39 +350,38 @@ public:
         // Update JSBSim terrain elevation from HOT data when near ground
         update_terrain_elevation();
 
-        // IC terrain refinement: SRTM fast, CIGI HOT overrides
+        // IC terrain refinement: CIGI HOT preferred, SRTM fallback after 2s
         if (pending_ic_) {
           auto age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - pending_ic_time_).count();
 
-          // Apply SRTM as soon as it's ready (typically ~50ms)
-          if (!ic_srtm_applied_ && srtm_valid_) {
-            RCLCPP_INFO(this->get_logger(),
-              "IC terrain from SRTM: %.1f m MSL (after %ldms)", srtm_terrain_m_, age_ms);
-            apply_ic_with_terrain(*pending_ic_, srtm_terrain_m_);
-            ic_srtm_applied_ = true;
-          }
-
-          // CIGI HOT overrides SRTM when available (>200ms for IG to respond)
+          // CIGI HOT: apply when responses received (>200ms for IG to respond)
           if (!ic_cigi_refined_ && !terrain_hot_.empty() && age_ms >= 200) {
             double sum = 0.0;
             for (auto & [name, hot] : terrain_hot_) sum += hot;
-            double terrain_elev_m = sum / terrain_hot_.size();
+            double terrain_m = sum / terrain_hot_.size();
             RCLCPP_INFO(this->get_logger(),
-              "IC terrain refined from CIGI HOT: %.1f m MSL (after %ldms)",
-              terrain_elev_m, age_ms);
-            apply_ic_with_terrain(*pending_ic_, terrain_elev_m);
+              "IC terrain from CIGI HOT: %.1f m MSL (after %ldms)", terrain_m, age_ms);
+            apply_ic_with_terrain(*pending_ic_, terrain_m);
             ic_cigi_refined_ = true;
-            pending_ic_.reset();  // done — CIGI is the best source
+            publish_terrain_ready(true);
+            pending_ic_.reset();
           }
 
-          // Timeout at 2s — stop waiting for CIGI
-          if (!ic_cigi_refined_ && age_ms > 2000) {
-            if (ic_srtm_applied_) {
-              RCLCPP_INFO(this->get_logger(), "IC complete — SRTM terrain (no CIGI)");
-            } else {
-              RCLCPP_WARN(this->get_logger(), "IC timeout — no terrain data available");
-            }
+          // SRTM fallback after 2s if no CIGI
+          if (!ic_cigi_refined_ && !ic_srtm_applied_ && srtm_valid_ && age_ms >= 2000) {
+            RCLCPP_INFO(this->get_logger(),
+              "IC terrain from SRTM (no CIGI): %.1f m MSL", srtm_terrain_m_);
+            apply_ic_with_terrain(*pending_ic_, srtm_terrain_m_);
+            ic_srtm_applied_ = true;
+            publish_terrain_ready(true);
+            pending_ic_.reset();
+          }
+
+          // Hard timeout 5s
+          if (age_ms > 5000 && !ic_cigi_refined_ && !ic_srtm_applied_) {
+            RCLCPP_WARN(this->get_logger(), "IC terrain timeout — using raw altitude");
+            publish_terrain_ready(true);
             pending_ic_.reset();
           }
         }
@@ -411,6 +435,7 @@ public:
     fuel_writeback_sub_.reset();
     hat_response_sub_.reset();
     terrain_source_pub_.reset();
+    terrain_ready_pub_.reset();
     terrain_client_.reset();
     adapter_.reset();
     RCLCPP_INFO(this->get_logger(), "flight_model_adapter cleaned up");
@@ -428,33 +453,36 @@ private:
     }
   }
 
+  void publish_terrain_ready(bool ready)
+  {
+    if (terrain_ready_pub_) {
+      auto msg = std_msgs::msg::Bool();
+      msg.data = ready;
+      terrain_ready_pub_->publish(msg);
+    }
+  }
+
   void apply_ic_with_terrain(const sim_msgs::msg::InitialConditions & ic, double terrain_elev_m)
   {
     if (!adapter_) return;
 
-    double terrain_ft = terrain_elev_m * 3.28084;
-
     auto modified_ic = ic;
     bool on_ground = modified_ic.altitude_msl_m < terrain_elev_m + 50.0;
     if (on_ground) {
-      // Set CG above terrain by measured gear-to-CG offset from aircraft config.
-      // force-on-ground only works when JSBSim is stepping (RUNNING), but IC
-      // is applied in READY state, so we must set the correct height ourselves.
       modified_ic.altitude_msl_m = terrain_elev_m + gear_cg_height_m_;
     }
 
-    // Apply IC first, then set terrain AFTER — RunIC() resets terrain to default
+    // Apply IC first (RunIC resets terrain property)
     adapter_->apply_initial_conditions(modified_ic);
 
-    // Now set terrain — this sticks because RunIC is done
+    // Set terrain AFTER RunIC so it sticks
+    double terrain_ft = terrain_elev_m * 3.28084;
     adapter_->set_property("position/terrain-elevation-asl-ft", terrain_ft);
 
-    double actual_alt = adapter_->get_property("position/h-sl-ft");
-    double actual_terrain = adapter_->get_property("position/terrain-elevation-asl-ft");
-    double actual_agl = actual_alt - actual_terrain;
     RCLCPP_INFO(this->get_logger(),
-      "IC: terrain=%.1fft, CG=%.1fft, AGL=%.1fft, on_ground=%s",
-      actual_terrain, actual_alt, actual_agl, on_ground ? "true" : "false");
+      "IC applied: terrain=%.1fm, CG=%.1fm (gear_offset=%.2fm), on_ground=%s",
+      terrain_elev_m, modified_ic.altitude_msl_m, gear_cg_height_m_,
+      on_ground ? "true" : "false");
   }
 
   void publish_terrain_source()
@@ -523,13 +551,14 @@ private:
   flight_model_adapter::FlightModelCapabilities caps_;
   rclcpp::Subscription<sim_msgs::msg::HatHotResponse>::SharedPtr hat_response_sub_;
   rclcpp::Publisher<sim_msgs::msg::TerrainSource>::SharedPtr terrain_source_pub_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr terrain_ready_pub_;
   rclcpp::Client<sim_msgs::srv::GetTerrainElevation>::SharedPtr terrain_client_;
   std::map<std::string, double> terrain_hot_;  // point_name → terrain MSL (m)
   std::chrono::steady_clock::time_point last_cigi_hot_time_{};
   uint8_t terrain_source_{sim_msgs::msg::TerrainSource::SOURCE_UNKNOWN};
   uint8_t sim_state_{255};  // 255 = no sim_manager connected yet
 
-  double gear_cg_height_m_ = 1.8;  // CG height above gear contact point (m)
+  double gear_cg_height_m_ = 0.5;  // CG height above gear contact point (m), loaded from config.yaml
 
   // IC terrain pipeline: SRTM fast, CIGI HOT overrides
   std::shared_ptr<sim_msgs::msg::InitialConditions> pending_ic_;

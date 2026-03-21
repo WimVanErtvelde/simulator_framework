@@ -1897,3 +1897,17 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - DECIDED: Add REPOSITIONING state (value 6) to sim_manager state machine. Entered on CMD_SET_IC from any non-INIT/non-SHUTDOWN state. Exits to READY on /sim/terrain/ready (Bool=true) or after 5s timeout.
 - REASON: Aircraft repositioning needs to pause the sim clock while waiting for terrain (CIGI HOT or SRTM) to resolve at the new position, preventing the aircraft from falling through unloaded terrain.
 - AFFECTS: src/core/sim_manager/src/sim_manager_node.cpp, src/sim_msgs/msg/SimState.msg (already had STATE_REPOSITIONING=6)
+
+## 2026-03-22 — 10:30:00 - Claude Code
+
+- DECIDED: flight_model_adapter publishes /sim/terrain/ready (std_msgs/Bool) after IC terrain is resolved. Published false on IC receipt, true when CIGI HOT or SRTM terrain applied, or on 5s hard timeout.
+- REASON: sim_manager REPOSITIONING state subscribes to this topic to know when terrain is resolved and it can transition to READY.
+- AFFECTS: src/core/flight_model_adapter/src/flight_model_adapter_node.cpp
+
+- DECIDED: gear_cg_height_m loaded from aircraft config.yaml gear_points (abs value of max z_m) instead of ROS2 parameter. Default 0.5m if config unavailable.
+- REASON: Gear height is aircraft-specific data that belongs in the aircraft config, not a ROS2 parameter. Follows the pattern of aircraft config driving everything.
+- AFFECTS: src/core/flight_model_adapter/src/flight_model_adapter_node.cpp, src/core/flight_model_adapter/CMakeLists.txt (added yaml-cpp, ament_index_cpp deps)
+
+- DECIDED: Simplified IC terrain pipeline — CIGI HOT is the primary source (applied after 200ms), SRTM is fallback only after 2s timeout with no CIGI. Removed the old "apply SRTM immediately, then refine with CIGI" two-stage approach.
+- REASON: With the REPOSITIONING state holding the clock, there is no urgency to apply SRTM immediately. Waiting for the best source (CIGI) avoids unnecessary double-repositioning.
+- AFFECTS: src/core/flight_model_adapter/src/flight_model_adapter_node.cpp (IC callback + update loop terrain refinement block)
