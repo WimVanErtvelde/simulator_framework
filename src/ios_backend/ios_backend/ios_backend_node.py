@@ -1144,7 +1144,15 @@ async def startup_event():
     _load_navaid_database()
     rclpy.init()
     ros_node = IosBackendNode()
-    threading.Thread(target=rclpy.spin, args=(ros_node,), daemon=True).start()
+
+    # rclpy.spin() in a daemon thread does not work under uvicorn —
+    # callbacks never fire. Poll spin_once from asyncio instead.
+    async def _ros_poll():
+        while rclpy.ok():
+            rclpy.spin_once(ros_node, timeout_sec=0)
+            await asyncio.sleep(0.01)  # 100Hz polling
+
+    asyncio.create_task(_ros_poll())
     asyncio.create_task(send_stub_data())
     asyncio.create_task(send_node_health())
     asyncio.create_task(refresh_graph())
