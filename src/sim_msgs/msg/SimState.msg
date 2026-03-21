@@ -7,7 +7,8 @@ uint8 STATE_READY     = 1
 uint8 STATE_RUNNING   = 2
 uint8 STATE_FROZEN    = 3
 uint8 STATE_RESETTING = 4
-uint8 STATE_SHUTDOWN  = 5
+uint8 STATE_SHUTDOWN       = 5
+uint8 STATE_REPOSITIONING  = 6
 
 std_msgs/Header header
 uint8 state            # one of the STATE_* constants above
