@@ -55,3 +55,6 @@ qtg/reports/*.pdf
 
 # NavSim data (large — terrain tiles, nav databases)
 NavSim/
+
+# Reference documents (ICDs, specs — not for version control)
+references/

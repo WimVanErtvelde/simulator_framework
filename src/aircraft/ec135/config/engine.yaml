@@ -1,0 +1,23 @@
+engine_type: "turboshaft"
+engine_count: 2
+engines:
+  - id: engine_0
+    type: turboshaft
+    n1_max_pct: 100.0
+    n2_max_pct: 100.0
+    tgt_max_degc: 810
+    torque_max_pct: 100.0
+    has_carb_heat: false
+    has_primer: false
+    condition_lever_id: sel_condition_0
+    starter_id: btn_starter_0
+  - id: engine_1
+    type: turboshaft
+    n1_max_pct: 100.0
+    n2_max_pct: 100.0
+    tgt_max_degc: 810
+    torque_max_pct: 100.0
+    has_carb_heat: false
+    has_primer: false
+    condition_lever_id: sel_condition_1
+    starter_id: btn_starter_1

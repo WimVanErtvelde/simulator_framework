@@ -1,0 +1,8 @@
+engines:
+  count: 1
+  type: piston
+  engines:
+    - name: engine_1
+      max_power_hp: 180
+      idle_rpm: 600
+      max_rpm: 2700

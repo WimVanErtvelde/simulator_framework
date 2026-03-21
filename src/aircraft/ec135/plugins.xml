@@ -1,0 +1,17 @@
+<library path="aircraft_ec135_plugins">
+  <class type="aircraft_ec135::ElectricalModel" base_class_type="sim_interfaces::IElectricalModel">
+    <description>EC135 electrical system model</description>
+  </class>
+  <class type="aircraft_ec135::FuelModel" base_class_type="sim_interfaces::IFuelModel">
+    <description>EC135 fuel system model</description>
+  </class>
+  <class type="aircraft_ec135::EnginesModel" base_class_type="sim_interfaces::IEnginesModel">
+    <description>EC135 engines model</description>
+  </class>
+  <class type="aircraft_ec135::GearModel" base_class_type="sim_interfaces::IGearModel">
+    <description>EC135 gear model</description>
+  </class>
+  <class type="aircraft_ec135::NavigationModel" base_class_type="sim_interfaces::INavigationModel">
+    <description>EC135 navigation model</description>
+  </class>
+</library>

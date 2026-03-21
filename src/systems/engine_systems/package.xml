@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>sim_engine_systems</name>
+  <version>0.0.1</version>
+  <description>Engines system — N1/N2, EGT, torque, fuel flow, start sequence</description>
+  <maintainer email="todo@todo.com">TODO</maintainer>
+  <license>TODO</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+  <depend>sim_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>pluginlib</depend>
+  <depend>sim_interfaces</depend>
+  <depend>ament_index_cpp</depend>
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

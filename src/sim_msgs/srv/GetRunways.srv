@@ -1,0 +1,4 @@
+string icao
+---
+bool found
+Airport airport       # includes full runway data

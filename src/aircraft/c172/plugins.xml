@@ -1,0 +1,17 @@
+<library path="aircraft_c172_plugins">
+  <class type="aircraft_c172::ElectricalModel" base_class_type="sim_interfaces::IElectricalModel">
+    <description>C172 electrical system model</description>
+  </class>
+  <class type="aircraft_c172::FuelModel" base_class_type="sim_interfaces::IFuelModel">
+    <description>C172 fuel system model</description>
+  </class>
+  <class type="aircraft_c172::EnginesModel" base_class_type="sim_interfaces::IEnginesModel">
+    <description>C172 engines model</description>
+  </class>
+  <class type="aircraft_c172::GearModel" base_class_type="sim_interfaces::IGearModel">
+    <description>C172 gear model</description>
+  </class>
+  <class type="aircraft_c172::NavigationModel" base_class_type="sim_interfaces::INavigationModel">
+    <description>C172 navigation model</description>
+  </class>
+</library>

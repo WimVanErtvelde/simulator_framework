@@ -1,0 +1,215 @@
+failures:
+  # --- ATA 24: Electrical ---
+  - id: ata24_alternator_failure_1
+    ata: 24
+    display_name: "Alternator 1 Failure"
+    category: electrical
+    injection:
+      handler: electrical
+      method: set_electrical_component_failed
+      params: {component_id: ALT1}
+
+  - id: ata24_alternator_failure_2
+    ata: 24
+    display_name: "Alternator 2 Failure"
+    category: electrical
+    injection:
+      handler: electrical
+      method: set_electrical_component_failed
+      params: {component_id: ALT2}
+
+  - id: ata24_battery_failure
+    ata: 24
+    display_name: "Battery Failure"
+    category: electrical
+    injection:
+      handler: electrical
+      method: set_electrical_component_failed
+      params: {component_id: BAT1}
+
+  # --- ATA 26: Fire ---
+  - id: ata26_engine_fire_1
+    ata: 26
+    display_name: "Engine 1 Fire"
+    category: engine
+    injection:
+      handler: flight_model
+      method: set_engine_fire
+      params: {engine_index: 0, value: true}
+
+  - id: ata26_engine_fire_2
+    ata: 26
+    display_name: "Engine 2 Fire"
+    category: engine
+    injection:
+      handler: flight_model
+      method: set_engine_fire
+      params: {engine_index: 1, value: true}
+
+  # --- ATA 28: Fuel ---
+  - id: ata28_fuel_leak_left
+    ata: 28
+    display_name: "Fuel Leak - Left Tank"
+    category: fuel
+    injection:
+      handler: flight_model
+      method: set_fuel_tank_drain
+      params: {tank_index: 0, rate_lph: 20.0}
+
+  - id: ata28_fuel_leak_right
+    ata: 28
+    display_name: "Fuel Leak - Right Tank"
+    category: fuel
+    injection:
+      handler: flight_model
+      method: set_fuel_tank_drain
+      params: {tank_index: 1, rate_lph: 20.0}
+
+  # --- ATA 32: Landing Gear ---
+  - id: ata32_gear_unable_to_extend_nose
+    ata: 32
+    display_name: "Nose Gear Unable to Extend"
+    category: gear
+    injection:
+      handler: flight_model
+      method: set_gear_unsafe_indication
+      params: {gear_index: 0}
+
+  - id: ata32_gear_unable_to_extend_main
+    ata: 32
+    display_name: "Main Gear Unable to Extend"
+    category: gear
+    injection:
+      handler: flight_model
+      method: set_gear_unsafe_indication
+      params: {gear_index: 1}
+
+  # --- ATA 34: Navigation & Instruments ---
+  - id: ata34_nav1_receiver_failed
+    ata: 34
+    display_name: "NAV1 Receiver Failure"
+    category: navigation
+    injection:
+      handler: sim_failures
+      method: set_nav_receiver_failed
+      params: {receiver_id: NAV1}
+
+  - id: ata34_nav2_receiver_failed
+    ata: 34
+    display_name: "NAV2 Receiver Failure"
+    category: navigation
+    injection:
+      handler: sim_failures
+      method: set_nav_receiver_failed
+      params: {receiver_id: NAV2}
+
+  - id: ata34_adf_receiver_failed
+    ata: 34
+    display_name: "ADF Receiver Failure"
+    category: navigation
+    injection:
+      handler: sim_failures
+      method: set_nav_receiver_failed
+      params: {receiver_id: ADF}
+
+  - id: ata34_attitude_indicator_failed
+    ata: 34
+    display_name: "Attitude Indicator Failure"
+    category: instruments
+    injection:
+      handler: sim_failures
+      method: set_instrument_failed
+      params: {instrument_id: ATT}
+
+  - id: ata34_altimeter_failed
+    ata: 34
+    display_name: "Altimeter Failure"
+    category: instruments
+    injection:
+      handler: sim_failures
+      method: set_instrument_failed
+      params: {instrument_id: ALT1}
+
+  - id: ata34_pitot_failed
+    ata: 34
+    display_name: "Pitot Tube Failure"
+    category: instruments
+    injection:
+      handler: flight_model
+      method: set_pitot_failed
+      params: {index: 0}
+
+  # --- ATA 63: Tail Rotor ---
+  - id: ata63_tail_rotor_failure
+    ata: 63
+    display_name: "Tail Rotor Failure"
+    category: rotor
+    injection:
+      handler: flight_model
+      method: set_tail_rotor_failed
+      params: {}
+
+  # --- ATA 71: Engines ---
+  - id: ata71_engine_failure_1
+    ata: 71
+    display_name: "Engine 1 Failure"
+    category: engine
+    injection:
+      handler: flight_model
+      method: set_engine_running
+      params: {engine_index: 0, value: false}
+
+  - id: ata71_engine_failure_2
+    ata: 71
+    display_name: "Engine 2 Failure"
+    category: engine
+    injection:
+      handler: flight_model
+      method: set_engine_running
+      params: {engine_index: 1, value: false}
+
+  - id: ata71_partial_power_60pct_1
+    ata: 71
+    display_name: "Engine 1 Partial Power (60%)"
+    category: engine
+    injection:
+      handler: flight_model
+      method: set_engine_thrust_scalar
+      params: {engine_index: 0, value: 0.6}
+
+  - id: ata71_partial_power_60pct_2
+    ata: 71
+    display_name: "Engine 2 Partial Power (60%)"
+    category: engine
+    injection:
+      handler: flight_model
+      method: set_engine_thrust_scalar
+      params: {engine_index: 1, value: 0.6}
+
+  - id: ata71_low_oil_pressure_1
+    ata: 71
+    display_name: "Engine 1 Low Oil Pressure"
+    category: engine
+    injection:
+      handler: flight_model
+      method: set_engine_oil_pressure
+      params: {engine_index: 0, value_psi: 20.0}
+
+  - id: ata71_low_oil_pressure_2
+    ata: 71
+    display_name: "Engine 2 Low Oil Pressure"
+    category: engine
+    injection:
+      handler: flight_model
+      method: set_engine_oil_pressure
+      params: {engine_index: 1, value_psi: 20.0}
+
+  # --- World ---
+  - id: world_navaid_station_failed
+    ata: ~
+    display_name: "Navaid Station Failure"
+    category: world_navaid
+    injection:
+      handler: navaid_sim
+      method: set_navaid_station_failed
+      params: {station_id: ""}

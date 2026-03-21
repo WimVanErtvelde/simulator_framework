@@ -1,0 +1,21 @@
+engine_type: "piston"
+engine_count: 1
+engines:
+  - id: engine_0
+    type: piston
+    rpm_max: 2700
+    rpm_idle: 700
+    egt_max_degc: 900
+    cht_max_degc: 240
+    oil_pressure_min_psi: 25
+    oil_pressure_normal_psi: 60
+    oil_temp_max_degc: 118
+    manifold_pressure_max_inhg: 29.5
+    fuel_flow_max_gph: 12.0
+    has_carb_heat: true
+    has_primer: true
+    magneto_switch_id: sel_magnetos
+    mixture_id: pot_mixture
+    carb_heat_id: sw_carb_heat
+    starter_id: btn_starter
+    primer_id: btn_primer

@@ -1,0 +1,9 @@
+gear:
+  type: fixed_tricycle
+  legs:
+    - name: nose
+      retractable: false
+    - name: left_main
+      retractable: false
+    - name: right_main
+      retractable: false

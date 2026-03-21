@@ -1,0 +1,505 @@
+# Eurocopter EC135 — Electrical System Topology
+# Reference: EC135 AMM Chapter 24 (Electrical Power)
+#
+# Twin-engine 28V DC system:
+#   - 2x 28.5V 200A starter/generators (one per engine)
+#   - APU generator (28.5V, 150A)
+#   - External power (28V, 300A)
+#   - Main battery (24V, 40Ah) + standby battery (24V, 17Ah)
+#   - 7 buses: main DC, essential, battery, hot battery, standby, avionics, non-essential
+
+aircraft:
+  type: "Eurocopter EC135"
+  designation: "EC135-P2"
+  revision: "1.0.0"
+
+solver:
+  rate_hz: 50
+  propagation_passes: 4
+  contactor_delay_ms: 80
+
+sources:
+  - id: gen1
+    type: starter_generator
+    label: "GEN 1"
+    nominal_voltage: 28.5
+    engine_index: 0
+    min_rpm_pct: 56.0
+    max_current: 200
+    gcu:
+      overvolt_threshold: 32.0
+      undervolt_threshold: 20.0
+      trip_delay_ms: 500
+      reset_mode: manual
+
+  - id: gen2
+    type: starter_generator
+    label: "GEN 2"
+    nominal_voltage: 28.5
+    engine_index: 1
+    min_rpm_pct: 56.0
+    max_current: 200
+    gcu:
+      overvolt_threshold: 32.0
+      undervolt_threshold: 20.0
+      trip_delay_ms: 500
+      reset_mode: manual
+
+  - id: apu_gen
+    type: apu_generator
+    label: "APU GEN"
+    nominal_voltage: 28.5
+    max_current: 150
+
+  - id: ext_pwr
+    type: external_power
+    label: "EXT PWR"
+    nominal_voltage: 28.0
+    max_current: 300
+
+  - id: batt1
+    type: battery
+    label: "MAIN BATT"
+    nominal_voltage: 24.0
+    battery:
+      capacity_ah: 40
+      internal_resistance_ohm: 0.05
+      charge_rate_max: 20
+      soc_voltage_curve:
+        - [0, 18.0]
+        - [10, 20.0]
+        - [20, 21.5]
+        - [40, 22.8]
+        - [60, 23.5]
+        - [80, 24.0]
+        - [90, 24.2]
+        - [100, 24.5]
+
+  - id: batt2
+    type: battery
+    label: "STBY BATT"
+    nominal_voltage: 24.0
+    battery:
+      capacity_ah: 17
+      internal_resistance_ohm: 0.08
+      charge_rate_max: 10
+      soc_voltage_curve:
+        - [0, 18.0]
+        - [10, 20.0]
+        - [20, 21.5]
+        - [40, 22.8]
+        - [60, 23.5]
+        - [80, 24.0]
+        - [90, 24.2]
+        - [100, 24.5]
+
+buses:
+  - id: main_dc_bus
+    label: "MAIN DC BUS"
+    type: dc
+    nominal_voltage: 28.0
+    shed_priority: 3
+
+  - id: ess_bus
+    label: "ESS BUS"
+    type: dc
+    nominal_voltage: 28.0
+    shed_priority: -1
+
+  - id: batt_bus
+    label: "BATT BUS"
+    type: dc
+    nominal_voltage: 24.0
+    shed_priority: -1
+
+  - id: hot_batt_bus
+    label: "HOT BATT BUS"
+    type: dc
+    nominal_voltage: 24.0
+    shed_priority: -1
+
+  - id: stby_bus
+    label: "STBY BUS"
+    type: dc
+    nominal_voltage: 24.0
+    shed_priority: -1
+
+  - id: avionics_bus
+    label: "AVIONICS BUS"
+    type: dc
+    nominal_voltage: 28.0
+    shed_priority: 2
+
+  - id: non_ess_bus
+    label: "NON-ESS BUS"
+    type: dc
+    nominal_voltage: 28.0
+    shed_priority: 1
+
+switches:
+  - id: sw_gen1
+    type: contactor
+    label: "GEN 1"
+    source: gen1
+    target: main_dc_bus
+    default_closed: false
+    pilot_controllable: true
+
+  - id: sw_gen2
+    type: contactor
+    label: "GEN 2"
+    source: gen2
+    target: main_dc_bus
+    default_closed: false
+    pilot_controllable: true
+
+  - id: sw_apu_gen
+    type: contactor
+    label: "APU GEN"
+    source: apu_gen
+    target: main_dc_bus
+    default_closed: false
+    pilot_controllable: true
+
+  - id: sw_ext_pwr
+    type: contactor
+    label: "EXT PWR"
+    source: ext_pwr
+    target: main_dc_bus
+    default_closed: false
+    pilot_controllable: true
+
+  - id: sw_battery
+    type: switch
+    label: "BATT"
+    source: batt1
+    target: batt_bus
+    default_closed: true
+    pilot_controllable: true
+
+  - id: sw_stby_batt
+    type: switch
+    label: "STBY BATT"
+    source: batt2
+    target: stby_bus
+    default_closed: true
+    pilot_controllable: true
+
+  - id: sw_bus_tie
+    type: bus_tie
+    label: "BUS TIE"
+    source: main_dc_bus
+    target: ess_bus
+    default_closed: true
+    pilot_controllable: true
+
+  - id: sw_batt_bus_tie
+    type: relay
+    label: "BATT BUS TIE"
+    source: batt_bus
+    target: ess_bus
+    default_closed: true
+    coil_bus: ess_bus
+    pilot_controllable: false
+
+  - id: sw_avionics_master
+    type: switch
+    label: "AVIONICS MASTER"
+    source: main_dc_bus
+    target: avionics_bus
+    default_closed: true
+    pilot_controllable: true
+
+  - id: sw_non_ess
+    type: relay
+    label: "NON-ESS RELAY"
+    source: main_dc_bus
+    target: non_ess_bus
+    default_closed: true
+    coil_bus: main_dc_bus
+    pilot_controllable: false
+
+loads:
+  - id: fms
+    label: "FMS"
+    bus: avionics_bus
+    type: avionics
+    nominal_current: 2.5
+    circuit_breaker:
+      id: cb_fms
+      rating: 5.0
+      trip_curve: thermal_magnetic
+      panel_location: "CB-PANEL-R-12"
+    essential: false
+    affected_systems: ["fms_display"]
+
+  - id: com1
+    label: "COM 1"
+    bus: avionics_bus
+    type: avionics
+    nominal_current: 3.0
+    circuit_breaker:
+      id: cb_com1
+      rating: 5.0
+      trip_curve: thermal_magnetic
+      panel_location: "CB-PANEL-R-14"
+    essential: true
+    affected_systems: ["vhf_com1"]
+
+  - id: com2
+    label: "COM 2"
+    bus: ess_bus
+    type: avionics
+    nominal_current: 3.0
+    circuit_breaker:
+      id: cb_com2
+      rating: 5.0
+      trip_curve: thermal_magnetic
+      panel_location: "CB-PANEL-R-15"
+    essential: true
+    affected_systems: ["vhf_com2"]
+
+  - id: nav_gps
+    label: "NAV/GPS"
+    bus: avionics_bus
+    type: avionics
+    nominal_current: 2.0
+    circuit_breaker:
+      id: cb_nav
+      rating: 5.0
+      trip_curve: thermal
+      panel_location: "CB-PANEL-R-16"
+    essential: false
+    affected_systems: ["gps_nav"]
+
+  - id: adc
+    label: "ADC"
+    bus: ess_bus
+    type: avionics
+    nominal_current: 1.5
+    circuit_breaker:
+      id: cb_adc
+      rating: 3.0
+      trip_curve: thermal_magnetic
+      panel_location: "CB-PANEL-L-03"
+    essential: true
+    affected_systems: ["air_data"]
+
+  - id: ahrs
+    label: "AHRS"
+    bus: ess_bus
+    type: avionics
+    nominal_current: 2.0
+    circuit_breaker:
+      id: cb_ahrs
+      rating: 5.0
+      trip_curve: thermal_magnetic
+      panel_location: "CB-PANEL-L-04"
+    essential: true
+    affected_systems: ["attitude_heading"]
+
+  - id: autopilot
+    label: "AUTOPILOT"
+    bus: main_dc_bus
+    type: avionics
+    nominal_current: 4.0
+    circuit_breaker:
+      id: cb_ap
+      rating: 7.5
+      trip_curve: thermal_magnetic
+      panel_location: "CB-PANEL-L-08"
+    essential: false
+    affected_systems: ["afcs"]
+
+  - id: fuel_pump_l
+    label: "FUEL PUMP L"
+    bus: main_dc_bus
+    type: motor
+    nominal_current: 8.0
+    inrush_current: 24.0
+    inrush_duration_ms: 500
+    circuit_breaker:
+      id: cb_fpl
+      rating: 15.0
+      trip_curve: thermal_magnetic
+      panel_location: "CB-PANEL-L-10"
+    essential: true
+    affected_systems: ["fuel_system_left"]
+
+  - id: fuel_pump_r
+    label: "FUEL PUMP R"
+    bus: main_dc_bus
+    type: motor
+    nominal_current: 8.0
+    inrush_current: 24.0
+    inrush_duration_ms: 500
+    circuit_breaker:
+      id: cb_fpr
+      rating: 15.0
+      trip_curve: thermal_magnetic
+      panel_location: "CB-PANEL-L-11"
+    essential: true
+    affected_systems: ["fuel_system_right"]
+
+  - id: hyd_pump
+    label: "AUX HYD PUMP"
+    bus: main_dc_bus
+    type: motor
+    nominal_current: 15.0
+    inrush_current: 45.0
+    inrush_duration_ms: 800
+    circuit_breaker:
+      id: cb_hyd
+      rating: 25.0
+      trip_curve: magnetic
+      panel_location: "CB-PANEL-L-12"
+    essential: false
+    affected_systems: ["hydraulic_aux"]
+
+  - id: pitot_heat
+    label: "PITOT HEAT"
+    bus: ess_bus
+    type: resistive
+    nominal_current: 5.0
+    circuit_breaker:
+      id: cb_pitot
+      rating: 10.0
+      trip_curve: thermal
+      panel_location: "CB-PANEL-L-15"
+    essential: true
+    affected_systems: ["pitot_static"]
+
+  - id: landing_lt
+    label: "LANDING LT"
+    bus: non_ess_bus
+    type: resistive
+    nominal_current: 10.0
+    circuit_breaker:
+      id: cb_ldg_lt
+      rating: 15.0
+      trip_curve: thermal
+      panel_location: "CB-PANEL-R-20"
+    essential: false
+    affected_systems: ["external_lights"]
+
+  - id: cabin_lt
+    label: "CABIN LT"
+    bus: non_ess_bus
+    type: resistive
+    nominal_current: 3.0
+    circuit_breaker:
+      id: cb_cabin
+      rating: 5.0
+      trip_curve: thermal
+      panel_location: "CB-PANEL-R-22"
+    essential: false
+    affected_systems: ["cabin_lighting"]
+
+  - id: caution_panel
+    label: "CAUTION PNL"
+    bus: hot_batt_bus
+    type: avionics
+    nominal_current: 0.5
+    circuit_breaker:
+      id: cb_caut
+      rating: 2.0
+      trip_curve: thermal
+      panel_location: "CB-PANEL-L-01"
+    essential: true
+    affected_systems: ["cas"]
+
+  - id: fire_det
+    label: "FIRE DET"
+    bus: hot_batt_bus
+    type: avionics
+    nominal_current: 0.3
+    circuit_breaker:
+      id: cb_fire
+      rating: 2.0
+      trip_curve: thermal
+      panel_location: "CB-PANEL-L-02"
+    essential: true
+    affected_systems: ["fire_detection"]
+
+  - id: elt
+    label: "ELT"
+    bus: hot_batt_bus
+    type: avionics
+    nominal_current: 0.1
+    circuit_breaker:
+      id: cb_elt
+      rating: 1.0
+      trip_curve: thermal
+      panel_location: "CB-PANEL-R-25"
+    essential: true
+    affected_systems: ["emergency_locator"]
+
+  - id: stby_inst
+    label: "STBY INSTRUMENTS"
+    bus: stby_bus
+    type: avionics
+    nominal_current: 1.0
+    circuit_breaker:
+      id: cb_stby
+      rating: 3.0
+      trip_curve: thermal
+      panel_location: "CB-PANEL-L-05"
+    essential: true
+    affected_systems: ["stby_attitude", "stby_altimeter"]
+
+direct_connections:
+  - from: batt1
+    to: hot_batt_bus
+
+cas_messages:
+  - id: gen1_fail
+    text: "GEN 1 FAIL"
+    level: warning
+    condition:
+      type: source_fail
+      target_id: gen1
+
+  - id: gen2_fail
+    text: "GEN 2 FAIL"
+    level: warning
+    condition:
+      type: source_fail
+      target_id: gen2
+
+  - id: main_bus_off
+    text: "MAIN BUS OFF"
+    level: warning
+    condition:
+      type: bus_dead
+      target_id: main_dc_bus
+
+  - id: ess_bus_off
+    text: "ESS BUS OFF"
+    level: warning
+    condition:
+      type: bus_dead
+      target_id: ess_bus
+
+  - id: batt_low
+    text: "BATT LOW"
+    level: caution
+    condition:
+      type: low_soc
+      target_id: batt1
+      threshold: 20
+
+  - id: batt_depleted
+    text: "BATT DEPLETED"
+    level: warning
+    condition:
+      type: low_soc
+      target_id: batt1
+      threshold: 5
+
+  - id: low_volt
+    text: "LOW VOLTS"
+    level: caution
+    condition:
+      type: low_voltage
+      target_id: main_dc_bus
+      threshold: 24.0

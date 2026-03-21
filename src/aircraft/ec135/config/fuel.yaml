@@ -1,0 +1,21 @@
+fuel:
+  fuel_type: "JET_A1"
+  density_kg_per_liter: 0.800
+  display_unit: "L"
+  tanks:
+    - id: main_tank
+      name: "Main Tank"
+      capacity_kg: 738.0
+      unusable_kg: 15.0
+      arm_m: 0.0
+  feed:
+    - engine_index: 0
+      selector_id: null
+    - engine_index: 1
+      selector_id: null
+  boost_pumps:
+    - id: sw_fuel_pump_l
+      tank: main_tank
+    - id: sw_fuel_pump_r
+      tank: main_tank
+  low_fuel_threshold_pct: 0.15

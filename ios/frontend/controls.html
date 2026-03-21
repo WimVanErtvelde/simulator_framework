@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Keyboard Controls</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0e17; color: #e2e8f0; font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    display: flex; justify-content: center; padding: 24px; user-select: none;
+  }
+  .container { width: 720px; }
+  h1 { font-size: 16px; color: #00ff88; margin-bottom: 16px; letter-spacing: 1px; }
+
+  /* Position bar */
+  .position-bar {
+    display: flex; justify-content: space-between;
+    background: #111827; border: 1px solid #1e293b; border-radius: 8px;
+    padding: 8px 16px; margin-bottom: 12px; font-size: 13px;
+  }
+  .pos-field { color: #e2e8f0; }
+  .pos-label { color: #64748b; font-size: 11px; margin-right: 4px; }
+
+  .section { background: #111827; border: 1px solid #1e293b; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+  .section-title { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 12px; }
+  .bar-row { display: flex; align-items: center; margin-bottom: 8px; }
+  .bar-label { width: 100px; font-size: 13px; color: #94a3b8; }
+  .bar-value { width: 52px; text-align: right; font-size: 13px; color: #e2e8f0; margin-left: 8px; }
+  .bar-track { flex: 1; height: 18px; background: #1c2333; border-radius: 4px; position: relative; overflow: hidden; }
+  .bar-fill { height: 100%; position: absolute; top: 0; transition: none; }
+  .bar-center { left: 50%; background: #334155; width: 1px; height: 100%; position: absolute; }
+  .bar-fill.positive { background: #00ff88; }
+  .bar-fill.negative { background: #39d0d8; }
+  .bar-fill.throttle { background: #f59e0b; left: 0; }
+  .badges { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 6px;
+           font-size: 13px; font-weight: 600; border: 1px solid #1e293b; background: #1c2333; }
+  .badge .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .badge.on .dot { background: #00ff88; }
+  .badge.off .dot { background: #64748b; }
+  .flap-indicator { display: flex; gap: 4px; align-items: center; }
+  .flap-notch { width: 28px; height: 18px; border-radius: 3px; background: #1c2333; border: 1px solid #334155;
+                display: flex; align-items: center; justify-content: center; font-size: 10px; color: #64748b; }
+  .flap-notch.active { background: #00ff88; color: #0a0e17; border-color: #00ff88; font-weight: 700; }
+  .trim-value { font-size: 13px; color: #e2e8f0; }
+
+  /* Six-pack gauges */
+  .six-pack { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .gauge-cell { text-align: center; }
+  .gauge-title { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 2px; }
+  .gauge-cell svg { width: 100%; max-width: 200px; height: auto; }
+
+  .legend { background: #111827; border: 1px solid #1e293b; border-radius: 8px; padding: 16px; }
+  .legend-title { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 10px; }
+  .legend-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; }
+  .legend-item { font-size: 12px; color: #94a3b8; display: flex; gap: 8px; }
+  .legend-item kbd { background: #1c2333; border: 1px solid #334155; border-radius: 3px;
+                     padding: 1px 6px; font-family: inherit; color: #e2e8f0; min-width: 22px; text-align: center; }
+  .ws-status { font-size: 11px; color: #64748b; margin-top: 12px; }
+  .ws-status.connected { color: #00ff88; }
+  .ws-status.disconnected { color: #ff3b30; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>KEYBOARD FLIGHT CONTROLS</h1>
+
+  <!-- Position Info Bar -->
+  <div class="position-bar">
+    <div class="pos-field"><span class="pos-label">LAT</span><span id="pos-lat">--</span>°</div>
+    <div class="pos-field"><span class="pos-label">LON</span><span id="pos-lon">--</span>°</div>
+    <div class="pos-field"><span class="pos-label">ALT</span><span id="pos-alt">--</span> FT</div>
+    <div class="pos-field"><span class="pos-label">HDG</span><span id="pos-hdg">---</span>°</div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Flight Axes</div>
+    <div class="bar-row">
+      <span class="bar-label">Aileron</span>
+      <div class="bar-track"><div class="bar-center"></div><div id="bar-ail" class="bar-fill positive"></div></div>
+      <span class="bar-value" id="val-ail">0.00</span>
+    </div>
+    <div class="bar-row">
+      <span class="bar-label">Elevator</span>
+      <div class="bar-track"><div class="bar-center"></div><div id="bar-elev" class="bar-fill positive"></div></div>
+      <span class="bar-value" id="val-elev">0.00</span>
+    </div>
+    <div class="bar-row">
+      <span class="bar-label">Rudder</span>
+      <div class="bar-track"><div class="bar-center"></div><div id="bar-rud" class="bar-fill positive"></div></div>
+      <span class="bar-value" id="val-rud">0.00</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Engine</div>
+    <div class="bar-row">
+      <span class="bar-label">Throttle</span>
+      <div class="bar-track"><div id="bar-thr" class="bar-fill throttle"></div></div>
+      <span class="bar-value" id="val-thr">0.00</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Configuration</div>
+    <div class="bar-row">
+      <span class="bar-label">Trim Elev</span>
+      <span class="trim-value" id="val-trim">0.000</span>
+    </div>
+    <div class="bar-row" style="margin-top:8px">
+      <span class="bar-label">Flaps</span>
+      <div class="flap-indicator">
+        <div class="flap-notch active" id="flap-0">0</div>
+        <div class="flap-notch" id="flap-1">1</div>
+        <div class="flap-notch" id="flap-2">2</div>
+        <div class="flap-notch" id="flap-3">3</div>
+      </div>
+    </div>
+    <div class="badges" style="margin-top:12px">
+      <div class="badge on" id="badge-gear"><span class="dot"></span><span id="gear-text">GEAR DN</span></div>
+      <div class="badge off" id="badge-park"><span class="dot"></span><span id="park-text">PARK OFF</span></div>
+      <div class="badge off" id="badge-brake"><span class="dot"></span><span>BRAKE</span></div>
+    </div>
+  </div>
+
+  <!-- Six-Pack Flight Instruments -->
+  <div class="section">
+    <div class="section-title">Flight Instruments</div>
+    <div class="six-pack">
+      <div class="gauge-cell"><div class="gauge-title">Airspeed</div><svg id="g-asi" viewBox="0 0 200 200"></svg></div>
+      <div class="gauge-cell"><div class="gauge-title">Attitude</div><svg id="g-ai" viewBox="0 0 200 200"></svg></div>
+      <div class="gauge-cell"><div class="gauge-title">Altitude</div><svg id="g-alt" viewBox="0 0 200 200"></svg></div>
+      <div class="gauge-cell"><div class="gauge-title">Turn Coord</div><svg id="g-tc" viewBox="0 0 200 200"></svg></div>
+      <div class="gauge-cell"><div class="gauge-title">Heading</div><svg id="g-hi" viewBox="0 0 200 200"></svg></div>
+      <div class="gauge-cell"><div class="gauge-title">Vert Speed</div><svg id="g-vsi" viewBox="0 0 200 200"></svg></div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <div class="legend-title">Key Bindings</div>
+    <div class="legend-grid">
+      <div class="legend-item"><kbd>W</kbd><kbd>S</kbd> Nose dn/up</div>
+      <div class="legend-item"><kbd>A</kbd><kbd>D</kbd> Aileron +/-</div>
+      <div class="legend-item"><kbd>Q</kbd><kbd>E</kbd> Rudder R/L</div>
+      <div class="legend-item"><kbd>R</kbd><kbd>F</kbd> Throttle +/-</div>
+      <div class="legend-item"><kbd>T</kbd><kbd>G</kbd> Trim Elev +/-</div>
+      <div class="legend-item"><kbd>[</kbd><kbd>]</kbd> Flaps -/+</div>
+      <div class="legend-item"><kbd>L</kbd> Toggle Gear</div>
+      <div class="legend-item"><kbd>P</kbd> Toggle Park Brake</div>
+      <div class="legend-item"><kbd>B</kbd> Brake (hold)</div>
+      <div class="legend-item"><kbd>Space</kbd> Center sticks</div>
+    </div>
+  </div>
+
+  <div class="ws-status disconnected" id="ws-status">Disconnected</div>
+</div>
+
+<script>
+const WS_URL = 'ws://localhost:8080/ws';
+const RATE_HZ = 20;
+const AXIS_STEP = 0.02;
+const TRIM_STEP = 0.005;
+const FLAP_POSITIONS = [0.0, 0.33, 0.67, 1.0];
+
+// ── Control state ───────────────────────────────────────────────────────
+let aileron = 0, elevator = 0, rudder = 0;
+let throttle = 0;
+let trimElevator = 0;
+let flapIndex = 0;
+let gearDown = true;
+let parkingBrake = false;
+let brakeHeld = false;
+const keysDown = new Set();
+
+// ── Flight model state (from WS) ───────────────────────────────────────
+const fms = { lat: 0, lon: 0, altFtMsl: 0, hdgDeg: 0, iasKt: 0, vsFpm: 0, pitchDeg: 0, rollDeg: 0 };
+
+// ── SVG helpers ─────────────────────────────────────────────────────────
+const CX = 100, CY = 100;
+
+function pol(r, deg) {
+  const a = (deg - 90) * Math.PI / 180;
+  return [CX + r * Math.cos(a), CY + r * Math.sin(a)];
+}
+
+function ln(x1, y1, x2, y2, c, w) {
+  return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${c}" stroke-width="${w}" stroke-linecap="round"/>`;
+}
+
+function tx(x, y, t, sz, c) {
+  return `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" fill="${c}" font-size="${sz}" text-anchor="middle" dominant-baseline="central" font-family="monospace">${t}</text>`;
+}
+
+function arcPath(r, sd, ed, c, w) {
+  const [x1, y1] = pol(r, sd);
+  const [x2, y2] = pol(r, ed);
+  let sw = ed - sd; while (sw < 0) sw += 360; while (sw > 360) sw -= 360;
+  return `<path d="M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${r} ${r} 0 ${sw > 180 ? 1 : 0} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}" fill="none" stroke="${c}" stroke-width="${w}" stroke-linecap="round"/>`;
+}
+
+function bezel() {
+  return `<circle cx="${CX}" cy="${CY}" r="92" fill="#111827" stroke="#334155" stroke-width="2"/><circle cx="${CX}" cy="${CY}" r="84" fill="#0d1117"/>`;
+}
+
+function needle(id, len, c, w) {
+  return `<g id="${id}"><line x1="${CX}" y1="${CY + 5}" x2="${CX}" y2="${CY - len}" stroke="${c}" stroke-width="${w}" stroke-linecap="round"/></g>`;
+}
+
+function cap(r) {
+  return `<circle cx="${CX}" cy="${CY}" r="${r || 5}" fill="#334155" stroke="#64748b" stroke-width="1"/>`;
+}
+
+// ── ASI ─────────────────────────────────────────────────────────────────
+function buildASI(svg) {
+  let h = bezel();
+  // Green arc 60-130 kt
+  const a = v => 210 + (v / 200) * 300;
+  h += arcPath(76, a(60), a(130), '#00ff88', 5);
+  // White arc 40-85 (flap range)
+  h += arcPath(70, a(40), a(85), 'rgba(255,255,255,0.3)', 3);
+  // Yellow arc 130-163
+  h += arcPath(76, a(130), a(163), '#f59e0b', 5);
+  // Red line at Vne 163
+  const [rx1, ry1] = pol(70, a(163)); const [rx2, ry2] = pol(83, a(163));
+  h += ln(rx1, ry1, rx2, ry2, '#ff3b30', 3);
+  // Ticks and labels
+  for (let v = 0; v <= 200; v += 10) {
+    const deg = a(v); const maj = v % 20 === 0;
+    const [x1, y1] = pol(maj ? 66 : 73, deg); const [x2, y2] = pol(82, deg);
+    h += ln(x1, y1, x2, y2, maj ? '#e2e8f0' : '#64748b', maj ? 1.5 : 1);
+    if (maj && v > 0) { const [lx, ly] = pol(57, deg); h += tx(lx, ly, v, 11, '#e2e8f0'); }
+  }
+  h += tx(CX, CY + 30, 'KT', 10, '#64748b');
+  h += needle('asi-n', 62, '#ff3b30', 2.5);
+  h += cap();
+  svg.innerHTML = h;
+}
+function updateASI(kt) {
+  const a = 210 + (Math.max(0, Math.min(200, kt)) / 200) * 300;
+  document.getElementById('asi-n').setAttribute('transform', `rotate(${a} ${CX} ${CY})`);
+}
+
+// ── Attitude Indicator ──────────────────────────────────────────────────
+function buildAI(svg) {
+  let h = bezel();
+  h += `<defs><clipPath id="ai-cp"><circle cx="${CX}" cy="${CY}" r="80"/></clipPath></defs>`;
+  h += `<g clip-path="url(#ai-cp)">`;
+  h += `<g id="ai-r" transform="rotate(0 ${CX} ${CY})">`;
+  h += `<g id="ai-p" transform="translate(0 0)">`;
+  h += `<rect x="-50" y="-150" width="400" height="250" fill="#1e3a5f"/>`;
+  h += `<rect x="-50" y="${CY}" width="400" height="250" fill="#5c3d2e"/>`;
+  h += ln(-50, CY, 250, CY, '#fff', 2);
+  for (const pd of [-20, -10, 10, 20]) {
+    const py = CY - pd * 2, w = Math.abs(pd) === 20 ? 25 : 15;
+    h += ln(CX - w, py, CX + w, py, 'rgba(255,255,255,0.5)', 1);
+    if (Math.abs(pd) === 20) h += tx(CX + w + 10, py, Math.abs(pd), 8, 'rgba(255,255,255,0.5)');
+  }
+  h += `</g></g></g>`;
+  // Bank marks
+  for (const b of [-60, -45, -30, -20, -10, 0, 10, 20, 30, 45, 60]) {
+    const [x1, y1] = pol(80, b); const [x2, y2] = pol(88, b);
+    h += ln(x1, y1, x2, y2, b === 0 ? '#f59e0b' : '#94a3b8', Math.abs(b) % 30 === 0 ? 2 : 1);
+  }
+  // Fixed wings reference
+  h += ln(CX - 35, CY, CX - 12, CY, '#f59e0b', 3);
+  h += ln(CX + 12, CY, CX + 35, CY, '#f59e0b', 3);
+  h += `<circle cx="${CX}" cy="${CY}" r="3" fill="#f59e0b"/>`;
+  svg.innerHTML = h;
+}
+function updateAI(pitch, roll) {
+  document.getElementById('ai-r').setAttribute('transform', `rotate(${-roll} ${CX} ${CY})`);
+  document.getElementById('ai-p').setAttribute('transform', `translate(0 ${pitch * 2})`);
+}
+
+// ── Altimeter ───────────────────────────────────────────────────────────
+function buildALT(svg) {
+  let h = bezel();
+  for (let i = 0; i < 50; i++) {
+    const deg = i * 7.2, maj = i % 5 === 0;
+    const [x1, y1] = pol(maj ? 66 : 73, deg); const [x2, y2] = pol(82, deg);
+    h += ln(x1, y1, x2, y2, maj ? '#e2e8f0' : '#64748b', maj ? 1.5 : 1);
+    if (maj) { const [lx, ly] = pol(57, deg); h += tx(lx, ly, i / 5, 14, '#e2e8f0'); }
+  }
+  // Digital readout
+  h += `<rect x="${CX - 28}" y="${CY + 18}" width="56" height="18" rx="3" fill="#0d1117" stroke="#334155" stroke-width="1"/>`;
+  h += `<text id="alt-dig" x="${CX}" y="${CY + 27}" fill="#00ff88" font-size="12" text-anchor="middle" dominant-baseline="central" font-family="monospace">0</text>`;
+  h += tx(CX, CY + 44, 'FT', 9, '#64748b');
+  // Thousands needle (short, wide)
+  h += `<g id="alt-k"><line x1="${CX}" y1="${CY + 4}" x2="${CX}" y2="${CY - 42}" stroke="#e2e8f0" stroke-width="4" stroke-linecap="round"/></g>`;
+  // Hundreds needle (long, thin)
+  h += needle('alt-h', 62, '#e2e8f0', 2);
+  h += cap();
+  svg.innerHTML = h;
+}
+function updateALT(ft) {
+  const f = Math.max(0, ft);
+  const hDeg = (f % 1000) / 1000 * 360;
+  const kDeg = (f % 10000) / 10000 * 360;
+  document.getElementById('alt-h').setAttribute('transform', `rotate(${hDeg} ${CX} ${CY})`);
+  document.getElementById('alt-k').setAttribute('transform', `rotate(${kDeg} ${CX} ${CY})`);
+  document.getElementById('alt-dig').textContent = Math.round(f);
+}
+
+// ── Turn Coordinator ────────────────────────────────────────────────────
+function buildTC(svg) {
+  let h = bezel();
+  // L/R and standard rate marks
+  const [lx, ly] = pol(72, -30); h += tx(lx, ly, 'L', 12, '#e2e8f0');
+  const [rx, ry] = pol(72, 30); h += tx(rx, ry, 'R', 12, '#e2e8f0');
+  for (const b of [-60, -30, -20, -10, 0, 10, 20, 30, 60]) {
+    const [x1, y1] = pol(78, b); const [x2, y2] = pol(84, b);
+    h += ln(x1, y1, x2, y2, '#94a3b8', Math.abs(b) === 30 ? 2 : 1);
+  }
+  // Airplane silhouette (rotates with bank)
+  h += `<g id="tc-p" transform="rotate(0 ${CX} ${CY})">`;
+  h += ln(CX - 40, CY + 6, CX - 8, CY, '#e2e8f0', 3);
+  h += ln(CX + 8, CY, CX + 40, CY + 6, '#e2e8f0', 3);
+  h += `<rect x="${CX - 3}" y="${CY - 6}" width="6" height="20" rx="2" fill="#e2e8f0"/>`;
+  h += ln(CX - 12, CY + 14, CX + 12, CY + 14, '#e2e8f0', 2);
+  h += `</g>`;
+  // Slip ball tube
+  h += `<rect x="${CX - 28}" y="${CY + 48}" width="56" height="14" rx="7" fill="none" stroke="#334155" stroke-width="1.5"/>`;
+  // Center marks
+  h += ln(CX - 7, CY + 48, CX - 7, CY + 62, '#334155', 1);
+  h += ln(CX + 7, CY + 48, CX + 7, CY + 62, '#334155', 1);
+  h += `<circle cx="${CX}" cy="${CY + 55}" r="5" fill="#1c2333" stroke="#94a3b8" stroke-width="1"/>`;
+  svg.innerHTML = h;
+}
+function updateTC(roll) {
+  const r = Math.max(-60, Math.min(60, roll));
+  document.getElementById('tc-p').setAttribute('transform', `rotate(${r} ${CX} ${CY})`);
+}
+
+// ── Heading Indicator ───────────────────────────────────────────────────
+function buildHI(svg) {
+  let h = bezel();
+  // Compass rose (rotates)
+  h += `<g id="hi-r" transform="rotate(0 ${CX} ${CY})">`;
+  const labels = { 0: 'N', 30: '3', 60: '6', 90: 'E', 120: '12', 150: '15', 180: 'S', 210: '21', 240: '24', 270: 'W', 300: '30', 330: '33' };
+  for (let d = 0; d < 360; d += 5) {
+    const maj = d % 30 === 0, med = d % 10 === 0;
+    const [x1, y1] = pol(maj ? 62 : med ? 68 : 73, d); const [x2, y2] = pol(80, d);
+    h += ln(x1, y1, x2, y2, maj ? '#e2e8f0' : '#64748b', maj ? 1.5 : 1);
+    if (d in labels) { const [lx, ly] = pol(52, d); h += tx(lx, ly, labels[d], d % 90 === 0 ? 14 : 10, d % 90 === 0 ? '#00ff88' : '#e2e8f0'); }
+  }
+  h += `</g>`;
+  // Fixed lubber line
+  h += `<polygon points="${CX},${CY - 84} ${CX - 5},${CY - 92} ${CX + 5},${CY - 92}" fill="#f59e0b"/>`;
+  // Digital heading
+  h += `<rect x="${CX - 20}" y="${CY + 22}" width="40" height="16" rx="3" fill="#0d1117" stroke="#334155" stroke-width="1"/>`;
+  h += `<text id="hi-dig" x="${CX}" y="${CY + 30}" fill="#00ff88" font-size="12" text-anchor="middle" dominant-baseline="central" font-family="monospace">000</text>`;
+  svg.innerHTML = h;
+}
+function updateHI(hdg) {
+  document.getElementById('hi-r').setAttribute('transform', `rotate(${-hdg} ${CX} ${CY})`);
+  document.getElementById('hi-dig').textContent = Math.round(((hdg % 360) + 360) % 360).toString().padStart(3, '0');
+}
+
+// ── VSI ─────────────────────────────────────────────────────────────────
+function buildVSI(svg) {
+  let h = bezel();
+  // 0 fpm at 270° (9 o'clock), ±2000 spans ±120°
+  const a = fpm => 270 + (fpm / 2000) * 120;
+  const ticks = [-2000, -1500, -1000, -500, 0, 500, 1000, 1500, 2000];
+  for (const v of ticks) {
+    const deg = a(v), maj = v % 1000 === 0;
+    const [x1, y1] = pol(maj ? 62 : 70, deg); const [x2, y2] = pol(82, deg);
+    h += ln(x1, y1, x2, y2, maj ? '#e2e8f0' : '#64748b', maj ? 1.5 : 1);
+    if (maj) { const [lx, ly] = pol(52, deg); h += tx(lx, ly, Math.abs(v / 1000), 13, '#e2e8f0'); }
+  }
+  // UP / DN labels
+  h += tx(CX + 20, CY - 30, 'UP', 9, '#64748b');
+  h += tx(CX + 20, CY + 30, 'DN', 9, '#64748b');
+  h += tx(CX - 8, CY + 44, 'FPM', 8, '#64748b');
+  // Zero marker
+  const [zx, zy] = pol(86, 270); h += `<polygon points="${zx},${zy - 4} ${zx + 6},${zy} ${zx},${zy + 4}" fill="#e2e8f0"/>`;
+  h += needle('vsi-n', 58, '#ff3b30', 2.5);
+  h += cap();
+  svg.innerHTML = h;
+}
+function updateVSI(fpm) {
+  const v = Math.max(-2000, Math.min(2000, fpm));
+  const a = 270 + (v / 2000) * 120;
+  document.getElementById('vsi-n').setAttribute('transform', `rotate(${a} ${CX} ${CY})`);
+}
+
+// ── Build all gauges ────────────────────────────────────────────────────
+buildASI(document.getElementById('g-asi'));
+buildAI(document.getElementById('g-ai'));
+buildALT(document.getElementById('g-alt'));
+buildTC(document.getElementById('g-tc'));
+buildHI(document.getElementById('g-hi'));
+buildVSI(document.getElementById('g-vsi'));
+
+// ── WebSocket ───────────────────────────────────────────────────────────
+let ws = null;
+
+function connect() {
+  ws = new WebSocket(WS_URL);
+  ws.onopen = () => {
+    document.getElementById('ws-status').textContent = 'Connected to ios_backend';
+    document.getElementById('ws-status').className = 'ws-status connected';
+  };
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'flight_model_state') {
+        fms.lat = msg.lat ?? 0;
+        fms.lon = msg.lon ?? 0;
+        fms.altFtMsl = msg.alt_ft_msl ?? 0;
+        fms.hdgDeg = msg.hdg_mag_deg ?? 0;
+        fms.iasKt = msg.ias_kt ?? 0;
+        fms.vsFpm = msg.vs_fpm ?? 0;
+        fms.pitchDeg = msg.pitch_deg ?? 0;
+        fms.rollDeg = msg.roll_deg ?? 0;
+      }
+    } catch {}
+  };
+  ws.onclose = () => {
+    document.getElementById('ws-status').textContent = 'Disconnected — reconnecting...';
+    document.getElementById('ws-status').className = 'ws-status disconnected';
+    setTimeout(connect, 2000);
+  };
+  ws.onerror = () => ws.close();
+}
+connect();
+
+// ── Keyboard handling ───────────────────────────────────────────────────
+document.addEventListener('keydown', (e) => {
+  const k = e.key.toLowerCase();
+  if (keysDown.has(k)) return;
+  keysDown.add(k);
+
+  if (k === 'l') gearDown = !gearDown;
+  if (k === 'p') parkingBrake = !parkingBrake;
+  if (k === ' ') { aileron = 0; elevator = 0; rudder = 0; e.preventDefault(); }
+  if (k === '[') flapIndex = Math.max(0, flapIndex - 1);
+  if (k === ']') flapIndex = Math.min(3, flapIndex + 1);
+  if (k === 'b') brakeHeld = true;
+});
+
+document.addEventListener('keyup', (e) => {
+  const k = e.key.toLowerCase();
+  keysDown.delete(k);
+  if (k === 'b') brakeHeld = false;
+});
+
+window.addEventListener('blur', () => { keysDown.clear(); brakeHeld = false; });
+
+// ── 20 Hz tick ──────────────────────────────────────────────────────────
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+setInterval(() => {
+  // Axis increments from held keys
+  if (keysDown.has('w')) elevator = clamp(elevator + AXIS_STEP, -1, 1);
+  if (keysDown.has('s')) elevator = clamp(elevator - AXIS_STEP, -1, 1);
+  if (keysDown.has('a')) aileron  = clamp(aileron  - AXIS_STEP, -1, 1);
+  if (keysDown.has('d')) aileron  = clamp(aileron  + AXIS_STEP, -1, 1);
+  if (keysDown.has('q')) rudder   = clamp(rudder   + AXIS_STEP, -1, 1);
+  if (keysDown.has('e')) rudder   = clamp(rudder   - AXIS_STEP, -1, 1);
+  if (keysDown.has('r')) throttle = clamp(throttle + AXIS_STEP, 0, 1);
+  if (keysDown.has('f')) throttle = clamp(throttle - AXIS_STEP, 0, 1);
+  if (keysDown.has('t')) trimElevator = clamp(trimElevator + TRIM_STEP, -1, 1);
+  if (keysDown.has('g')) trimElevator = clamp(trimElevator - TRIM_STEP, -1, 1);
+
+  // Publish controls
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({
+      type: 'set_flight_controls',
+      data: {
+        aileron, elevator, rudder,
+        collective: 0, trim_aileron: 0, trim_elevator: trimElevator, trim_rudder: 0,
+        brake_left:  brakeHeld ? 1.0 : 0.0,
+        brake_right: brakeHeld ? 1.0 : 0.0,
+      }
+    }));
+    ws.send(JSON.stringify({
+      type: 'set_engine_controls',
+      data: { throttle: [throttle], mixture: [1.0] }
+    }));
+  }
+
+  // Update control bars
+  updateBar('ail', aileron);
+  updateBar('elev', elevator);
+  updateBar('rud', rudder);
+  updateThrottle(throttle);
+  document.getElementById('val-trim').textContent = trimElevator.toFixed(3);
+
+  // Flaps
+  for (let i = 0; i < 4; i++) {
+    document.getElementById('flap-' + i).className = 'flap-notch' + (i === flapIndex ? ' active' : '');
+  }
+
+  // Badges
+  const gb = document.getElementById('badge-gear');
+  gb.className = 'badge ' + (gearDown ? 'on' : 'off');
+  document.getElementById('gear-text').textContent = gearDown ? 'GEAR DN' : 'GEAR UP';
+  const pb = document.getElementById('badge-park');
+  pb.className = 'badge ' + (parkingBrake ? 'on' : 'off');
+  document.getElementById('park-text').textContent = parkingBrake ? 'PARK ON' : 'PARK OFF';
+  document.getElementById('badge-brake').className = 'badge ' + (brakeHeld ? 'on' : 'off');
+
+  // Position bar
+  document.getElementById('pos-lat').textContent = fms.lat.toFixed(4);
+  document.getElementById('pos-lon').textContent = fms.lon.toFixed(4);
+  document.getElementById('pos-alt').textContent = Math.round(fms.altFtMsl);
+  document.getElementById('pos-hdg').textContent = Math.round(((fms.hdgDeg % 360) + 360) % 360).toString().padStart(3, '0');
+
+  // Gauges
+  updateASI(fms.iasKt);
+  updateAI(fms.pitchDeg, fms.rollDeg);
+  updateALT(fms.altFtMsl);
+  updateTC(fms.rollDeg);
+  updateHI(fms.hdgDeg);
+  updateVSI(fms.vsFpm);
+
+}, 1000 / RATE_HZ);
+
+// ── Bar rendering ───────────────────────────────────────────────────────
+function updateBar(id, value) {
+  const bar = document.getElementById('bar-' + id);
+  const val = document.getElementById('val-' + id);
+  val.textContent = value.toFixed(2);
+  const pct = Math.abs(value) * 50;
+  if (value >= 0) {
+    bar.style.left = '50%';
+    bar.style.width = pct + '%';
+    bar.className = 'bar-fill positive';
+  } else {
+    bar.style.left = (50 - pct) + '%';
+    bar.style.width = pct + '%';
+    bar.className = 'bar-fill negative';
+  }
+}
+
+function updateThrottle(value) {
+  const bar = document.getElementById('bar-thr');
+  const val = document.getElementById('val-thr');
+  val.textContent = value.toFixed(2);
+  bar.style.width = (value * 100) + '%';
+}
+</script>
+</body>
+</html>

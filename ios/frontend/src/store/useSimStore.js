@@ -1,0 +1,620 @@
+import { create } from 'zustand'
+
+const WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`
+
+// SimCommand enum values — must match backend SimCommand.msg
+const CMD = {
+  RUN: 1,
+  FREEZE: 2,
+  RESET_FLIGHT: 3,
+  RESET_AIRCRAFT: 4,
+  RESET_FAILURES: 5,
+  SHUTDOWN: 6,
+  RELOAD_NODE: 7,
+  DEACTIVATE_NODE: 8,
+  ACTIVATE_NODE: 9,
+  RESET_NODE: 10,
+}
+
+export { CMD }
+
+export const useSimStore = create((set, get) => ({
+  // Connection
+  ws: null,
+  wsConnected: false,
+  wsReconnectCount: 0,
+
+  // Sim state
+  simState: 'UNKNOWN',
+  simTimeSec: 0,
+  aircraftId: 'c172',
+
+  // FDM
+  fdm: {
+    lat: 51.5074, lon: -0.1278,
+    altFtMsl: 0, iasKt: 0, gndSpeedKt: 0,
+    hdgMagDeg: 0, trackDeg: 0, vsFpm: 0,
+    pitchDeg: 0, rollDeg: 0, isHelicopter: false,
+  },
+
+  // Atmosphere
+  atmosphere: {
+    qnhHpa: 1013.25, oatCelsius: 15.0,
+    windDirDeg: 0, windSpeedKt: 0, visibilityM: 10000,
+  },
+
+  // Fuel
+  fuel: {
+    tanks: [], totalFuelKg: 0, totalFuelLiters: 0, totalFuelPct: 0,
+    engineFuelFlowKgs: [], engineFuelFlowLph: [],
+    lowFuelWarning: false,
+  },
+
+  // Fuel config (from aircraft YAML — drives tank display)
+  fuelConfig: {
+    fuelType: 'AVGAS_100LL', densityKgPerLiter: 0.72, displayUnit: 'L',
+    tankCount: 0, tanks: [],
+  },
+
+  // Avionics (what pilot has dialled in — from /sim/controls/avionics)
+  avionics: {
+    com1Mhz: 118.10, com2Mhz: 121.50, com3Mhz: 0,
+    nav1Mhz: 109.10, nav2Mhz: 110.30,
+    adf1Khz: 350, adf2Khz: 0,
+    xpdrCode: 2000, xpdrMode: 'ALT',
+    obs1: 0, obs2: 0, dmeSource: 0,
+    tacanChannel: 0, tacanBand: 0, gpsSource: 0,
+  },
+
+  // Navigation state (from sim_navigation node)
+  nav: {
+    gps1Valid: false, gps1LatDeg: 0, gps1LonDeg: 0, gps1AltFt: 0, gps1GsKt: 0, gps1TrackDeg: 0,
+    gps2Valid: false, gps2LatDeg: 0, gps2LonDeg: 0, gps2AltFt: 0, gps2GsKt: 0, gps2TrackDeg: 0,
+    activeGpsSource: 0,
+    nav1Valid: false, nav1Ident: '', nav1Type: 'NONE', nav1ObsDeg: 0, nav1CdiDots: 0,
+    nav1BearingDeg: 0, nav1RadialDeg: 0, nav1DistanceNm: 0, nav1Signal: 0, nav1ToFrom: 'OFF',
+    nav1GsValid: false, nav1GsDots: 0,
+    nav2Valid: false, nav2Ident: '', nav2Type: 'NONE', nav2ObsDeg: 0, nav2CdiDots: 0,
+    nav2BearingDeg: 0, nav2RadialDeg: 0, nav2DistanceNm: 0, nav2Signal: 0, nav2ToFrom: 'OFF',
+    nav2GsValid: false, nav2GsDots: 0,
+    adf1Valid: false, adf1Ident: '', adf1RelBearingDeg: 0, adf1Signal: 0,
+    adf2Valid: false, adf2Ident: '', adf2RelBearingDeg: 0, adf2Signal: 0,
+    dmeSource: 'NAV1', dmeValid: false, dmeDistanceNm: 0, dmeGsKt: 0,
+    tacanValid: false, tacanIdent: '', tacanBearingDeg: 0, tacanDistanceNm: 0,
+    markerOuter: false, markerMiddle: false, markerInner: false,
+    xpdrCode: 2000, xpdrMode: 'OFF', xpdrIdentActive: false,
+    com1Mhz: 0, com2Mhz: 0, com3Mhz: 0, adf1Khz: 0, adf2Khz: 0,
+  },
+
+  // Electrical state
+  electrical: {
+    busNames: [], busVoltages: [], busPowered: [],
+    sourceNames: [], sourceActive: [], sourceVoltages: [], sourceCurrents: [],
+    loadNames: [], loadPowered: [], loadCurrents: [],
+    switchIds: [], switchLabels: [], switchClosed: [],
+    totalLoadAmps: 0, batterySocPct: 0,
+    masterBusVoltage: 0, avionicsBusPowered: false, essentialBusPowered: false,
+  },
+
+  // Avionics config (from aircraft YAML — drives dynamic A/C page layout)
+  avionicsConfig: { radios: [], displays: [] },
+
+  // Engine state (from sim_engine_systems node)
+  engines: {
+    engineCount: 0, rpm: [], egtDegc: [], chtDegc: [],
+    oilPressurePsi: [], oilTempDegc: [], manifoldPressureInhg: [],
+    fuelFlowGph: [], n1Pct: [], n2Pct: [], tgtDegc: [], torquePct: [],
+    engineRunning: [], engineFailed: [], starterEngaged: [],
+    lowOilPressureWarning: [], highEgtWarning: [], highChtWarning: [],
+  },
+
+  // Engine config (from aircraft YAML — drives dynamic engine instrument layout)
+  engineConfig: { engineCount: 0, engines: [] },
+
+  // Terrain source
+  terrainSource: { source: 'UNKNOWN', description: '' },
+
+  // Airport search (POS page)
+  airportSearchResults: [],
+  runwayResults: null,  // full airport object with runways
+
+  // Node health
+  nodes: {},
+
+  // Alerts (last N alerts for display)
+  alerts: [],
+  alertsMax: 50,
+
+  // Failure state
+  armedFailures: 0,
+  activeFailures: 0,
+  activeFailureIds: [],
+  armedFailureIds: [],
+  failuresCatalog: [],
+
+  // Session
+  session: { name: 'Session 1', pilotName: '', instructorName: '' },
+
+  // Flight track — capped to prevent memory leaks on long sessions
+  track: [],
+  trackMaxPoints: 50000,  // ~83 min at 10 Hz
+
+  // UI
+  activeTab: 'map',
+  sidePanelOpen: false,
+  ctrOnAircraft: true,
+  hdgUp: false,
+
+  // Pending confirm (for destructive actions)
+  pendingAction: null,   // { type: string, expiresAt: number }
+
+  // ─── ACTIONS ─────────────────────────────────────────────────────
+
+  setActiveTab: (tab) => set({
+    activeTab: tab,
+    sidePanelOpen: tab !== 'map',
+  }),
+
+  closeSidePanel: () => set({ activeTab: 'map', sidePanelOpen: false }),
+
+  sendCommand: (cmdType, payload = {}) => {
+    const { ws, wsConnected } = get()
+    if (!wsConnected || !ws) return false
+    ws.send(JSON.stringify({ type: 'command', cmd: cmdType, ...payload }))
+    return true
+  },
+
+  // Confirm pattern: first call arms, second call within 3s fires
+  requestAction: (actionType, onConfirm) => {
+    const { pendingAction } = get()
+    const now = Date.now()
+
+    if (pendingAction?.type === actionType && now < pendingAction.expiresAt) {
+      // Second tap — execute
+      set({ pendingAction: null })
+      onConfirm()
+    } else {
+      // First tap — arm
+      set({ pendingAction: { type: actionType, expiresAt: now + 3000 } })
+      // Auto-cancel after 3s
+      setTimeout(() => {
+        set((s) => s.pendingAction?.type === actionType ? { pendingAction: null } : {})
+      }, 3000)
+    }
+  },
+
+  appendTrackPoint: (lat, lon) => set((s) => {
+    const t = s.track
+    // Drop oldest 10% when at capacity to avoid trimming every frame
+    if (t.length >= s.trackMaxPoints) {
+      const drop = Math.floor(s.trackMaxPoints * 0.1)
+      const trimmed = t.slice(drop)
+      trimmed.push([lat, lon])
+      return { track: trimmed }
+    }
+    // Mutate in place + bump reference — avoids full copy every frame
+    t.push([lat, lon])
+    return { track: t }
+  }),
+
+  clearTrack: () => set({ track: [] }),
+
+  sendAvionics: (data) => {
+    const { ws, wsConnected } = get()
+    if (!wsConnected || !ws) return false
+    ws.send(JSON.stringify({ type: 'set_avionics', ...data }))
+    return true
+  },
+
+  injectFailure: (failureId, paramsOverrideJson = '') => {
+    const { ws, wsConnected } = get()
+    if (!wsConnected || !ws) return false
+    ws.send(JSON.stringify({
+      type: 'failure_command',
+      action: 'inject',
+      failure_id: failureId,
+      params_override_json: paramsOverrideJson,
+    }))
+    return true
+  },
+
+  clearFailure: (failureId) => {
+    const { ws, wsConnected } = get()
+    if (!wsConnected || !ws) return false
+    ws.send(JSON.stringify({
+      type: 'failure_command',
+      action: 'clear',
+      failure_id: failureId,
+    }))
+    return true
+  },
+
+  clearAllFailures: () => {
+    const { ws, wsConnected } = get()
+    if (!wsConnected || !ws) return false
+    ws.send(JSON.stringify({
+      type: 'failure_command',
+      action: 'clear_all',
+      failure_id: '',
+    }))
+    return true
+  },
+
+  sendPanel: (switchIds, switchStates, selectorIds, selectorValues) => {
+    const { ws, wsConnected } = get()
+    if (!wsConnected || !ws) return false
+    const data = { switch_ids: switchIds, switch_states: switchStates }
+    if (selectorIds?.length) {
+      data.selector_ids = selectorIds
+      data.selector_values = selectorValues
+    }
+    ws.send(JSON.stringify({ type: 'set_panel', data }))
+    return true
+  },
+
+  // ─── AIRPORT SEARCH ─────────────────────────────────────────────
+
+  searchAirports: (query) => {
+    const { ws, wsConnected } = get()
+    if (!wsConnected || !ws || query.length < 2) return
+    ws.send(JSON.stringify({ type: 'search_airports', query, max_results: 8 }))
+  },
+
+  getRunways: (icao) => {
+    const { ws, wsConnected } = get()
+    if (!wsConnected || !ws || !icao) return
+    ws.send(JSON.stringify({ type: 'get_runways', icao }))
+  },
+
+  setDeparture: (data) => {
+    const { ws, wsConnected } = get()
+    if (!wsConnected || !ws) return false
+    ws.send(JSON.stringify({ type: 'set_departure', ...data }))
+    return true
+  },
+
+  // ─── WEBSOCKET ───────────────────────────────────────────────────
+
+  connectWS: () => {
+    const state = get()
+    if (state.ws) state.ws.close()
+
+    const ws = new WebSocket(WS_URL)
+
+    ws.onopen = () => {
+      set({ wsConnected: true, wsReconnectCount: 0 })
+      console.log('[WS] connected')
+    }
+
+    ws.onclose = () => {
+      set({ wsConnected: false, ws: null })
+      const count = get().wsReconnectCount + 1
+      const delay = Math.min(1000 * Math.pow(2, count - 1), 30000)
+      console.log(`[WS] disconnected, reconnecting in ${delay}ms (attempt ${count})`)
+      set({ wsReconnectCount: count })
+      setTimeout(() => get().connectWS(), delay)
+    }
+
+    ws.onerror = (e) => console.error('[WS] error', e)
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data)
+        const s = get()
+
+        switch (msg.type) {
+          case 'sim_state': {
+            const newState = msg.state ?? s.simState
+            const updates = {
+              simState: newState,
+              simTimeSec: msg.sim_time_sec ?? s.simTimeSec,
+              aircraftId: msg.aircraft_id ?? s.aircraftId,
+            }
+            // Clear track on reset
+            if (newState === 'RESETTING' || newState === 'READY') {
+              updates.track = []
+            }
+            set(updates)
+            break
+          }
+
+          case 'flight_model_state':
+          case 'fdm_state':
+          case 'fdm': {
+            const fdm = {
+              lat: msg.lat ?? s.fdm.lat,
+              lon: msg.lon ?? s.fdm.lon,
+              altFtMsl: msg.alt_ft_msl ?? (msg.altitude_m_msl ? msg.altitude_m_msl * 3.28084 : s.fdm.altFtMsl),
+              iasKt: msg.ias_kt ?? s.fdm.iasKt,
+              gndSpeedKt: msg.gnd_speed_kt ?? s.fdm.gndSpeedKt,
+              hdgMagDeg: msg.hdg_mag_deg ?? s.fdm.hdgMagDeg,
+              trackDeg: msg.track_deg ?? s.fdm.trackDeg,
+              vsFpm: msg.vs_fpm ?? s.fdm.vsFpm,
+              pitchDeg: msg.pitch_deg ?? s.fdm.pitchDeg,
+              rollDeg: msg.roll_deg ?? s.fdm.rollDeg,
+              isHelicopter: msg.is_helicopter ?? s.fdm.isHelicopter,
+            }
+            set({ fdm })
+            // Append track point if sim is running
+            if (s.simState === 'RUNNING') {
+              get().appendTrackPoint(fdm.lat, fdm.lon)
+            }
+            break
+          }
+
+          case 'atmosphere':
+            set({
+              atmosphere: {
+                qnhHpa: msg.qnh_hpa ?? s.atmosphere.qnhHpa,
+                oatCelsius: msg.oat_celsius ?? s.atmosphere.oatCelsius,
+                windDirDeg: msg.wind_dir_deg ?? s.atmosphere.windDirDeg,
+                windSpeedKt: msg.wind_speed_kt ?? s.atmosphere.windSpeedKt,
+                visibilityM: msg.visibility_m ?? s.atmosphere.visibilityM,
+              }
+            })
+            break
+
+          case 'fuel_state':
+          case 'fuel': {
+            const tc = msg.tank_count ?? (msg.tank_quantity_kg?.length ?? 0)
+            const tanks = (msg.tank_quantity_kg ?? []).map((kg, i) => ({
+              id: i,
+              massKg: kg,
+              liters: msg.tank_quantity_liters?.[i] ?? 0,
+              pct: msg.tank_quantity_pct?.[i] ?? 0,
+              usableKg: msg.tank_usable_kg?.[i] ?? 0,
+              selected: msg.tank_selected?.[i] ?? false,
+              boostPumpOn: msg.boost_pump_on?.[i] ?? false,
+            })).slice(0, tc)
+            set({
+              fuel: {
+                tanks,
+                totalFuelKg: msg.total_fuel_kg ?? 0,
+                totalFuelLiters: msg.total_fuel_liters ?? 0,
+                totalFuelPct: msg.total_fuel_pct ?? 0,
+                engineFuelFlowKgs: msg.engine_fuel_flow_kgs ?? [],
+                engineFuelFlowLph: msg.engine_fuel_flow_lph ?? [],
+                lowFuelWarning: msg.low_fuel_warning ?? false,
+              },
+            })
+            break
+          }
+
+          case 'avionics':
+            set({
+              avionics: {
+                com1Mhz: msg.com1_mhz ?? s.avionics.com1Mhz,
+                com2Mhz: msg.com2_mhz ?? s.avionics.com2Mhz,
+                com3Mhz: msg.com3_mhz ?? s.avionics.com3Mhz,
+                nav1Mhz: msg.nav1_mhz ?? s.avionics.nav1Mhz,
+                nav2Mhz: msg.nav2_mhz ?? s.avionics.nav2Mhz,
+                adf1Khz: msg.adf1_khz ?? s.avionics.adf1Khz,
+                adf2Khz: msg.adf2_khz ?? s.avionics.adf2Khz,
+                xpdrCode: msg.xpdr_code ?? s.avionics.xpdrCode,
+                xpdrMode: msg.xpdr_mode ?? s.avionics.xpdrMode,
+                obs1: msg.obs1 ?? s.avionics.obs1,
+                obs2: msg.obs2 ?? s.avionics.obs2,
+                dmeSource: msg.dme_source ?? s.avionics.dmeSource,
+                tacanChannel: msg.tacan_channel ?? s.avionics.tacanChannel,
+                tacanBand: msg.tacan_band ?? s.avionics.tacanBand,
+                gpsSource: msg.gps_source ?? s.avionics.gpsSource,
+              }
+            })
+            break
+
+          case 'nav_state':
+            set({
+              nav: {
+                gps1Valid: msg.gps1_valid ?? s.nav.gps1Valid,
+                gps1LatDeg: msg.gps1_lat_deg ?? s.nav.gps1LatDeg,
+                gps1LonDeg: msg.gps1_lon_deg ?? s.nav.gps1LonDeg,
+                gps1AltFt: msg.gps1_alt_ft ?? s.nav.gps1AltFt,
+                gps1GsKt: msg.gps1_gs_kt ?? s.nav.gps1GsKt,
+                gps1TrackDeg: msg.gps1_track_deg ?? s.nav.gps1TrackDeg,
+                gps2Valid: msg.gps2_valid ?? s.nav.gps2Valid,
+                gps2LatDeg: msg.gps2_lat_deg ?? s.nav.gps2LatDeg,
+                gps2LonDeg: msg.gps2_lon_deg ?? s.nav.gps2LonDeg,
+                gps2AltFt: msg.gps2_alt_ft ?? s.nav.gps2AltFt,
+                gps2GsKt: msg.gps2_gs_kt ?? s.nav.gps2GsKt,
+                gps2TrackDeg: msg.gps2_track_deg ?? s.nav.gps2TrackDeg,
+                activeGpsSource: msg.active_gps_source ?? s.nav.activeGpsSource,
+                nav1Valid: msg.nav1_valid ?? s.nav.nav1Valid,
+                nav1Ident: msg.nav1_ident ?? s.nav.nav1Ident,
+                nav1Type: msg.nav1_type ?? s.nav.nav1Type,
+                nav1ObsDeg: msg.nav1_obs_deg ?? s.nav.nav1ObsDeg,
+                nav1CdiDots: msg.nav1_cdi_dots ?? s.nav.nav1CdiDots,
+                nav1BearingDeg: msg.nav1_bearing_deg ?? s.nav.nav1BearingDeg,
+                nav1RadialDeg: msg.nav1_radial_deg ?? s.nav.nav1RadialDeg,
+                nav1DistanceNm: msg.nav1_distance_nm ?? s.nav.nav1DistanceNm,
+                nav1Signal: msg.nav1_signal ?? s.nav.nav1Signal,
+                nav1ToFrom: msg.nav1_to_from ?? s.nav.nav1ToFrom,
+                nav1GsValid: msg.nav1_gs_valid ?? s.nav.nav1GsValid,
+                nav1GsDots: msg.nav1_gs_dots ?? s.nav.nav1GsDots,
+                nav2Valid: msg.nav2_valid ?? s.nav.nav2Valid,
+                nav2Ident: msg.nav2_ident ?? s.nav.nav2Ident,
+                nav2Type: msg.nav2_type ?? s.nav.nav2Type,
+                nav2ObsDeg: msg.nav2_obs_deg ?? s.nav.nav2ObsDeg,
+                nav2CdiDots: msg.nav2_cdi_dots ?? s.nav.nav2CdiDots,
+                nav2BearingDeg: msg.nav2_bearing_deg ?? s.nav.nav2BearingDeg,
+                nav2RadialDeg: msg.nav2_radial_deg ?? s.nav.nav2RadialDeg,
+                nav2DistanceNm: msg.nav2_distance_nm ?? s.nav.nav2DistanceNm,
+                nav2Signal: msg.nav2_signal ?? s.nav.nav2Signal,
+                nav2ToFrom: msg.nav2_to_from ?? s.nav.nav2ToFrom,
+                nav2GsValid: msg.nav2_gs_valid ?? s.nav.nav2GsValid,
+                nav2GsDots: msg.nav2_gs_dots ?? s.nav.nav2GsDots,
+                adf1Valid: msg.adf1_valid ?? s.nav.adf1Valid,
+                adf1Ident: msg.adf1_ident ?? s.nav.adf1Ident,
+                adf1RelBearingDeg: msg.adf1_rel_bearing_deg ?? s.nav.adf1RelBearingDeg,
+                adf1Signal: msg.adf1_signal ?? s.nav.adf1Signal,
+                adf2Valid: msg.adf2_valid ?? s.nav.adf2Valid,
+                adf2Ident: msg.adf2_ident ?? s.nav.adf2Ident,
+                adf2RelBearingDeg: msg.adf2_rel_bearing_deg ?? s.nav.adf2RelBearingDeg,
+                adf2Signal: msg.adf2_signal ?? s.nav.adf2Signal,
+                dmeSource: msg.dme_source ?? s.nav.dmeSource,
+                dmeValid: msg.dme_valid ?? s.nav.dmeValid,
+                dmeDistanceNm: msg.dme_distance_nm ?? s.nav.dmeDistanceNm,
+                dmeGsKt: msg.dme_gs_kt ?? s.nav.dmeGsKt,
+                tacanValid: msg.tacan_valid ?? s.nav.tacanValid,
+                tacanIdent: msg.tacan_ident ?? s.nav.tacanIdent,
+                tacanBearingDeg: msg.tacan_bearing_deg ?? s.nav.tacanBearingDeg,
+                tacanDistanceNm: msg.tacan_distance_nm ?? s.nav.tacanDistanceNm,
+                markerOuter: msg.marker_outer ?? s.nav.markerOuter,
+                markerMiddle: msg.marker_middle ?? s.nav.markerMiddle,
+                markerInner: msg.marker_inner ?? s.nav.markerInner,
+                xpdrCode: msg.xpdr_code ?? s.nav.xpdrCode,
+                xpdrMode: msg.xpdr_mode ?? s.nav.xpdrMode,
+                xpdrIdentActive: msg.xpdr_ident_active ?? s.nav.xpdrIdentActive,
+                com1Mhz: msg.com1_mhz ?? s.nav.com1Mhz,
+                com2Mhz: msg.com2_mhz ?? s.nav.com2Mhz,
+                com3Mhz: msg.com3_mhz ?? s.nav.com3Mhz,
+                adf1Khz: msg.adf1_khz ?? s.nav.adf1Khz,
+                adf2Khz: msg.adf2_khz ?? s.nav.adf2Khz,
+              }
+            })
+            break
+
+          case 'electrical_state':
+            set({
+              electrical: {
+                busNames: msg.bus_names ?? s.electrical.busNames,
+                busVoltages: msg.bus_voltages ?? s.electrical.busVoltages,
+                busPowered: msg.bus_powered ?? s.electrical.busPowered,
+                sourceNames: msg.source_names ?? s.electrical.sourceNames,
+                sourceActive: msg.source_active ?? s.electrical.sourceActive,
+                sourceVoltages: msg.source_voltages ?? s.electrical.sourceVoltages,
+                sourceCurrents: msg.source_currents ?? s.electrical.sourceCurrents,
+                loadNames: msg.load_names ?? s.electrical.loadNames,
+                loadPowered: msg.load_powered ?? s.electrical.loadPowered,
+                loadCurrents: msg.load_currents ?? s.electrical.loadCurrents,
+                switchIds: msg.switch_ids ?? s.electrical.switchIds,
+                switchLabels: msg.switch_labels ?? s.electrical.switchLabels,
+                switchClosed: msg.switch_closed ?? s.electrical.switchClosed,
+                totalLoadAmps: msg.total_load_amps ?? s.electrical.totalLoadAmps,
+                batterySocPct: msg.battery_soc_pct ?? s.electrical.batterySocPct,
+                masterBusVoltage: msg.master_bus_voltage ?? s.electrical.masterBusVoltage,
+                avionicsBusPowered: msg.avionics_bus_powered ?? s.electrical.avionicsBusPowered,
+                essentialBusPowered: msg.essential_bus_powered ?? s.electrical.essentialBusPowered,
+              }
+            })
+            break
+
+          case 'avionics_config':
+            set({
+              avionicsConfig: {
+                radios: msg.radios ?? [],
+                displays: msg.displays ?? [],
+              },
+            })
+            break
+
+          case 'engines_state':
+            set({
+              engines: {
+                engineCount: msg.engine_count ?? 0,
+                rpm: msg.rpm ?? [],
+                egtDegc: msg.egt_degc ?? [],
+                chtDegc: msg.cht_degc ?? [],
+                oilPressurePsi: msg.oil_pressure_psi ?? [],
+                oilTempDegc: msg.oil_temp_degc ?? [],
+                manifoldPressureInhg: msg.manifold_pressure_inhg ?? [],
+                fuelFlowGph: msg.fuel_flow_gph ?? [],
+                n1Pct: msg.n1_pct ?? [],
+                n2Pct: msg.n2_pct ?? [],
+                tgtDegc: msg.tgt_degc ?? [],
+                torquePct: msg.torque_pct ?? [],
+                engineRunning: msg.engine_running ?? [],
+                engineFailed: msg.engine_failed ?? [],
+                starterEngaged: msg.starter_engaged ?? [],
+                lowOilPressureWarning: msg.low_oil_pressure_warning ?? [],
+                highEgtWarning: msg.high_egt_warning ?? [],
+                highChtWarning: msg.high_cht_warning ?? [],
+              },
+            })
+            break
+
+          case 'engine_config':
+            set({
+              engineConfig: {
+                engineCount: msg.engine_count ?? 0,
+                engines: msg.engines ?? [],
+              },
+            })
+            break
+
+          case 'fuel_config':
+            set({
+              fuelConfig: {
+                fuelType: msg.fuel_type ?? 'AVGAS_100LL',
+                densityKgPerLiter: msg.density_kg_per_liter ?? 0.72,
+                displayUnit: msg.display_unit ?? 'L',
+                tankCount: msg.tank_count ?? 0,
+                tanks: msg.tanks ?? [],
+              },
+            })
+            break
+
+          case 'sim_alert': {
+            const alert = {
+              severity: msg.severity,
+              source: msg.source,
+              message: msg.message,
+              time: Date.now(),
+            }
+            const alerts = [...s.alerts, alert].slice(-s.alertsMax)
+            set({ alerts })
+            break
+          }
+
+          case 'terrain_source':
+            set({
+              terrainSource: {
+                source: msg.source ?? 'UNKNOWN',
+                description: msg.description ?? '',
+              }
+            })
+            break
+
+          case 'airport_search_results':
+            set({ airportSearchResults: msg.airports ?? [] })
+            break
+
+          case 'runway_results':
+            if (msg.found && msg.airport) {
+              set({ runwayResults: msg.airport })
+            }
+            break
+
+          case 'node_health':
+            set({ nodes: msg.nodes ?? s.nodes })
+            break
+
+          case 'failure_state':
+            set({
+              activeFailureIds: msg.active_failure_ids ?? s.activeFailureIds,
+              armedFailureIds: msg.armed_failure_ids ?? s.armedFailureIds,
+              activeFailures: (msg.active_failure_ids ?? s.activeFailureIds).length,
+              armedFailures: (msg.armed_failure_ids ?? s.armedFailureIds).length,
+            })
+            break
+
+          case 'failures_config':
+            set({
+              failuresCatalog: msg.catalog ?? s.failuresCatalog,
+            })
+            break
+
+          case 'failure_count':
+            set({
+              armedFailures: msg.armed ?? s.armedFailures,
+              activeFailures: msg.active ?? s.activeFailures,
+            })
+            break
+        }
+      } catch (e) {
+        console.error('[WS] parse error', e)
+      }
+    }
+
+    set({ ws })
+  },
+}))

@@ -1,0 +1,4 @@
+string query          # ICAO prefix or partial name, min 2 chars
+uint8 max_results     # default 10
+---
+Airport[] airports

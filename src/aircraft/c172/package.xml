@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>aircraft_c172</name>
+  <version>0.0.1</version>
+  <description>Cessna 172 Skyhawk aircraft plugin package</description>
+  <maintainer email="todo@todo.com">TODO</maintainer>
+  <license>TODO</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>sim_interfaces</depend>
+  <depend>pluginlib</depend>
+  <depend>sim_electrical</depend>
+  <depend>sim_msgs</depend>
+  <build_depend>yaml-cpp</build_depend>
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

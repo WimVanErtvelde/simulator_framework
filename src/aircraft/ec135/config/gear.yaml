@@ -1,0 +1,7 @@
+gear:
+  type: skids
+  legs:
+    - name: left_skid
+      retractable: false
+    - name: right_skid
+      retractable: false

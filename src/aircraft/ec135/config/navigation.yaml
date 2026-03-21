@@ -1,0 +1,26 @@
+# EC135 Avionics / Navigation Configuration
+# This file drives the IOS A/C page layout — only installed equipment is shown.
+
+avionics:
+  radios:
+    - { id: com1, label: COM1, type: com, default: 118.10 }
+    - { id: com2, label: COM2, type: com, default: 121.50 }
+    - { id: com3, label: COM3, type: com, default: 123.45 }
+    - { id: nav1, label: NAV1, type: nav, default: 109.10 }
+    - { id: nav2, label: NAV2, type: nav, default: 110.30 }
+    - { id: obs1, label: OBS1, type: obs }
+    - { id: obs2, label: OBS2, type: obs }
+    - { id: adf,  label: ADF,  type: adf, default: 350 }
+    - { id: adf2, label: ADF2, type: adf, default: 400 }
+    - { id: xpdr, label: XPDR, type: xpdr, default: 2000 }
+
+  displays:
+    - { id: gps,     type: gps }
+    - { id: gps2,    type: gps }
+    - { id: nav1,    type: nav }
+    - { id: nav2,    type: nav }
+    - { id: adf,     type: adf }
+    - { id: adf2,    type: adf }
+    - { id: dme,     type: dme }
+    - { id: markers, type: markers }
+    - { id: xpdr,    type: xpdr }
