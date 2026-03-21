@@ -423,12 +423,17 @@ private:
   void apply_ic_with_terrain(const sim_msgs::msg::InitialConditions & ic, double terrain_elev_m)
   {
     if (!adapter_) return;
+
+    // Set JSBSim terrain elevation FIRST — force-on-ground needs to know where the ground is
+    double terrain_ft = terrain_elev_m * 3.28084;
+    adapter_->set_property("position/terrain-elevation-asl-ft", terrain_ft);
+
     auto modified_ic = ic;
-    // For on-ground starts (low altitude or ready_for_takeoff), set altitude to terrain.
-    // JSBSim's force-on-ground handles gear height automatically.
+    // For on-ground starts, set altitude to terrain. JSBSim's force-on-ground
+    // places the gear on the terrain surface and sets CG height from gear geometry.
     if (modified_ic.altitude_msl_m < terrain_elev_m + 50.0) {
-      RCLCPP_INFO(this->get_logger(), "IC altitude adjusted: %.1f → %.1f m MSL (terrain)",
-                  modified_ic.altitude_msl_m, terrain_elev_m);
+      RCLCPP_INFO(this->get_logger(), "IC terrain: %.1f m MSL (%.0f ft) — on-ground start",
+                  terrain_elev_m, terrain_ft);
       modified_ic.altitude_msl_m = terrain_elev_m;
     }
     adapter_->apply_initial_conditions(modified_ic);
