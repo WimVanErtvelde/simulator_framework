@@ -34,6 +34,7 @@ public:
       {{"use_sim_time", true}}))
   {
     this->declare_parameter<std::string>("aircraft_id", "c172");
+    this->declare_parameter<double>("gear_cg_height_m", 1.8);  // CG height above gear contact (m)
     this->declare_parameter<std::string>("fdm_type", "jsbsim");
     this->declare_parameter<double>("update_rate_hz", 50.0);
     this->declare_parameter<std::string>("jsbsim_root_dir", "");
@@ -174,6 +175,7 @@ public:
     // Create the flight model adapter
     auto fdm_type = this->get_parameter("fdm_type").as_string();
     auto aircraft_id = this->get_parameter("aircraft_id").as_string();
+    gear_cg_height_m_ = this->get_parameter("gear_cg_height_m").as_double();
     auto jsbsim_root = this->get_parameter("jsbsim_root_dir").as_string();
 
     RCLCPP_INFO(this->get_logger(), "Configuring flight model: type=%s, aircraft=%s",
@@ -430,19 +432,33 @@ private:
   {
     if (!adapter_) return;
 
-    // Set JSBSim terrain elevation FIRST — force-on-ground needs to know where the ground is
     double terrain_ft = terrain_elev_m * 3.28084;
-    adapter_->set_property("position/terrain-elevation-asl-ft", terrain_ft);
 
     auto modified_ic = ic;
-    // For on-ground starts, set altitude to terrain. JSBSim's force-on-ground
-    // places the gear on the terrain surface and sets CG height from gear geometry.
-    if (modified_ic.altitude_msl_m < terrain_elev_m + 50.0) {
-      RCLCPP_INFO(this->get_logger(), "IC terrain: %.1f m MSL (%.0f ft) — on-ground start",
-                  terrain_elev_m, terrain_ft);
-      modified_ic.altitude_msl_m = terrain_elev_m;
+    bool on_ground = modified_ic.altitude_msl_m < terrain_elev_m + 50.0;
+    if (on_ground) {
+      // Set CG above terrain by gear height. JSBSim's force-on-ground prevents
+      // falling but doesn't push CG up — we must account for gear geometry.
+      // Use gear_cg_height_m_ loaded from aircraft config (default 1.8m for C172).
+      modified_ic.altitude_msl_m = terrain_elev_m + gear_cg_height_m_;
     }
+
+    // Set terrain BEFORE IC
+    adapter_->set_property("position/terrain-elevation-asl-ft", terrain_ft);
+    RCLCPP_INFO(this->get_logger(),
+      "IC terrain: set terrain=%.1fft, altitude=%.1fm (%.1fft), on_ground=%s",
+      terrain_ft, modified_ic.altitude_msl_m, modified_ic.altitude_msl_m * 3.28084,
+      on_ground ? "true" : "false");
+
     adapter_->apply_initial_conditions(modified_ic);
+
+    // Check what JSBSim actually has after IC
+    double actual_alt = adapter_->get_property("position/h-sl-ft");
+    double actual_terrain = adapter_->get_property("position/terrain-elevation-asl-ft");
+    double actual_agl = adapter_->get_property("position/h-agl-ft");
+    RCLCPP_INFO(this->get_logger(),
+      "IC result: alt=%.1fft, terrain=%.1fft, AGL=%.1fft",
+      actual_alt, actual_terrain, actual_agl);
   }
 
   void publish_terrain_source()
@@ -517,7 +533,9 @@ private:
   uint8_t terrain_source_{sim_msgs::msg::TerrainSource::SOURCE_UNKNOWN};
   uint8_t sim_state_{255};  // 255 = no sim_manager connected yet
 
-  // IC terrain pipeline: 0 MSL → CIGI HOT (preferred) or SRTM (fallback)
+  double gear_cg_height_m_ = 1.8;  // CG height above gear contact point (m)
+
+  // IC terrain pipeline: SRTM fast, CIGI HOT overrides
   std::shared_ptr<sim_msgs::msg::InitialConditions> pending_ic_;
   std::chrono::steady_clock::time_point pending_ic_time_{};
   bool ic_cigi_refined_ = false;
