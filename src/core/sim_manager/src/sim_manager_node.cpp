@@ -648,8 +648,8 @@ private:
 
   void publish_state()
   {
-    // Always publish — late-joining nodes (ios_backend) need current state
     force_publish_state_ = false;
+    last_published_state_ = state_;
 
     auto msg = sim_msgs::msg::SimState();
     msg.header.stamp = this->now();
