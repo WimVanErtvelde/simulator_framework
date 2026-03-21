@@ -53,18 +53,14 @@ def generate_launch_description():
              name='sim_engine_systems', parameters=[sim_time, {'aircraft_id': aircraft_id}]),
         Node(package='sim_gear', executable='gear_node',
              name='sim_gear', parameters=[sim_time, {'aircraft_id': aircraft_id}]),
+        Node(package='sim_air_data', executable='air_data_node',
+             name='sim_air_data', parameters=[sim_time, {'aircraft_id': aircraft_id}]),
         Node(package='sim_navigation', executable='navigation_node',
              name='sim_navigation', parameters=[sim_time]),
 
-        # Systems without pluginlib (lifecycle nodes — no aircraft-specific model yet)
-        Node(package='sim_hydraulic', executable='hydraulic_node',
-             name='sim_hydraulic', parameters=[sim_time]),
+        # Systems without pluginlib
         Node(package='sim_failures', executable='failures_node',
              name='sim_failures', parameters=[sim_time, {'aircraft_id': aircraft_id}]),
-        Node(package='sim_ice_protection', executable='ice_protection_node',
-             name='sim_ice_protection', parameters=[sim_time]),
-        Node(package='sim_pressurization', executable='pressurization_node',
-             name='sim_pressurization', parameters=[sim_time]),
 
         # Radio navigation
         Node(package='navaid_sim', executable='navaid_sim_node',

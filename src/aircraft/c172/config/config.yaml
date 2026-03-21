@@ -10,6 +10,7 @@ aircraft:
     - sim_electrical
     - sim_engine_systems
     - sim_gear
+    - sim_air_data
     - sim_navigation
 
 initial_conditions:
