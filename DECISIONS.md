@@ -44,6 +44,7 @@
 - `sim_failures` — full failure catalog from YAML, armed triggers with delay/condition, per-target routing to flight_model/electrical/navaid commands
 - `sim_navigation` — GPS/VOR/ILS/ADF/DME processing, CDI/TO-FROM computation, DME source selection, failure gating. Aircraft-agnostic, no pluginlib.
 - `sim_gear` — lifecycle node + pluginlib → IGearModel. C172 fixed-tricycle plugin. Capability gating, WoW per leg, nosewheel angle, brake echo, gear_unsafe failure injection.
+- `sim_air_data` — lifecycle node + pluginlib → IAirDataModel. Pitot-static instrument model with icing, turbulence noise, alternate static. C172 plugin.
 - `ios_backend` — FDM, fuel, sim state, nav state, avionics, electrical state forwarding. Panel commands to `/devices/instructor/panel`, avionics to `/devices/instructor/controls/avionics`. Cockpit pages to `/devices/virtual/panel`.
 - `ios_frontend` — map, status strip (dynamic radio row), 9 panel tabs, action bar, electrical switches (FORCE), ground services (tri-state), radio tuning, nav receiver display. Dynamic A/C page driven by aircraft navigation.yaml config. React Router for cockpit pages.
 
@@ -1817,3 +1818,23 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - DECIDED: gear_node capability gate uses FlightModelCapabilities::gear_retract field (not a new field)
 - REASON: gear_retract already exists in FlightModelCapabilities.msg — no message changes needed
 - AFFECTS: src/systems/gear/src/gear_node.cpp
+
+## 2026-03-21 — 09:00:00 - Claude Code
+- DECIDED: Added AirDataState.msg to sim_msgs — published by sim_air_data on /sim/air_data/state at 50 Hz
+- REASON: Cockpit displays and IOS must read instrument values (IAS, altitude, VSI) from the pitot-static model rather than directly from FlightModelState. Separating instrument outputs from truth state is required so that pitot/static blockage, alternate static, QNH correction, and position-error correction all affect displayed values without touching FlightModelState.
+- AFFECTS: src/sim_msgs/msg/AirDataState.msg (new), src/sim_msgs/CMakeLists.txt (registered under rosidl_generate_interfaces)
+
+## 2026-03-21 — 00:00:00 - Claude Code
+- DECIDED: sim_air_data implemented as new core system node with pluginlib pattern matching sim_electrical/sim_gear
+- DECIDED: IAirDataModel interface with AirDataInputs/AirDataSnapshot/AirDataSystemState structs; two additional methods get_heat_load_names() and get_alternate_static_switch_ids() called after configure() so the node knows which ElectricalState load names and PanelControls switch IDs to search for at runtime
+- DECIDED: Pitot-static physics: blocked pitot (drain clear/drain blocked), blocked static port, alternate static with configurable pressure offset
+- DECIDED: Icing model: binary accumulation (visible moisture + OAT < 5°C + no pitot heat → accumulates over configurable delay, clears at 2x rate with heat on)
+- DECIDED: Turbulence on pitot: band-limited noise (0.5s first-order IIR low-pass) scaled by turbulence_intensity × TAS × configurable gain added to pitot pressure
+- DECIDED: Pitot heat state derived from ElectricalState.load_powered (not switch position) — CB popped means no heat even if switch is on
+- DECIDED: AirDataState.msg supports up to 3 pitot-static systems (captain/FO/standby). C172 has 1 system.
+- DECIDED: air_data is always EXTERNAL_DECOUPLED — we always compute instrument values, no FDM writeback needed. No FlightModelCapabilities gating applied.
+- DECIDED: VSI uses first-order lag filter (1.5s time constant) matching real instrument response; blocked static with normal port selected forces VSI to zero
+- DECIDED: Visible moisture proxy: cloud_coverage >= BKN(3) from WeatherState AND aircraft altitude > 50% of cloud base in metres (rough in-cloud detection); turbulence_intensity read directly from WeatherState.turbulence_intensity field
+- DECIDED: In-flight static pressure falls back to FlightModelState.static_pressure_pa when atmosphere_node has not yet published; same for temperature/density
+- REASON: All three FDMs (JSBSim, J2, Helisim) output truth air data with no meaningful pitot-static failure model. Pitot icing recognition is a required FNPT II training scenario. Instrument air data must be separate from truth for correct failure training.
+- AFFECTS: src/core/sim_interfaces/include/sim_interfaces/i_air_data_model.hpp (new), src/systems/air_data/ (new package: CMakeLists.txt, package.xml, src/air_data_node.cpp), src/aircraft/c172/src/air_data_model.cpp (new plugin), src/aircraft/c172/config/air_data.yaml (new), src/aircraft/c172/plugins.xml (AirDataModel entry added), src/aircraft/c172/CMakeLists.txt (air_data_model.cpp added to library sources)

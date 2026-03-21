@@ -17,7 +17,8 @@ add_library(aircraft_c172_plugins SHARED
   src/fuel_model.cpp
   src/engines_model.cpp
   src/gear_model.cpp
-  src/navigation_model.cpp)
+  src/navigation_model.cpp
+  src/air_data_model.cpp)
 target_include_directories(aircraft_c172_plugins PRIVATE
   ${sim_interfaces_INCLUDE_DIRS}
   ${sim_electrical_INCLUDE_DIRS})

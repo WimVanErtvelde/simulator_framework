@@ -14,4 +14,7 @@
   <class type="aircraft_c172::NavigationModel" base_class_type="sim_interfaces::INavigationModel">
     <description>C172 navigation model</description>
   </class>
+  <class type="aircraft_c172::AirDataModel" base_class_type="sim_interfaces::IAirDataModel">
+    <description>C172 air data computer model</description>
+  </class>
 </library>
