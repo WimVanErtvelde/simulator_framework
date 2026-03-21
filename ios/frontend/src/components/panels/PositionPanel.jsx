@@ -215,9 +215,7 @@ function computePosition(rwy, airport, p) {
   }
 }
 
-function PositionIcons({ rwyEnd, airport, onApply }) {
-  const [selected, setSelected] = useState(null)
-
+function PositionIcons({ rwyEnd, airport, selected, onSelect }) {
   if (!rwyEnd) return null
 
   return (
@@ -227,7 +225,7 @@ function PositionIcons({ rwyEnd, airport, onApply }) {
         const c = computePosition(rwyEnd, airport, p)
         return (
           <button key={p.id}
-            onClick={() => { setSelected(p.id); onApply(c) }}
+            onClick={() => onSelect(p.id, c)}
             style={{
               width: 68, padding: '8px 2px', borderRadius: 4,
               display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
@@ -272,23 +270,22 @@ export default function PositionPanel() {
   const activeAirport = (runwayResults?.icao === depAirport?.icao)
     ? runwayResults : depAirport
 
-  const handlePositionApply = (c) => {
-    const RAD2DEG = 180 / Math.PI
-    console.log('[POS] sending IC:', {
-      lat_deg: c.lat_rad * RAD2DEG,
-      lon_deg: c.lon_rad * RAD2DEG,
-      lat_rad: c.lat_rad,
-      lon_rad: c.lon_rad,
-      alt_m: c.alt_m,
-      hdg_deg: c.heading_deg,
-      airspeed_ms: c.airspeed_ms,
-    })
+  const [selectedPos, setSelectedPos] = useState(null)
+  const [pendingIC, setPendingIC] = useState(null)
+
+  const handlePositionSelect = (posId, computed) => {
+    setSelectedPos(posId)
+    setPendingIC(computed)
+  }
+
+  const handlePositionApply = () => {
+    if (!pendingIC) return
     setDeparture({
-      lat_rad: c.lat_rad,
-      lon_rad: c.lon_rad,
-      alt_m: c.alt_m,
-      heading_rad: c.heading_rad,
-      airspeed_ms: c.airspeed_ms,
+      lat_rad: pendingIC.lat_rad,
+      lon_rad: pendingIC.lon_rad,
+      alt_m: pendingIC.alt_m,
+      heading_rad: pendingIC.heading_rad,
+      airspeed_ms: pendingIC.airspeed_ms,
     })
   }
 
@@ -331,7 +328,25 @@ export default function PositionPanel() {
           <div style={{ fontSize: 11, color: '#64748b', fontFamily: 'monospace', marginTop: 14 }}>
             POSITION
           </div>
-          <PositionIcons rwyEnd={depRunway} airport={activeAirport} onApply={handlePositionApply} />
+          <PositionIcons rwyEnd={depRunway} airport={activeAirport}
+            selected={selectedPos} onSelect={handlePositionSelect} />
+          {pendingIC && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace', marginBottom: 6 }}>
+                {(pendingIC.lat_rad * 180 / Math.PI).toFixed(4)}° / {(pendingIC.lon_rad * 180 / Math.PI).toFixed(4)}°
+                &nbsp; {Math.round(pendingIC.alt_m * 3.28084)}ft
+                &nbsp; HDG {Math.round(pendingIC.heading_deg)}°
+                &nbsp; {Math.round(pendingIC.airspeed_ms * 1.94384)}kt
+              </div>
+              <FullWidthBtn
+                label={pendingAction?.type === 'set_departure' ? 'CONFIRM? (tap again)' : 'SET POSITION'}
+                style={pendingAction?.type === 'set_departure'
+                  ? { background: 'rgba(0,255,136,0.12)', color: '#00ff88', borderColor: '#00ff88' }
+                  : { background: '#1c2333', color: '#e2e8f0', borderColor: '#1e293b' }}
+                onClick={() => requestAction('set_departure', handlePositionApply)}
+              />
+            </div>
+          )}
         </>
       )}
 
