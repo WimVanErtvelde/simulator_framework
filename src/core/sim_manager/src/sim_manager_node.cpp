@@ -123,6 +123,20 @@ public:
         }
       });
 
+    // Subscribe to ICs published directly by ios_backend (bypasses command handler)
+    ic_direct_sub_ = this->create_subscription<sim_msgs::msg::InitialConditions>(
+      "/sim/initial_conditions", 10,
+      [this](const sim_msgs::msg::InitialConditions::SharedPtr) {
+        // Transition to REPOSITIONING when an IC arrives from any source
+        if (state_ != sim_msgs::msg::SimState::STATE_SHUTDOWN &&
+            state_ != sim_msgs::msg::SimState::STATE_INIT &&
+            state_ != sim_msgs::msg::SimState::STATE_REPOSITIONING) {
+          RCLCPP_INFO(this->get_logger(), "IC received — entering REPOSITIONING");
+          transition_to(sim_msgs::msg::SimState::STATE_REPOSITIONING);
+          repositioning_start_ = std::chrono::steady_clock::now();
+        }
+      });
+
     // ── Timers ──────────────────────────────────────────────────────────
     // Clock at 50 Hz (wall timer — sim_manager is the clock source)
     clock_timer_ = this->create_wall_timer(20ms,
@@ -183,6 +197,7 @@ private:
   rclcpp::Subscription<sim_msgs::msg::SimCommand>::SharedPtr command_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr heartbeat_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr terrain_ready_sub_;
+  rclcpp::Subscription<sim_msgs::msg::InitialConditions>::SharedPtr ic_direct_sub_;
 
   // ── Repositioning ─────────────────────────────────────────────────────
   std::chrono::steady_clock::time_point repositioning_start_{};
