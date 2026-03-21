@@ -443,22 +443,18 @@ private:
       modified_ic.altitude_msl_m = terrain_elev_m + gear_cg_height_m_;
     }
 
-    // Set terrain BEFORE IC
-    adapter_->set_property("position/terrain-elevation-asl-ft", terrain_ft);
-    RCLCPP_INFO(this->get_logger(),
-      "IC terrain: set terrain=%.1fft, altitude=%.1fm (%.1fft), on_ground=%s",
-      terrain_ft, modified_ic.altitude_msl_m, modified_ic.altitude_msl_m * 3.28084,
-      on_ground ? "true" : "false");
-
+    // Apply IC first, then set terrain AFTER — RunIC() resets terrain to default
     adapter_->apply_initial_conditions(modified_ic);
 
-    // Check what JSBSim actually has after IC
+    // Now set terrain — this sticks because RunIC is done
+    adapter_->set_property("position/terrain-elevation-asl-ft", terrain_ft);
+
     double actual_alt = adapter_->get_property("position/h-sl-ft");
     double actual_terrain = adapter_->get_property("position/terrain-elevation-asl-ft");
-    double actual_agl = adapter_->get_property("position/h-agl-ft");
+    double actual_agl = actual_alt - actual_terrain;
     RCLCPP_INFO(this->get_logger(),
-      "IC result: alt=%.1fft, terrain=%.1fft, AGL=%.1fft",
-      actual_alt, actual_terrain, actual_agl);
+      "IC: terrain=%.1fft, CG=%.1fft, AGL=%.1fft, on_ground=%s",
+      actual_terrain, actual_alt, actual_agl, on_ground ? "true" : "false");
   }
 
   void publish_terrain_source()
