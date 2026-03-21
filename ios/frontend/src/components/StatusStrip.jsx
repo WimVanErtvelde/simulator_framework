@@ -1,10 +1,11 @@
 import { useSimStore } from '../store/useSimStore'
 
 const STATE_BADGES = {
-  RUNNING:  { bg: '#1a4731', text: '#3fb950', border: '#2d6a4f' },
-  FROZEN:   { bg: '#1a2744', text: '#388bfd', border: '#2d4a8f' },
-  READY:    { bg: '#3d2b0a', text: '#d29922', border: '#7d5a14' },
-  INIT:     { bg: '#1c1c1c', text: '#8b949e', border: '#30363d' },
+  RUNNING:       { bg: '#1a4731', text: '#3fb950', border: '#2d6a4f' },
+  FROZEN:        { bg: '#1a2744', text: '#388bfd', border: '#2d4a8f' },
+  READY:         { bg: '#3d2b0a', text: '#d29922', border: '#7d5a14' },
+  INIT:          { bg: '#1c1c1c', text: '#8b949e', border: '#30363d' },
+  REPOSITIONING: { bg: '#3b1f6e', text: '#c4b5fd', border: '#6d3fc0' },
 }
 const DEFAULT_BADGE = { bg: '#3d0a0a', text: '#f85149', border: '#8f2d2d' }
 

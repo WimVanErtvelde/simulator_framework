@@ -53,7 +53,8 @@ export default function ActionBar() {
   const simRef = useRef(null)
 
   const freezeDisabled = !wsConnected || simState !== 'RUNNING'
-  const runDisabled = !wsConnected || (simState === 'RUNNING' || (simState !== 'READY' && simState !== 'FROZEN'))
+  const runDisabled = !wsConnected || simState === 'RUNNING' || simState === 'REPOSITIONING' ||
+    (simState !== 'READY' && simState !== 'FROZEN')
 
   return (
     <div style={{
