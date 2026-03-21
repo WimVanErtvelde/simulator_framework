@@ -1891,3 +1891,9 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - DECIDED (PLANNED): IC terrain will be simplified to: position at 0 MSL → wait for CIGI HOT → reposition to correct height. Eliminates SRTM dependency for on-ground starts when IG connected. SRTM remains fallback when no IG.
 - REASON: Current 3-stage IC (raw → SRTM → CIGI refine) is complex. Positioning at 0 MSL first guarantees IG pages terrain at target position before probing.
 - AFFECTS: flight_model_adapter_node.cpp (future change)
+
+## 2026-03-22 — 10:00:00 - Claude Code
+
+- DECIDED: Add REPOSITIONING state (value 6) to sim_manager state machine. Entered on CMD_SET_IC from any non-INIT/non-SHUTDOWN state. Exits to READY on /sim/terrain/ready (Bool=true) or after 5s timeout.
+- REASON: Aircraft repositioning needs to pause the sim clock while waiting for terrain (CIGI HOT or SRTM) to resolve at the new position, preventing the aircraft from falling through unloaded terrain.
+- AFFECTS: src/core/sim_manager/src/sim_manager_node.cpp, src/sim_msgs/msg/SimState.msg (already had STATE_REPOSITIONING=6)

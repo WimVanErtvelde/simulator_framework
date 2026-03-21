@@ -1,6 +1,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rosgraph_msgs/msg/clock.hpp>
 #include <std_msgs/msg/header.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <sim_msgs/msg/sim_state.hpp>
 #include <sim_msgs/msg/sim_command.hpp>
@@ -113,6 +114,15 @@ public:
         }
       });
 
+    terrain_ready_sub_ = this->create_subscription<std_msgs::msg::Bool>(
+      "/sim/terrain/ready", 10,
+      [this](const std_msgs::msg::Bool::SharedPtr msg) {
+        if (msg->data && state_ == sim_msgs::msg::SimState::STATE_REPOSITIONING) {
+          RCLCPP_INFO(this->get_logger(), "Terrain ready — exiting REPOSITIONING");
+          transition_to(sim_msgs::msg::SimState::STATE_READY);
+        }
+      });
+
     // ── Timers ──────────────────────────────────────────────────────────
     // Clock at 50 Hz (wall timer — sim_manager is the clock source)
     clock_timer_ = this->create_wall_timer(20ms,
@@ -172,6 +182,10 @@ private:
   // ── Subscribers ─────────────────────────────────────────────────────────
   rclcpp::Subscription<sim_msgs::msg::SimCommand>::SharedPtr command_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr heartbeat_sub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr terrain_ready_sub_;
+
+  // ── Repositioning ─────────────────────────────────────────────────────
+  std::chrono::steady_clock::time_point repositioning_start_{};
 
   // ── Timers ──────────────────────────────────────────────────────────────
   rclcpp::TimerBase::SharedPtr clock_timer_;
@@ -288,7 +302,8 @@ private:
       case sim_msgs::msg::SimState::STATE_RUNNING:   return "RUNNING";
       case sim_msgs::msg::SimState::STATE_FROZEN:    return "FROZEN";
       case sim_msgs::msg::SimState::STATE_RESETTING: return "RESETTING";
-      case sim_msgs::msg::SimState::STATE_SHUTDOWN:  return "SHUTDOWN";
+      case sim_msgs::msg::SimState::STATE_SHUTDOWN:      return "SHUTDOWN";
+      case sim_msgs::msg::SimState::STATE_REPOSITIONING: return "REPOSITIONING";
       default: return "UNKNOWN";
     }
   }
@@ -306,19 +321,26 @@ private:
         valid = (new_state == S::STATE_READY || new_state == S::STATE_SHUTDOWN);
         break;
       case S::STATE_READY:
-        valid = (new_state == S::STATE_RUNNING || new_state == S::STATE_SHUTDOWN);
+        valid = (new_state == S::STATE_RUNNING ||
+                 new_state == S::STATE_REPOSITIONING ||
+                 new_state == S::STATE_SHUTDOWN);
         break;
       case S::STATE_RUNNING:
         valid = (new_state == S::STATE_FROZEN ||
                  new_state == S::STATE_RESETTING ||
+                 new_state == S::STATE_REPOSITIONING ||
                  new_state == S::STATE_SHUTDOWN);
         break;
       case S::STATE_FROZEN:
         valid = (new_state == S::STATE_RUNNING ||
                  new_state == S::STATE_RESETTING ||
+                 new_state == S::STATE_REPOSITIONING ||
                  new_state == S::STATE_SHUTDOWN);
         break;
       case S::STATE_RESETTING:
+        valid = (new_state == S::STATE_READY || new_state == S::STATE_SHUTDOWN);
+        break;
+      case S::STATE_REPOSITIONING:
         valid = (new_state == S::STATE_READY || new_state == S::STATE_SHUTDOWN);
         break;
       case S::STATE_SHUTDOWN:
@@ -442,6 +464,14 @@ private:
   void parse_ic_from_json(const std::string & payload)
   {
     if (payload.empty()) return;
+
+    // Transition to REPOSITIONING — sim_manager waits for terrain ready
+    if (state_ != sim_msgs::msg::SimState::STATE_SHUTDOWN &&
+        state_ != sim_msgs::msg::SimState::STATE_INIT) {
+      transition_to(sim_msgs::msg::SimState::STATE_REPOSITIONING);
+      repositioning_start_ = std::chrono::steady_clock::now();
+    }
+
     try {
       auto j = json::parse(payload);
       if (j.contains("latitude_rad"))     current_ic_.latitude_rad     = j["latitude_rad"].get<double>();
@@ -638,6 +668,17 @@ private:
             transition_to(sim_msgs::msg::SimState::STATE_FROZEN);
           }
         }
+      }
+    }
+
+    // Repositioning timeout — don't wait forever for terrain
+    if (state_ == sim_msgs::msg::SimState::STATE_REPOSITIONING) {
+      auto age = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - repositioning_start_).count();
+      if (age > 5.0) {
+        RCLCPP_WARN(this->get_logger(),
+          "Repositioning timeout (%.1fs) — transitioning to READY", age);
+        transition_to(sim_msgs::msg::SimState::STATE_READY);
       }
     }
   }
