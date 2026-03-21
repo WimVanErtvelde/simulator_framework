@@ -14,6 +14,25 @@ import math
 import os
 import threading
 import time
+import numpy as np
+
+
+class _RosEncoder(json.JSONEncoder):
+    """Handle numpy types from ROS2 message arrays."""
+    def default(self, obj):
+        if isinstance(obj, (np.bool_,)):
+            return bool(obj)
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
+
+
+def _dumps(obj):
+    return json.dumps(obj, cls=_RosEncoder)
 
 import yaml
 
@@ -826,7 +845,7 @@ nodes_lock = threading.Lock()
 async def broadcast(data):
     """Send a message to all connected WebSocket clients."""
     global connected_clients
-    msg = json.dumps(data)
+    msg = _dumps(data)
     disconnected = set()
     for client in connected_clients:
         try:
@@ -1170,17 +1189,24 @@ async def websocket_endpoint(websocket: WebSocket):
 
     async def sender():
         prev_json = {}
+        send_count = 0
         while True:
             try:
                 snapshot = ros_node.get_snapshot() if ros_node else {}
                 for key, data in snapshot.items():
-                    encoded = json.dumps(data)
+                    encoded = _dumps(data)
                     if prev_json.get(key) != encoded:
                         await websocket.send_text(encoded)
                         prev_json[key] = encoded
+                        send_count += 1
+                        if send_count % 100 == 0 and ros_node:
+                            ros_node.get_logger().info(
+                                f'[ws-sender] {send_count} msgs sent, {len(snapshot)} keys in snapshot')
                 await asyncio.sleep(0.05)
-            except Exception:
-                break  # connection closed or error — exit sender
+            except Exception as e:
+                if ros_node:
+                    ros_node.get_logger().warn(f'[ws-sender] exiting: {e}')
+                break
 
     async def _safe_lifecycle(coro, cmd_id):
         """Run a lifecycle coroutine; on failure send command_error to this client."""
