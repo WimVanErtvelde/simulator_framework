@@ -1169,14 +1169,18 @@ async def websocket_endpoint(websocket: WebSocket):
     connected_clients.add(websocket)
 
     async def sender():
-        prev = {}
+        prev_json = {}
         while True:
-            snapshot = ros_node.get_snapshot() if ros_node else {}
-            for key, data in snapshot.items():
-                if prev.get(key) is not data:
-                    await websocket.send_text(json.dumps(data))
-            prev = dict(snapshot)
-            await asyncio.sleep(0.05)
+            try:
+                snapshot = ros_node.get_snapshot() if ros_node else {}
+                for key, data in snapshot.items():
+                    encoded = json.dumps(data)
+                    if prev_json.get(key) != encoded:
+                        await websocket.send_text(encoded)
+                        prev_json[key] = encoded
+                await asyncio.sleep(0.05)
+            except Exception:
+                break  # connection closed or error — exit sender
 
     async def _safe_lifecycle(coro, cmd_id):
         """Run a lifecycle coroutine; on failure send command_error to this client."""
