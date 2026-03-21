@@ -457,22 +457,26 @@ class IosBackendNode(Node):
 
     def _on_engine_state(self, msg: EngineState):
         n = msg.engine_count
+        # Map engine_state enum to running/failed bools for frontend compatibility
+        running = [msg.engine_state[i] == 3 for i in range(n)]  # STATE_RUNNING=3
+        failed = [msg.engine_state[i] == 5 for i in range(n)]   # STATE_FAILED=5
         data = {
             'type': 'engines_state',
             'engine_count': int(n),
-            'rpm': [float(msg.rpm[i]) for i in range(n)],
+            'engine_type': msg.engine_type,
+            'rpm': [float(msg.engine_rpm[i]) for i in range(n)],
             'egt_degc': [float(msg.egt_degc[i]) for i in range(n)],
             'cht_degc': [float(msg.cht_degc[i]) for i in range(n)],
-            'oil_pressure_psi': [float(msg.oil_pressure_psi[i]) for i in range(n)],
+            'oil_pressure_psi': [float(msg.oil_press_kpa[i] * 0.145038) for i in range(n)],
             'oil_temp_degc': [float(msg.oil_temp_degc[i]) for i in range(n)],
-            'manifold_pressure_inhg': [float(msg.manifold_pressure_inhg[i]) for i in range(n)],
-            'fuel_flow_gph': [float(msg.fuel_flow_gph[i]) for i in range(n)],
+            'manifold_pressure_inhg': [float(msg.manifold_press_inhg[i]) for i in range(n)],
+            'fuel_flow_gph': [float(msg.fuel_flow_kgph[i] / 2.7216) for i in range(n)],
             'n1_pct': [float(msg.n1_pct[i]) for i in range(n)],
             'n2_pct': [float(msg.n2_pct[i]) for i in range(n)],
-            'tgt_degc': [float(msg.tgt_degc[i]) for i in range(n)],
+            'tgt_degc': [float(msg.tot_degc[i]) for i in range(n)],
             'torque_pct': [float(msg.torque_pct[i]) for i in range(n)],
-            'engine_running': [bool(msg.engine_running[i]) for i in range(n)],
-            'engine_failed': [bool(msg.engine_failed[i]) for i in range(n)],
+            'engine_running': running,
+            'engine_failed': failed,
             'starter_engaged': [bool(msg.starter_engaged[i]) for i in range(n)],
             'low_oil_pressure_warning': [bool(msg.low_oil_pressure_warning[i]) for i in range(n)],
             'high_egt_warning': [bool(msg.high_egt_warning[i]) for i in range(n)],
