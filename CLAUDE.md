@@ -12,29 +12,26 @@ Three terminals required. Start in order:
 
 **Terminal 1 — Simulator**
 ```bash
-cd ~/simulator_framework
-source /opt/ros/jazzy/setup.bash && source install/setup.bash
-ros2 launch launch/sim_full.launch.py
+./start_sim.sh
 ```
 
 **Terminal 2 — IOS Backend** (wait until sim prints "All N required nodes alive")
 ```bash
-cd ~/simulator_framework
-source /opt/ros/jazzy/setup.bash && source install/setup.bash
-python3 -m uvicorn ios_backend.ios_backend_node:app --host 0.0.0.0 --port 8080
+./start_backend.sh
 ```
-Wait ~10 seconds after startup for DDS peer discovery before checking node status.
+Backend takes ~5 seconds before ROS2 data flows (3s DDS discovery + 2s initial subscription fill).
 
 **Terminal 3 — IOS Frontend**
 ```bash
-cd ~/simulator_framework/ios/frontend
-npm run dev
+./start_frontend.sh
 # → http://localhost:5173
 ```
 
 **Notes**
 - Backend MUST be started with ROS2 sourced — without it, DDS isolation means no nodes are visible
 - Backend is NOT in sim_full.launch.py (removed — it conflicts on port 8080 if already running)
+- Backend uses `rclpy.spin_once()` in a thread (NOT `rclpy.spin()` — that silently fails under uvicorn)
+- Backend JSON encoder handles numpy types from ROS2 message arrays (`_RosEncoder`)
 - Kill stale backend: `fuser -k 8080/tcp`
 - Kill stale frontend: `fuser -k 5173/tcp`
 
@@ -122,13 +119,14 @@ simulator_framework/
 │   ├── systems/
 │   │   ├── electrical/              ← ROS2 node: DC/AC buses, breakers (pluginlib, ElectricalSolver)
 │   │   ├── fuel/                    ← ROS2 node: tanks, feed, transfer, CG
-│   │   ├── hydraulic/               ← ROS2 node: system pressures
-│   │   ├── navigation/              ← ROS2 node: onboard receivers (VOR/ILS/GPS/ADF) — no pluginlib
 │   │   ├── engine_systems/          ← ROS2 node: N1/N2, EGT, torque, start sequence
+│   │   ├── gear/                    ← ROS2 node: WoW, position, brakes, nosewheel (pluginlib)
+│   │   ├── air_data/                ← ROS2 node: pitot-static instrument model (pluginlib)
+│   │   ├── navigation/              ← ROS2 node: onboard receivers (VOR/ILS/GPS/ADF) — no pluginlib
 │   │   ├── failures/                ← ROS2 node: failure injector, active failure broadcast
-│   │   ├── ice_protection/          ← ROS2 node: de-ice, anti-ice, pitot heat
-│   │   ├── pressurization/          ← ROS2 node: applicable aircraft only
-│   │   └── gear/                    ← ROS2 node: retract/extend, WoW, warnings
+│   │   ├── hydraulic/               ← ROS2 node: system pressures (stub — not launched for C172)
+│   │   ├── ice_protection/          ← ROS2 node: de-ice, anti-ice (stub — not launched for C172)
+│   │   └── pressurization/          ← ROS2 node: applicable aircraft only (stub — not launched for C172)
 │   ├── hardware/
 │   │   └── microros_bridge/         ← ROS2 node: serial/CAN → /devices/hardware/
 │   ├── ios_backend/                 ← ROS2 ament_python package: FastAPI + rclpy IOS bridge
@@ -252,9 +250,10 @@ All topics use `snake_case`. No abbreviations unless universally understood (e.g
 | `/sim/controls/arbitration/state` | ArbitrationState | input_arbitrator | Per-channel source (HARDWARE/VIRTUAL/INSTRUCTOR/FROZEN) |
 | `/sim/electrical/state` | ElectricalState | sim_electrical | DC/AC buses, sources, loads, SOC |
 | `/sim/fuel/state` | FuelState | sim_fuel | Quantities, flow, CG |
-| `/sim/hydraulic/state` | HydraulicState | sim_hydraulic | System pressures |
-| `/sim/navigation/state` | NavigationState | sim_navigation | Onboard receiver outputs: VOR, ILS, GPS, ADF, DME, TACAN |
 | `/sim/engines/state` | EngineState | sim_engine_systems | N1/N2, EGT, torque |
+| `/sim/gear/state` | GearState | sim_gear | WoW per leg, position, brakes, nosewheel |
+| `/sim/air_data/state` | AirDataState | sim_air_data | Instrument IAS, altitude, VSI (pitot-static) |
+| `/sim/navigation/state` | NavigationState | sim_navigation | Onboard receiver outputs: VOR, ILS, GPS, ADF, DME, TACAN |
 | `/sim/failures/active` | FailureList | sim_failures | Broadcast to all nodes |
 | `/sim/alerts` | SimAlert | any node | SEVERITY_INFO/WARN/CRITICAL alerts to IOS |
 | `/sim/cigi/host_to_ig` | CigiPacket | cigi_bridge | Host → IG packets |
@@ -409,10 +408,45 @@ Each system node follows this pattern:
 - RELOAD logs: "Reloading `<system>` config from: `<path>`"
 
 **Nodes using pluginlib** (plugin name = `aircraft_<id>::<X>Model`):
-`sim_electrical`, `sim_fuel`, `sim_gear`
+`sim_electrical`, `sim_fuel`, `sim_gear`, `sim_air_data`, `sim_engine_systems`
 
 **Nodes NOT using pluginlib** (aircraft-agnostic):
 `sim_navigation` — receiver behavior is standard across aircraft types
+
+---
+
+## sim_air_data (`src/systems/air_data/`)
+
+Pitot-static instrument model. Computes instrument IAS, altitude, VSI from truth + system state.
+
+- Subscribes to `/sim/flight_model/state` (TAS, altitude truth), `/sim/world/atmosphere` (pressure, temperature, QNH), `/sim/world/weather` (turbulence, visible_moisture), `/sim/electrical/state` (pitot heat load powered), `/sim/controls/panel` (alternate static valve), `/sim/failure/air_data_commands`
+- Publishes `/sim/air_data/state` (AirDataState) at 50Hz
+- Supports up to 3 pitot-static systems (C172=1, glass cockpit=3)
+- IOS and cockpit displays read AirDataState for IAS/ALT/VSI (not FlightModelState)
+- FlightModelState remains truth (for QTG, recording, CIGI, IOS TRUTH display)
+
+**Pitot-static physics:**
+- Pitot blocked (drain clear): IAS decays toward zero
+- Pitot blocked (drain blocked): IAS acts like altimeter (increases with climb)
+- Static port blocked: altitude freezes, VSI zero, IAS incorrect at different altitudes
+- Alternate static: cabin pressure offset (configurable, ~-30Pa for C172)
+
+**Icing model:** visible_moisture (from WeatherState, instructor-set) + OAT < 5°C + pitot heat off → ice accumulates over configurable delay (45s). Clears at 2x rate with heat on.
+
+**Turbulence on pitot:** band-limited noise scaled by turbulence_intensity × TAS × gain. ASI fluctuates more than aircraft actually changes speed.
+
+**Pitot heat:** resolved from ElectricalState load_powered (not switch position). CB popped = no heat.
+
+---
+
+## sim_gear (`src/systems/gear/`)
+
+Landing gear system. Reads FDM gear contact data, publishes aggregated gear state.
+
+- Subscribes to `/sim/flight_model/state` (WoW, gear position, steering), `/sim/controls/flight` (gear handle, brakes), `/sim/failures/active`, `/sim/failure/gear_commands`
+- Publishes `/sim/gear/state` (GearState) at 50Hz
+- C172 plugin: fixed tricycle, position always 1.0, WoW from FDM, nosewheel angle, brake echo
+- Supports gear_unsafe_indication failure for warning light test
 
 ---
 
@@ -488,9 +522,13 @@ Each aircraft: `src/aircraft/<type>/` — contains `package.xml`, `CMakeLists.tx
 `src/` (plugin implementations), and `config/` (per-system YAML files).
 
 Config files per aircraft:
-- `config/config.yaml` — metadata, required nodes, Flight Model Adapter, limits, default IC
+- `config/config.yaml` — metadata, required nodes, Flight Model Adapter, limits, default IC, gear_points
 - `config/electrical.yaml` — bus topology, sources, loads, switch IDs
 - `config/fuel.yaml` — tanks, selectors, pumps
+- `config/engine.yaml` — engine type, count, panel control IDs
+- `config/gear.yaml` — gear type, retractable flag, leg names
+- `config/air_data.yaml` — pitot-static systems, heat load names, alternate static switch IDs
+- `config/failures.yaml` — failure catalog (ATA chapter grouped), injection handlers
 - `config/navigation.yaml` — installed avionics equipment (drives dynamic IOS A/C page)
 
 **Panel control ID naming convention:**
@@ -568,6 +606,8 @@ source install/setup.bash
 - Never use a bare `_freq` suffix on avionics message fields — always `_freq_mhz` or `_freq_khz`
 - Never publish IOS A/C page commands to `/devices/virtual/` — always `/devices/instructor/`
 - Never hardcode a node list in ios_backend — node discovery is fully dynamic
+- Never use `rclpy.spin()` in a daemon thread under uvicorn — use `spin_once()` in a thread loop instead
+- Never use `json.dumps()` directly on ROS2 message data — use `_dumps()` with `_RosEncoder` to handle numpy types
 
 ---
 
@@ -582,9 +622,12 @@ source install/setup.bash
 - [x] ios_backend excluded from launch file — run manually ✓
 - [x] IOS panel priority: instructor-level by default ✓
 - [x] Virtual cockpit pages: VIRTUAL priority, URL-routed via React Router ✓
+- [x] Terrain service: sim-side SRTM/DTED, IG provides supplementary CIGI HOT ✓
+- [x] Air data: always modeled by sim_air_data (EXTERNAL_DECOUPLED), all FDMs output truth only ✓
+- [ ] IC terrain: simplify to 0 MSL → CIGI HOT → reposition (planned, not yet implemented)
+- [ ] CIGI IG repositioning handshake: X-Plane plugin detect position change → wait for terrain → signal ready
 - [ ] CIGI library: from scratch or cigicl?
 - [ ] micro-ROS transport: serial UART or CAN?
 - [ ] IOS auth: single-user or multi-role (instructor / examiner / admin)?
 - [ ] Scenario file format: custom YAML or existing standard?
-- [ ] Terrain service: separate node or merged into navaid_sim?
 - [ ] IG manager: lifecycle node on remote hardware (e.g. Raspberry Pi) to spawn/monitor OpenGL IG executables
