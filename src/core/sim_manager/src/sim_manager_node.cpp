@@ -648,9 +648,7 @@ private:
 
   void publish_state()
   {
-    // Only publish when state has actually changed (or first publish)
-    if (state_ == last_published_state_ && !force_publish_state_) return;
-    last_published_state_ = state_;
+    // Always publish — late-joining nodes (ios_backend) need current state
     force_publish_state_ = false;
 
     auto msg = sim_msgs::msg::SimState();
