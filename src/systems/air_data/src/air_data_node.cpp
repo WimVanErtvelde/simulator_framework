@@ -242,12 +242,7 @@ public:
 
         if (latest_weather_) {
           inputs.turbulence_intensity = latest_weather_->turbulence_intensity;
-          // Visible moisture: in cloud (low visibility) or overcast/broken coverage
-          // Use cloud coverage >= BKN(3) as proxy for in-cloud
-          inputs.visible_moisture =
-            (latest_weather_->cloud_coverage >= 3) &&
-            (latest_fms_ &&
-             latest_fms_->altitude_msl_m > (latest_weather_->cloud_base_ft * 0.3048 * 0.5));
+          inputs.visible_moisture = latest_weather_->visible_moisture;
         }
 
         // Resolve pitot heat powered state from ElectricalState

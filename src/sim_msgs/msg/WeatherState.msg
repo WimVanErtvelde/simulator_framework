@@ -16,6 +16,9 @@ float64 visibility_m            # horizontal visibility (metres)
 float64 cloud_base_ft           # cloud base altitude AGL (feet)
 uint8 cloud_coverage            # 0=CLR, 1=FEW, 2=SCT, 3=BKN, 4=OVC
 
+# Icing conditions
+bool visible_moisture             # true = in cloud or precipitation (instructor-set)
+
 # Temperature and pressure deviations
 float64 oat_deviation_k         # deviation from ISA temperature (K), 0 = ISA standard
 float64 qnh_pa                  # altimeter setting (Pa), 101325 = ISA standard
