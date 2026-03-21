@@ -424,11 +424,12 @@ private:
   {
     if (!adapter_) return;
     auto modified_ic = ic;
-    double ground_alt = terrain_elev_m + 0.5;  // gear height offset
+    // For on-ground starts (low altitude or ready_for_takeoff), set altitude to terrain.
+    // JSBSim's force-on-ground handles gear height automatically.
     if (modified_ic.altitude_msl_m < terrain_elev_m + 50.0) {
-      RCLCPP_INFO(this->get_logger(), "IC altitude adjusted: %.1f → %.1f m MSL (terrain+0.5)",
-                  modified_ic.altitude_msl_m, ground_alt);
-      modified_ic.altitude_msl_m = ground_alt;
+      RCLCPP_INFO(this->get_logger(), "IC altitude adjusted: %.1f → %.1f m MSL (terrain)",
+                  modified_ic.altitude_msl_m, terrain_elev_m);
+      modified_ic.altitude_msl_m = terrain_elev_m;
     }
     adapter_->apply_initial_conditions(modified_ic);
   }
