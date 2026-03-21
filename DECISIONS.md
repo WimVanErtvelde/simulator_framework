@@ -1845,3 +1845,49 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - DECIDED: pitot-static health indicator added below the six-pack in controls.html. Implemented via DOM manipulation (createElement/textContent/appendChild) instead of innerHTML to avoid XSS risk. Shows "PITOT FAIL" (red) + "STATIC FAIL" (red) + "ICE XX%" (amber) only when relevant; empty when all healthy.
 - REASON: controls.html is the keyboard controls debug page used during development. Having it show instrument values (affected by failures/icing) rather than truth values makes it useful for testing the sim_air_data node and pitot failure scenarios. The IOS instructor position bar still shows truth alt/hdg for situational awareness.
 - AFFECTS: src/ios_backend/ios_backend/ios_backend_node.py (AirDataState import, subscription, _on_air_data_state callback), ios/frontend/controls.html (airData object, WS handler, gauge calls, pitot-static-status div, updatePitotStaticStatus function)
+
+## 2026-03-21 — 12:00:00 - Claude Code
+
+- DECIDED: Failure injection routed to sim_air_data via /sim/failure/air_data_commands. failures_node gains "air_data" handler routing. C172 failures.yaml updated: old ata34_pitot_failed (flight_model handler) and ata34_altimeter_failed (sim_failures handler) replaced with three air_data-routed failures: pitot_blocked_drain_clear, pitot_blocked_drain_blocked, static_port_blocked.
+- REASON: Pitot/static failures are now modeled in sim_air_data, not JSBSim. Routing through failures_node ensures failures appear in FailureState, can be armed/cleared via IOS, and record in rosbag2.
+- AFFECTS: failures_node.cpp (air_data_cmd_pub_), src/aircraft/c172/config/failures.yaml
+
+- DECIDED: Added bool visible_moisture to WeatherState.msg — instructor-set flag for icing conditions. sim_air_data reads this directly instead of deriving from cloud coverage + altitude heuristic.
+- REASON: Instructor should explicitly control icing conditions for training scenarios. Derivation from cloud base/coverage was unreliable and added unnecessary complexity.
+- AFFECTS: sim_msgs/msg/WeatherState.msg, src/systems/air_data/src/air_data_node.cpp
+
+- DECIDED: Removed sim_hydraulic, sim_ice_protection, sim_pressurization from C172 launch. C172 has no hydraulic system, no pressurization, and pitot heat is handled via electrical load + sim_air_data. Stub nodes remain in src/systems/ for future aircraft.
+- REASON: Launching nodes that do nothing wastes resources and clutters the node list. Aircraft config required_nodes drives what gets launched.
+- AFFECTS: launch/sim_full.launch.py, src/aircraft/c172/config/config.yaml
+
+## 2026-03-21 — 15:00:00 - Claude Code
+
+- DECIDED: ios_backend rclpy.spin() replaced with spin_once(timeout_sec=0.05) in a dedicated thread with 3s initial delay. rclpy.spin() in a daemon thread silently fails under uvicorn — callbacks never fire.
+- REASON: Root cause of all IOS data flow issues. The spin thread appeared alive but processed no subscription callbacks. DDS discovery also needs ~2-3s before messages arrive.
+- AFFECTS: src/ios_backend/ios_backend/ios_backend_node.py (startup_event)
+
+- DECIDED: Custom JSON encoder (_RosEncoder) for ios_backend. ROS2 message arrays return numpy.bool_/int_/float_ types which crash json.dumps. Encoder converts numpy types to native Python. Applied to broadcast and per-client WS sender.
+- REASON: json.dumps('Object of type bool_ is not JSON serializable') silently killed the WS sender task. Commands still worked (different code path) but no data flowed to clients.
+- AFFECTS: src/ios_backend/ios_backend/ios_backend_node.py
+
+- DECIDED: WS sender uses JSON string comparison instead of object identity (is not) for change detection. Breaks cleanly on exception instead of silently dying.
+- REASON: Identity comparison across threads was unreliable. Unhandled exceptions in sender killed data flow while connection stayed open.
+- AFFECTS: src/ios_backend/ios_backend/ios_backend_node.py
+
+- DECIDED: sim_manager publishes SimState at 10Hz unconditionally (no dedup). Late-joining nodes receive current state immediately.
+- REASON: Previous dedup meant ios_backend starting after the sim never received the current state, falling back to stub READY.
+- AFFECTS: src/core/sim_manager/src/sim_manager_node.cpp
+
+## 2026-03-21 — 16:00:00 - Claude Code
+
+- DECIDED: Two-step IC terrain — apply with SRTM first, then refine with CIGI HOT within 2s. Stale CIGI HOT data cleared on new IC. JSBSim terrain-elevation-asl-ft set BEFORE apply_initial_conditions so force-on-ground has correct ground plane.
+- REASON: Aircraft was ending up underground because JSBSim's internal terrain was stale. Setting terrain first, then IC, lets force-on-ground place gear correctly.
+- AFFECTS: src/core/flight_model_adapter/src/flight_model_adapter_node.cpp
+
+- DECIDED: IOS position icons (RWY, 2NM, 4NM, DWN) now preview only — require SET POSITION button with double-tap confirm before applying IC.
+- REASON: Clicking a position icon immediately repositioned the aircraft with no confirmation, which was unexpected and disorienting.
+- AFFECTS: ios/frontend/src/components/panels/PositionPanel.jsx
+
+- DECIDED (PLANNED): IC terrain will be simplified to: position at 0 MSL → wait for CIGI HOT → reposition to correct height. Eliminates SRTM dependency for on-ground starts when IG connected. SRTM remains fallback when no IG.
+- REASON: Current 3-stage IC (raw → SRTM → CIGI refine) is complex. Positioning at 0 MSL first guarantees IG pages terrain at target position before probing.
+- AFFECTS: flight_model_adapter_node.cpp (future change)
