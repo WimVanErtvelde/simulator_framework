@@ -101,7 +101,7 @@ public:
         }
       });
 
-    // IC subscription — always apply immediately, then refine with terrain async
+    // IC subscription — apply with SRTM first, then refine with CIGI HOT
     ic_sub_ = this->create_subscription<sim_msgs::msg::InitialConditions>(
       "/sim/initial_conditions", 10,
       [this](const sim_msgs::msg::InitialConditions::SharedPtr msg) {
@@ -109,25 +109,18 @@ public:
         RCLCPP_INFO(this->get_logger(), "Applying initial conditions: config=%s",
                     msg->configuration.c_str());
 
-        // Check cached CIGI HOT data first — apply immediately
-        if (!terrain_hot_.empty()) {
-          double sum = 0.0;
-          for (auto & [name, hot] : terrain_hot_) sum += hot;
-          double terrain_elev_m = sum / terrain_hot_.size();
-          RCLCPP_INFO(this->get_logger(), "IC terrain from CIGI HOT: %.1f m MSL", terrain_elev_m);
-          apply_ic_with_terrain(*msg, terrain_elev_m);
-          return;
-        }
+        // Clear stale CIGI HOT data — it's from the old position
+        terrain_hot_.clear();
 
-        // Always apply raw IC immediately so JSBSim has a valid state
+        // Step 1: Apply raw IC immediately so JSBSim has a valid state
         adapter_->apply_initial_conditions(*msg);
 
-        // Then try SRTM async — re-applies IC with adjusted altitude when ready
+        // Step 2: Query SRTM for terrain at IC position (async)
+        auto ic_copy = std::make_shared<sim_msgs::msg::InitialConditions>(*msg);
         if (terrain_client_ && terrain_client_->service_is_ready()) {
           auto req = std::make_shared<sim_msgs::srv::GetTerrainElevation::Request>();
           req->latitude_rad = msg->latitude_rad;
           req->longitude_rad = msg->longitude_rad;
-          auto ic_copy = std::make_shared<sim_msgs::msg::InitialConditions>(*msg);
           terrain_client_->async_send_request(req,
             [this, ic_copy](rclcpp::Client<sim_msgs::srv::GetTerrainElevation>::SharedFuture future) {
               auto resp = future.get();
@@ -141,6 +134,13 @@ public:
           RCLCPP_WARN(this->get_logger(), "No terrain service — using raw altitude %.1f m",
                       msg->altitude_msl_m);
         }
+
+        // Step 3: Schedule CIGI HOT refinement — wait for IG to probe at new position
+        // CIGI bridge sends HOT requests after seeing the new FMS position.
+        // After a short delay, check if CIGI HOT arrived and re-apply with IG terrain.
+        pending_ic_ = ic_copy;
+        pending_ic_time_ = std::chrono::steady_clock::now();
+        ic_cigi_refined_ = false;
       });
 
     // Engine commands subscription (write-back from sim_engine_systems)
@@ -326,6 +326,34 @@ public:
         // Update JSBSim terrain elevation from HOT data when near ground
         update_terrain_elevation();
 
+        // Step 3: CIGI HOT refinement — if IC is pending and fresh HOT data arrived
+        if (pending_ic_ && !ic_cigi_refined_ && !terrain_hot_.empty()) {
+          auto age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - pending_ic_time_).count();
+          // Wait at least 200ms for HOT data to arrive from IG
+          if (age_ms >= 200) {
+            double sum = 0.0;
+            for (auto & [name, hot] : terrain_hot_) sum += hot;
+            double terrain_elev_m = sum / terrain_hot_.size();
+            RCLCPP_INFO(this->get_logger(),
+              "IC terrain refined from CIGI HOT: %.1f m MSL (after %ldms)",
+              terrain_elev_m, age_ms);
+            apply_ic_with_terrain(*pending_ic_, terrain_elev_m);
+            ic_cigi_refined_ = true;
+            pending_ic_.reset();
+          }
+        }
+        // Timeout: stop waiting for CIGI after 2s
+        if (pending_ic_ && !ic_cigi_refined_) {
+          auto age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - pending_ic_time_).count();
+          if (age_ms > 2000) {
+            RCLCPP_INFO(this->get_logger(),
+              "No CIGI HOT within 2s — keeping SRTM terrain");
+            pending_ic_.reset();
+          }
+        }
+
         auto state = adapter_->get_state();
         state.is_frozen = (sim_state_ == sim_msgs::msg::SimState::STATE_FROZEN);
         // Legacy bool caps for backward compat — true when FDM_NATIVE
@@ -476,6 +504,11 @@ private:
   std::chrono::steady_clock::time_point last_cigi_hot_time_{};
   uint8_t terrain_source_{sim_msgs::msg::TerrainSource::SOURCE_UNKNOWN};
   uint8_t sim_state_{255};  // 255 = no sim_manager connected yet
+
+  // Two-step IC: apply with SRTM, then refine with CIGI HOT
+  std::shared_ptr<sim_msgs::msg::InitialConditions> pending_ic_;
+  std::chrono::steady_clock::time_point pending_ic_time_{};
+  bool ic_cigi_refined_ = false;
 };
 
 int main(int argc, char ** argv)
