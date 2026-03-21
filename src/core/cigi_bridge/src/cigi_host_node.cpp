@@ -125,6 +125,12 @@ CallbackReturn CigiHostNode::on_activate(const rclcpp_lifecycle::State &)
             // capabilities noted but not gating CIGI sending
         });
 
+    state_sub_ = create_subscription<sim_msgs::msg::SimState>(
+        "/sim/state", 10,
+        [this](sim_msgs::msg::SimState::SharedPtr msg) {
+            sim_state_ = msg->state;
+        });
+
     auto period_ms = static_cast<int>(1000.0 / publish_rate_hz_);
     send_timer_ = create_wall_timer(
         std::chrono::milliseconds(period_ms),
@@ -150,6 +156,7 @@ CallbackReturn CigiHostNode::on_deactivate(const rclcpp_lifecycle::State &)
     heartbeat_timer_.reset();
     fms_sub_.reset();
     caps_sub_.reset();
+    state_sub_.reset();
     hat_pub_->on_deactivate();
     RCLCPP_INFO(get_logger(), "cigi_bridge deactivated");
     publish_lifecycle_state("inactive");
@@ -438,18 +445,26 @@ void CigiHostNode::send_hot_requests()
 
     double agl_m = fms->altitude_agl_m;
 
-    // Determine send interval based on AGL
-    if (agl_m > 100.0) {
+    // During REPOSITIONING with IG in Operate mode, bypass AGL rate gating
+    // and send HOT requests every frame for all gear points.  This ensures
+    // ground elevation is known before the sim transitions to READY.
+    bool repositioning_hot =
+        (sim_state_ == sim_msgs::msg::SimState::STATE_REPOSITIONING && ig_status_ == 2);
+
+    if (!repositioning_hot) {
+        // Normal AGL-based rate gating
+        if (agl_m > 100.0) {
+            hot_frame_counter_ = 0;
+            return;  // no HOT requests in cruise
+        }
+
+        uint32_t interval = (agl_m < 10.0) ? 1 : static_cast<uint32_t>(publish_rate_hz_ / 10.0);
+        if (interval < 1) interval = 1;
+
+        ++hot_frame_counter_;
+        if (hot_frame_counter_ < interval) return;
         hot_frame_counter_ = 0;
-        return;  // no HOT requests in cruise
     }
-
-    uint32_t interval = (agl_m < 10.0) ? 1 : static_cast<uint32_t>(publish_rate_hz_ / 10.0);
-    if (interval < 1) interval = 1;
-
-    ++hot_frame_counter_;
-    if (hot_frame_counter_ < interval) return;
-    hot_frame_counter_ = 0;
 
     double ac_lat_rad = fms->latitude_rad;
     double ac_lon_rad = fms->longitude_rad;
@@ -530,7 +545,17 @@ void CigiHostNode::recv_pending()
                     hat_pub_->publish(*resp);
                 }
             }
-            // SOF (pkt_id == 0x01) is silently consumed — IG alive indicator
+            else if (pkt_id == 0x01 && pkt_size >= 8) {
+                // SOF (Start of Frame) from IG — parse IG Mode
+                // CIGI 3.3 ICD: byte 4 bits[1:0] = IG Mode (0=Standby, 1=Reset, 2=Operate)
+                uint8_t prev = ig_status_;
+                ig_status_ = buf[offset + 4] & 0x03;
+                if (ig_status_ != prev) {
+                    static const char * mode_names[] = {"Standby", "Reset", "Operate", "Debug"};
+                    RCLCPP_INFO(get_logger(), "IG status changed: %s → %s",
+                                mode_names[prev & 0x03], mode_names[ig_status_ & 0x03]);
+                }
+            }
             offset += pkt_size;
         }
     }

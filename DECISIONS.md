@@ -1911,3 +1911,16 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - DECIDED: Simplified IC terrain pipeline — CIGI HOT is the primary source (applied after 200ms), SRTM is fallback only after 2s timeout with no CIGI. Removed the old "apply SRTM immediately, then refine with CIGI" two-stage approach.
 - REASON: With the REPOSITIONING state holding the clock, there is no urgency to apply SRTM immediately. Waiting for the best source (CIGI) avoids unnecessary double-repositioning.
 - AFFECTS: src/core/flight_model_adapter/src/flight_model_adapter_node.cpp (IC callback + update loop terrain refinement block)
+
+## 2026-03-22 — 14:30:00 - Claude Code
+- DECIDED: cigi_bridge now parses SOF IG Status (byte 4 bits[1:0]) from IG response packets. ig_status_ member tracks IG mode (0=Standby, 1=Reset, 2=Operate). Logs transitions.
+- REASON: Needed to know when IG has terrain loaded (Operate mode) so HOT requests can be sent during REPOSITIONING even when AGL is unknown/stale.
+- AFFECTS: src/core/cigi_bridge/src/cigi_host_node.cpp, src/core/cigi_bridge/include/cigi_bridge/cigi_host_node.hpp
+
+- DECIDED: HOT request rate gating bypassed during REPOSITIONING when ig_status_ == 2 (Operate). All gear point HOT requests sent every frame regardless of AGL altitude.
+- REASON: During REPOSITIONING the sim needs ground elevation at the new position before transitioning to READY. Normal AGL gating (off above 100m) would prevent HOT requests when aircraft is repositioned to a new location with unknown terrain.
+- AFFECTS: src/core/cigi_bridge/src/cigi_host_node.cpp (send_hot_requests)
+
+- DECIDED: cigi_bridge subscribes to /sim/state to track sim_state_. Subscription created in on_activate, cleaned up in on_deactivate.
+- REASON: Required to detect REPOSITIONING state for the HOT rate gating bypass.
+- AFFECTS: src/core/cigi_bridge/src/cigi_host_node.cpp, src/core/cigi_bridge/include/cigi_bridge/cigi_host_node.hpp

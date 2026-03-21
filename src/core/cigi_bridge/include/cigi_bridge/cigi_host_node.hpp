@@ -5,6 +5,7 @@
 #include <sim_msgs/msg/flight_model_state.hpp>
 #include <sim_msgs/msg/flight_model_capabilities.hpp>
 #include <sim_msgs/msg/hat_hot_response.hpp>
+#include <sim_msgs/msg/sim_state.hpp>
 
 #include "cigi_bridge/hat_request_tracker.hpp"
 
@@ -101,6 +102,8 @@ private:
     sim_msgs::msg::FlightModelState::SharedPtr latest_fms_;
     std::mutex fms_mutex_;
     uint32_t   frame_counter_ = 0;
+    uint8_t    ig_status_     = 0;   // SOF IG Mode: 0=Standby, 1=Reset, 2=Operate
+    uint8_t    sim_state_     = 0;   // from /sim/state (SimState constants)
 
     // ── HOT rate gating ───────────────────────────────────────────────────
     uint32_t hot_frame_counter_ = 0;  // counts frames since last HOT send
@@ -112,6 +115,7 @@ private:
     // ── ROS2 interfaces ───────────────────────────────────────────────────
     rclcpp::Subscription<sim_msgs::msg::FlightModelState>::SharedPtr      fms_sub_;
     rclcpp::Subscription<sim_msgs::msg::FlightModelCapabilities>::SharedPtr caps_sub_;
+    rclcpp::Subscription<sim_msgs::msg::SimState>::SharedPtr              state_sub_;
     rclcpp_lifecycle::LifecyclePublisher<sim_msgs::msg::HatHotResponse>::SharedPtr hat_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr heartbeat_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr lifecycle_pub_;
