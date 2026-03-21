@@ -101,7 +101,7 @@ public:
         }
       });
 
-    // IC subscription — position at 0 MSL first, then refine with CIGI HOT or SRTM
+    // IC subscription — apply with SRTM immediately, then refine with CIGI HOT
     ic_sub_ = this->create_subscription<sim_msgs::msg::InitialConditions>(
       "/sim/initial_conditions", 10,
       [this](const sim_msgs::msg::InitialConditions::SharedPtr msg) {
@@ -113,21 +113,17 @@ public:
         terrain_hot_.clear();
         ic_cigi_refined_ = false;
         ic_srtm_applied_ = false;
+        srtm_valid_ = false;
 
-        // Step 1: Position at target lat/lon with altitude 0 MSL.
-        // This moves the entity so the IG pages terrain at the new position.
-        // JSBSim force-on-ground keeps the aircraft stable at 0.
-        auto initial_ic = *msg;
-        initial_ic.altitude_msl_m = 0.0;
-        adapter_->set_property("position/terrain-elevation-asl-ft", 0.0);
-        adapter_->apply_initial_conditions(initial_ic);
-        RCLCPP_INFO(this->get_logger(), "IC step 1: positioned at 0 MSL, waiting for terrain...");
+        // Step 1: Apply raw IC immediately so JSBSim has a valid position.
+        // This moves the entity to the target lat/lon — IG pages terrain there.
+        adapter_->apply_initial_conditions(*msg);
 
         // Save IC for terrain refinement
         pending_ic_ = std::make_shared<sim_msgs::msg::InitialConditions>(*msg);
         pending_ic_time_ = std::chrono::steady_clock::now();
 
-        // Step 2: Query SRTM as fallback (async) — used if CIGI doesn't respond
+        // Step 2: Query SRTM for terrain (async) — apply as soon as it arrives
         if (terrain_client_ && terrain_client_->service_is_ready()) {
           auto req = std::make_shared<sim_msgs::srv::GetTerrainElevation::Request>();
           req->latitude_rad = msg->latitude_rad;
@@ -138,11 +134,10 @@ public:
               if (resp && resp->valid) {
                 srtm_terrain_m_ = resp->elevation_msl_m;
                 srtm_valid_ = true;
-                RCLCPP_INFO(this->get_logger(), "IC SRTM ready: %.1f m MSL (standby for CIGI)",
-                            resp->elevation_msl_m);
               }
             });
         }
+        // Step 3: CIGI HOT refinement handled in update loop (waits for IG response)
       });
 
     // Engine commands subscription (write-back from sim_engine_systems)
@@ -328,48 +323,38 @@ public:
         // Update JSBSim terrain elevation from HOT data when near ground
         update_terrain_elevation();
 
-        // IC terrain refinement pipeline:
-        // Priority 1: CIGI HOT (IG terrain, most accurate)
-        // Priority 2: SRTM (fallback after timeout)
+        // IC terrain refinement: SRTM fast, CIGI HOT overrides
         if (pending_ic_) {
           auto age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - pending_ic_time_).count();
 
+          // Apply SRTM as soon as it's ready (typically ~50ms)
+          if (!ic_srtm_applied_ && srtm_valid_) {
+            RCLCPP_INFO(this->get_logger(),
+              "IC terrain from SRTM: %.1f m MSL (after %ldms)", srtm_terrain_m_, age_ms);
+            apply_ic_with_terrain(*pending_ic_, srtm_terrain_m_);
+            ic_srtm_applied_ = true;
+          }
+
+          // CIGI HOT overrides SRTM when available (>200ms for IG to respond)
           if (!ic_cigi_refined_ && !terrain_hot_.empty() && age_ms >= 200) {
-            // CIGI HOT arrived — use IG terrain
             double sum = 0.0;
             for (auto & [name, hot] : terrain_hot_) sum += hot;
             double terrain_elev_m = sum / terrain_hot_.size();
             RCLCPP_INFO(this->get_logger(),
-              "IC terrain from CIGI HOT: %.1f m MSL (after %ldms)",
+              "IC terrain refined from CIGI HOT: %.1f m MSL (after %ldms)",
               terrain_elev_m, age_ms);
             apply_ic_with_terrain(*pending_ic_, terrain_elev_m);
             ic_cigi_refined_ = true;
-            pending_ic_.reset();
+            pending_ic_.reset();  // done — CIGI is the best source
+          }
 
-          } else if (!ic_srtm_applied_ && srtm_valid_ && age_ms >= 500) {
-            // SRTM ready but no CIGI yet — apply SRTM as intermediate (IG may refine later)
-            RCLCPP_INFO(this->get_logger(),
-              "IC terrain from SRTM: %.1f m MSL (CIGI pending...)", srtm_terrain_m_);
-            apply_ic_with_terrain(*pending_ic_, srtm_terrain_m_);
-            ic_srtm_applied_ = true;
-            // Don't clear pending_ic_ — CIGI may still arrive and override
-
-          } else if (age_ms > 2000) {
-            // Timeout — use whatever we have
-            if (!ic_srtm_applied_ && !ic_cigi_refined_) {
-              if (srtm_valid_) {
-                RCLCPP_INFO(this->get_logger(),
-                  "IC timeout — using SRTM: %.1f m MSL", srtm_terrain_m_);
-                apply_ic_with_terrain(*pending_ic_, srtm_terrain_m_);
-              } else {
-                RCLCPP_WARN(this->get_logger(),
-                  "IC timeout — no terrain data, using raw altitude");
-                adapter_->apply_initial_conditions(*pending_ic_);
-              }
+          // Timeout at 2s — stop waiting for CIGI
+          if (!ic_cigi_refined_ && age_ms > 2000) {
+            if (ic_srtm_applied_) {
+              RCLCPP_INFO(this->get_logger(), "IC complete — SRTM terrain (no CIGI)");
             } else {
-              RCLCPP_INFO(this->get_logger(),
-                "IC complete — no CIGI HOT, keeping SRTM terrain");
+              RCLCPP_WARN(this->get_logger(), "IC timeout — no terrain data available");
             }
             pending_ic_.reset();
           }
