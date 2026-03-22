@@ -84,6 +84,12 @@ public:
       "/sim/cigi/hat_responses", 10,
       [this](const sim_msgs::msg::HatHotResponse::SharedPtr msg) {
         if (msg->valid && !msg->point_name.empty()) {
+          // Ignore HOT responses in the first second after IC — they're from the old position
+          if (pending_ic_) {
+            auto age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+              std::chrono::steady_clock::now() - pending_ic_time_).count();
+            if (age_ms < 500) return;  // discard stale pipeline data
+          }
           terrain_hot_[msg->point_name] = msg->hot;
           last_cigi_hot_time_ = std::chrono::steady_clock::now();
         }
@@ -350,7 +356,7 @@ public:
             std::chrono::steady_clock::now() - pending_ic_time_).count();
 
           // CIGI HOT: apply when responses received (>200ms for IG to respond)
-          if (!ic_cigi_refined_ && !terrain_hot_.empty() && age_ms >= 200) {
+          if (!ic_cigi_refined_ && !terrain_hot_.empty() && age_ms >= 1000) {
             double sum = 0.0;
             for (auto & [name, hot] : terrain_hot_) sum += hot;
             double terrain_m = sum / terrain_hot_.size();
