@@ -686,11 +686,11 @@ private:
       }
     }
 
-    // Repositioning timeout — don't wait forever for terrain
+    // Repositioning timeout — gives IG time to page terrain, then SRTM fallback
     if (state_ == sim_msgs::msg::SimState::STATE_REPOSITIONING) {
       auto age = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - repositioning_start_).count();
-      if (age > 5.0) {
+      if (age > 35.0) {
         RCLCPP_WARN(this->get_logger(),
           "Repositioning timeout (%.1fs) — transitioning to READY", age);
         transition_to(sim_msgs::msg::SimState::STATE_READY);

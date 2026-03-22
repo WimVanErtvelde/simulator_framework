@@ -368,18 +368,18 @@ public:
             pending_ic_.reset();
           }
 
-          // SRTM fallback after 2s if no CIGI
-          if (!ic_cigi_refined_ && !ic_srtm_applied_ && srtm_valid_ && age_ms >= 2000) {
+          // SRTM fallback after 30s if no CIGI — gives IG plenty of time to page terrain
+          if (!ic_cigi_refined_ && !ic_srtm_applied_ && srtm_valid_ && age_ms >= 30000) {
             RCLCPP_INFO(this->get_logger(),
-              "IC terrain from SRTM (no CIGI): %.1f m MSL — CIGI can still override", srtm_terrain_m_);
+              "IC terrain from SRTM (no CIGI after 30s): %.1f m MSL", srtm_terrain_m_);
             apply_ic_with_terrain(*pending_ic_, srtm_terrain_m_);
             ic_srtm_applied_ = true;
             publish_terrain_ready(true);
-            // Don't clear pending_ic_ — CIGI HOT may still arrive and override
+            pending_ic_.reset();
           }
 
-          // Hard timeout 10s — stop waiting for CIGI entirely
-          if (age_ms > 10000) {
+          // Hard timeout 60s — give up entirely
+          if (age_ms > 60000) {
             if (!ic_cigi_refined_ && !ic_srtm_applied_) {
               RCLCPP_WARN(this->get_logger(), "IC terrain timeout — using raw altitude");
               publish_terrain_ready(true);
