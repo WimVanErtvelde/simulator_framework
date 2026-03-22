@@ -304,7 +304,8 @@ export const useSimStore = create((set, get) => ({
 
         switch (msg.type) {
           case 'sim_state': {
-            const newState = msg.state ?? s.simState
+            const baseState = msg.state ?? s.simState
+            const newState = msg.reposition_active ? 'REPOSITIONING' : baseState
             const updates = {
               simState: newState,
               simTimeSec: msg.sim_time_sec ?? s.simTimeSec,

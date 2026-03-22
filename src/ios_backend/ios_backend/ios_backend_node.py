@@ -304,6 +304,7 @@ class IosBackendNode(Node):
         data = {
             'type': 'sim_state',
             'state': state_names.get(msg.state, 'UNKNOWN'),
+            'reposition_active': bool(msg.reposition_active),
             'aircraft_id': msg.aircraft_id,
             'sim_time_sec': float(msg.sim_time_sec),
             'time_scale': float(msg.time_scale),
