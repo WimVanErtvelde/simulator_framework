@@ -300,7 +300,7 @@ class IosBackendNode(Node):
 
     def _on_sim_state(self, msg: SimState):
         state_names = {0: 'INIT', 1: 'READY', 2: 'RUNNING', 3: 'FROZEN',
-                       4: 'RESETTING', 5: 'SHUTDOWN'}
+                       4: 'RESETTING', 5: 'SHUTDOWN', 6: 'REPOSITIONING'}
         data = {
             'type': 'sim_state',
             'state': state_names.get(msg.state, 'UNKNOWN'),
