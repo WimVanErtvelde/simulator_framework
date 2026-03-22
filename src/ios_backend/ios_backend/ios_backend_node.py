@@ -300,7 +300,7 @@ class IosBackendNode(Node):
 
     def _on_sim_state(self, msg: SimState):
         state_names = {0: 'INIT', 1: 'READY', 2: 'RUNNING', 3: 'FROZEN',
-                       4: 'RESETTING', 5: 'SHUTDOWN', 6: 'REPOSITIONING'}
+                       4: 'RESETTING', 5: 'SHUTDOWN'}
         data = {
             'type': 'sim_state',
             'state': state_names.get(msg.state, 'UNKNOWN'),
@@ -1310,7 +1310,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     }
                     cmd_msg = SimCommand()
                     cmd_msg.header.stamp = ros_node.get_clock().now().to_msg()
-                    cmd_msg.command = 11  # CMD_REPOSITION
+                    cmd_msg.command = SimCommand.CMD_REPOSITION
                     cmd_msg.payload_json = json.dumps(payload)
                     ros_node._cmd_pub.publish(cmd_msg)
                     ros_node.get_logger().info(

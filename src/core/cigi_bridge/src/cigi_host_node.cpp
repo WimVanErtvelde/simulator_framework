@@ -171,6 +171,7 @@ CallbackReturn CigiHostNode::on_cleanup(const rclcpp_lifecycle::State &)
     heartbeat_pub_.reset();
     lifecycle_pub_.reset();
     hat_pub_.reset();
+    ig_status_pub_.reset();
     RCLCPP_INFO(get_logger(), "cigi_bridge cleaned up");
     publish_lifecycle_state("unconfigured");
     return CallbackReturn::SUCCESS;
@@ -491,8 +492,10 @@ void CigiHostNode::send_hot_requests()
                                  gp.name);
     }
 
-    sendto(send_fd_, datagram.data(), total, 0,
-           reinterpret_cast<struct sockaddr *>(&ig_addr_), sizeof(ig_addr_));
+    if (send_fd_ >= 0) {
+        sendto(send_fd_, datagram.data(), total, 0,
+               reinterpret_cast<struct sockaddr *>(&ig_addr_), sizeof(ig_addr_));
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

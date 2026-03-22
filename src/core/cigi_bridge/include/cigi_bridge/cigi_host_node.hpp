@@ -108,7 +108,6 @@ private:
 
     // ── HOT rate gating ───────────────────────────────────────────────────
     uint32_t hot_frame_counter_ = 0;  // counts frames since last HOT send
-    uint32_t hot_send_interval_ = 1;  // 1 = every frame, 6 = ~10Hz at 60Hz frame rate
 
     // ── HAT tracking ──────────────────────────────────────────────────────
     HatRequestTracker hat_tracker_;

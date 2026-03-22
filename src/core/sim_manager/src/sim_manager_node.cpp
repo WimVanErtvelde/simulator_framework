@@ -160,8 +160,6 @@ public:
 private:
   // ── State ───────────────────────────────────────────────────────────────
   uint8_t state_ = sim_msgs::msg::SimState::STATE_INIT;
-  uint8_t last_published_state_ = 255;  // sentinel: force first publish
-  bool force_publish_state_ = true;
   std::string aircraft_id_;
   double sim_time_sec_ = 0.0;
   double time_scale_ = 1.0;
@@ -355,7 +353,6 @@ private:
     RCLCPP_INFO(this->get_logger(),
       "State transition: %s -> %s", state_name(state_), state_name(new_state));
     state_ = new_state;
-    force_publish_state_ = true;
     publish_state();
     return true;
   }
@@ -508,8 +505,7 @@ private:
       current_ic_.longitude_rad * 180.0 / M_PI,
       state_name(pre_reposition_state_));
 
-    // Force state publish so IOS sees reposition_active immediately
-    force_publish_state_ = true;
+    // Publish state immediately so IOS sees reposition_active
     publish_state();
   }
 
@@ -744,9 +740,6 @@ private:
 
   void publish_state()
   {
-    force_publish_state_ = false;
-    last_published_state_ = state_;
-
     auto msg = sim_msgs::msg::SimState();
     msg.header.stamp = this->now();
     msg.state        = state_;
