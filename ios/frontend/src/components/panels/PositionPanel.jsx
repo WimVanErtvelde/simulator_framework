@@ -175,6 +175,13 @@ function computePosition(rwy, airport, p) {
   let n_nm = 0, e_nm = 0
   let heading = rwy.heading_deg
 
+  // For ground positions, offset past the displaced threshold
+  if (p.altFt === 0 && rwy.displaced_m > 0) {
+    const disp_nm = rwy.displaced_m / 1852
+    n_nm += disp_nm * Math.cos(hdg)
+    e_nm += disp_nm * Math.sin(hdg)
+  }
+
   // Along centerline (behind threshold)
   if (p.distNm > 0) {
     const back = hdg + Math.PI
