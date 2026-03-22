@@ -1199,9 +1199,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         await websocket.send_text(encoded)
                         prev_json[key] = encoded
                         send_count += 1
-                        if send_count % 100 == 0 and ros_node:
-                            ros_node.get_logger().info(
-                                f'[ws-sender] {send_count} msgs sent, {len(snapshot)} keys in snapshot')
                 await asyncio.sleep(0.05)
             except Exception as e:
                 if ros_node:
