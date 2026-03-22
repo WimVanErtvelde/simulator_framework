@@ -273,6 +273,12 @@ export default function PositionPanel() {
   const [selectedPos, setSelectedPos] = useState(null)
   const [pendingIC, setPendingIC] = useState(null)
 
+  // Reset position selection when runway changes
+  useEffect(() => {
+    setSelectedPos(null)
+    setPendingIC(null)
+  }, [depRunway?.designator])
+
   const handlePositionSelect = (posId, computed) => {
     setSelectedPos(posId)
     setPendingIC(computed)
