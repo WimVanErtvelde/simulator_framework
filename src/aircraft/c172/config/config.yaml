@@ -26,7 +26,7 @@ initial_conditions:
   fuel_total_pct: 0.75
   configuration: ready_for_takeoff
 
-gear_ground_height_m: 1.63      # CG height above ground when static on gear (for IC placement only)
+gear_ground_height_m: 1.48      # CG height above ground when static on gear (for IC placement only)
 
 gear_points:
   - name: nose
