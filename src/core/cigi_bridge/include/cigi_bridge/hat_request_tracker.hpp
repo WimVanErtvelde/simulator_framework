@@ -24,6 +24,11 @@ public:
     // Allocate a unique 16-bit request ID (wraps at 65535)
     uint16_t next_id() { return next_request_id_++; }
 
+    // Discard all pending requests (e.g. on reposition — stale HOT is invalid)
+    void clear() {
+        for (auto & e : buf_) e.occupied = false;
+    }
+
 private:
     struct Entry {
         uint32_t request_id = 0;

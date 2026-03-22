@@ -135,6 +135,7 @@ CallbackReturn CigiHostNode::on_activate(const rclcpp_lifecycle::State &)
             if (reposition_active_ && !prev) {
                 sent_reset_ = false;       // arm: send Reset on next frame
                 hot_frame_counter_ = 0;    // fire HOT immediately on first reposition frame
+                hat_tracker_.clear();      // discard in-flight HOT from old position
                 RCLCPP_INFO(get_logger(), "Reposition started — will send IG Reset");
             }
         });
