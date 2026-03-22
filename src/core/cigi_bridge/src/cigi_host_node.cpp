@@ -130,6 +130,12 @@ CallbackReturn CigiHostNode::on_activate(const rclcpp_lifecycle::State &)
         "/sim/state", 10,
         [this](sim_msgs::msg::SimState::SharedPtr msg) {
             sim_state_ = msg->state;
+            bool prev = reposition_active_;
+            reposition_active_ = msg->reposition_active;
+            if (reposition_active_ && !prev) {
+                sent_reset_ = false;  // arm: send Reset on next frame
+                RCLCPP_INFO(get_logger(), "Reposition started — will send IG Reset");
+            }
         });
 
     auto period_ms = static_cast<int>(1000.0 / publish_rate_hz_);
@@ -331,13 +337,14 @@ void CigiHostNode::body_to_latlon(double ac_lat_rad, double ac_lon_rad,
 // Raw CIGI 3.3 packet encoding
 // ─────────────────────────────────────────────────────────────────────────────
 
-void CigiHostNode::encode_ig_ctrl(uint8_t * buf, uint32_t frame_cntr, double timestamp_s) const
+void CigiHostNode::encode_ig_ctrl(uint8_t * buf, uint32_t frame_cntr, double timestamp_s,
+                                   uint8_t ig_mode) const
 {
     memset(buf, 0, CIGI_IG_CTRL_SIZE);
     buf[0] = CIGI_PKT_IG_CTRL;
     buf[1] = CIGI_IG_CTRL_SIZE;
     buf[2] = 0;
-    buf[3] = CIGI_IG_MODE_OPERATE;
+    buf[3] = ig_mode;
     write_be32(&buf[8],  frame_cntr);
     write_be_double(&buf[16], timestamp_s);
 }
@@ -410,11 +417,19 @@ void CigiHostNode::send_cigi_frame()
         alt_m       = fms->altitude_msl_m;
     }
 
+    // IG Mode: send Reset for ONE frame when reposition starts, then Operate
+    uint8_t ig_mode = CIGI_IG_MODE_OPERATE;
+    if (reposition_active_ && !sent_reset_) {
+        ig_mode = CIGI_IG_MODE_RESET;
+        sent_reset_ = true;
+        RCLCPP_INFO(get_logger(), "Sending IG Mode = Reset (one frame)");
+    }
+
     // Build a single UDP datagram: IG Control followed by Entity Control
     constexpr int total = CigiHostNode::CIGI_IG_CTRL_SIZE + CigiHostNode::CIGI_ENTITY_CTRL_SIZE;
     uint8_t datagram[total];
 
-    encode_ig_ctrl(datagram, frame_counter_, timestamp_s);
+    encode_ig_ctrl(datagram, frame_counter_, timestamp_s, ig_mode);
     encode_entity_ctrl(datagram + CIGI_IG_CTRL_SIZE,
                        static_cast<uint16_t>(entity_id_),
                        roll_deg, pitch_deg, yaw_deg,
@@ -447,13 +462,14 @@ void CigiHostNode::send_hot_requests()
 
     double agl_m = fms->altitude_agl_m;
 
-    // During REPOSITIONING, bypass AGL rate gating and send HOT requests
-    // every frame for all gear points. The IG responds with whatever terrain
-    // it has; the host filters by SOF IG Status (only trusts Operate).
-    bool repositioning_hot =
-        (sim_state_ == sim_msgs::msg::SimState::STATE_FROZEN);
-
-    if (!repositioning_hot) {
+    if (reposition_active_) {
+        // During reposition: 10Hz HOT regardless of AGL (terrain loading)
+        uint32_t interval = static_cast<uint32_t>(publish_rate_hz_ / 10.0);
+        if (interval < 1) interval = 1;
+        ++hot_frame_counter_;
+        if (hot_frame_counter_ < interval) return;
+        hot_frame_counter_ = 0;
+    } else {
         // Normal AGL-based rate gating
         if (agl_m > 100.0) {
             hot_frame_counter_ = 0;

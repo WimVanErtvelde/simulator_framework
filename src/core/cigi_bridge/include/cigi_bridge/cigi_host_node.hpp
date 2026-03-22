@@ -48,12 +48,14 @@ private:
     static constexpr uint8_t CIGI_ENTITY_CTRL_SIZE  = 48;
     static constexpr uint8_t CIGI_HOT_REQUEST_SIZE  = 32;
 
-    // IG mode byte[3]: Operate(2) | TimestampValid(1) → bits[1:0]=10, bit[2]=1 → 0x06
-    static constexpr uint8_t CIGI_IG_MODE_OPERATE = 0x06;
+    // IG mode byte[3] bits[1:0] = IG Mode, bit[2] = TimestampValid
+    static constexpr uint8_t CIGI_IG_MODE_RESET   = 0x05;  // Reset(1) | TimestampValid → 0x05
+    static constexpr uint8_t CIGI_IG_MODE_OPERATE = 0x06;  // Operate(2) | TimestampValid → 0x06
     // Entity state byte[4]: Active(1) in bits[1:0]
     static constexpr uint8_t CIGI_ENTITY_ACTIVE = 0x01;
 
-    void encode_ig_ctrl(uint8_t * buf, uint32_t frame_cntr, double timestamp_s) const;
+    void encode_ig_ctrl(uint8_t * buf, uint32_t frame_cntr, double timestamp_s,
+                        uint8_t ig_mode) const;
     void encode_entity_ctrl(uint8_t * buf, uint16_t entity_id,
                             float roll_deg, float pitch_deg, float yaw_deg,
                             double lat_deg, double lon_deg, double alt_m) const;
@@ -103,8 +105,10 @@ private:
     sim_msgs::msg::FlightModelState::SharedPtr latest_fms_;
     std::mutex fms_mutex_;
     uint32_t   frame_counter_ = 0;
-    uint8_t    ig_status_     = 0;   // SOF IG Mode: 0=Standby, 1=Reset, 2=Operate
-    uint8_t    sim_state_     = 0;   // from /sim/state (SimState constants)
+    uint8_t    ig_status_     = 0;   // SOF IG Status from IG: 0=Standby, 1=Reset, 2=Operate
+    uint8_t    sim_state_     = 0;   // from /sim/state
+    bool       reposition_active_ = false;  // from SimState.reposition_active
+    bool       sent_reset_    = false;      // true after Reset sent, cleared on next frame
 
     // ── HOT rate gating ───────────────────────────────────────────────────
     uint32_t hot_frame_counter_ = 0;  // counts frames since last HOT send

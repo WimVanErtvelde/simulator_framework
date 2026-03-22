@@ -474,7 +474,8 @@ private:
   {
     using S = sim_msgs::msg::SimState;
 
-    if (state_ == S::STATE_INIT || state_ == S::STATE_SHUTDOWN) {
+    if (state_ == S::STATE_INIT || state_ == S::STATE_SHUTDOWN ||
+        state_ == S::STATE_RESETTING) {
       RCLCPP_WARN(this->get_logger(), "CMD_REPOSITION rejected — state is %s", state_name(state_));
       return;
     }
