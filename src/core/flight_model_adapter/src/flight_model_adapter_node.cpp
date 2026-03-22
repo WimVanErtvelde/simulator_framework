@@ -115,7 +115,7 @@ public:
         }
       });
 
-    // IC subscription — apply raw, then refine with terrain (CIGI HOT or SRTM fallback)
+    // IC subscription — apply raw, then refine with CIGI HOT terrain
     ic_sub_ = this->create_subscription<sim_msgs::msg::InitialConditions>(
       "/sim/initial_conditions", 10,
       [this](const sim_msgs::msg::InitialConditions::SharedPtr msg) {
@@ -133,24 +133,9 @@ public:
         // Apply raw IC — entity moves to target lat/lon
         adapter_->apply_initial_conditions(*msg);
 
-        // Save IC for terrain refinement
+        // Save IC for terrain refinement (CIGI HOT primary, SRTM 30s fallback)
         pending_ic_ = std::make_shared<sim_msgs::msg::InitialConditions>(*msg);
         pending_ic_time_ = std::chrono::steady_clock::now();
-
-        // Query SRTM as fallback (async)
-        if (terrain_client_ && terrain_client_->service_is_ready()) {
-          auto req = std::make_shared<sim_msgs::srv::GetTerrainElevation::Request>();
-          req->latitude_rad = msg->latitude_rad;
-          req->longitude_rad = msg->longitude_rad;
-          terrain_client_->async_send_request(req,
-            [this](rclcpp::Client<sim_msgs::srv::GetTerrainElevation>::SharedFuture future) {
-              auto resp = future.get();
-              if (resp && resp->valid) {
-                srtm_terrain_m_ = resp->elevation_msl_m;
-                srtm_valid_ = true;
-              }
-            });
-        }
       });
 
     // Engine commands subscription (write-back from sim_engine_systems)
@@ -368,23 +353,30 @@ public:
             pending_ic_.reset();
           }
 
-          // SRTM fallback after 30s if no CIGI — gives IG plenty of time to page terrain
-          if (!ic_cigi_refined_ && !ic_srtm_applied_ && srtm_valid_ && age_ms >= 30000) {
-            RCLCPP_INFO(this->get_logger(),
-              "IC terrain from SRTM (no CIGI after 30s): %.1f m MSL", srtm_terrain_m_);
-            apply_ic_with_terrain(*pending_ic_, srtm_terrain_m_);
-            ic_srtm_applied_ = true;
-            publish_terrain_ready(true);
-            pending_ic_.reset();
-          }
-
-          // Hard timeout 60s — give up entirely
-          if (age_ms > 60000) {
-            if (!ic_cigi_refined_ && !ic_srtm_applied_) {
-              RCLCPP_WARN(this->get_logger(), "IC terrain timeout — using raw altitude");
+          // SRTM fallback after 30s — no IG connected or IG never responded
+          if (!ic_cigi_refined_ && !ic_srtm_applied_ && age_ms >= 30000) {
+            if (terrain_client_ && terrain_client_->service_is_ready()) {
+              auto req = std::make_shared<sim_msgs::srv::GetTerrainElevation::Request>();
+              req->latitude_rad = pending_ic_->latitude_rad;
+              req->longitude_rad = pending_ic_->longitude_rad;
+              auto ic_copy = pending_ic_;
+              terrain_client_->async_send_request(req,
+                [this, ic_copy](rclcpp::Client<sim_msgs::srv::GetTerrainElevation>::SharedFuture future) {
+                  auto resp = future.get();
+                  if (resp && resp->valid) {
+                    RCLCPP_INFO(this->get_logger(),
+                      "IC terrain from SRTM (30s fallback): %.1f m MSL", resp->elevation_msl_m);
+                    apply_ic_with_terrain(*ic_copy, resp->elevation_msl_m);
+                    ic_srtm_applied_ = true;
+                    publish_terrain_ready(true);
+                  }
+                });
+              pending_ic_.reset();  // only query once
+            } else {
+              RCLCPP_WARN(this->get_logger(), "IC terrain timeout — no CIGI, no SRTM service");
               publish_terrain_ready(true);
+              pending_ic_.reset();
             }
-            pending_ic_.reset();
           }
         }
 
