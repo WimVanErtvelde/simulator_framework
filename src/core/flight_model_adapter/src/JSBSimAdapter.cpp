@@ -217,11 +217,6 @@ void JSBSimAdapter::apply_initial_conditions(
       fgic->SetClimbRateFpsIC(0.0);
 
       exec_->RunIC();
-      std::cout << "[JSBSimAdapter] Post-IC (airborne_clean) position: lat="
-                << exec_->GetPropertyValue("position/lat-gc-deg")
-                << " lon=" << exec_->GetPropertyValue("position/long-gc-deg")
-                << " alt=" << exec_->GetPropertyValue("position/h-sl-ft") * FT_TO_M
-                << "m" << std::endl;
       exec_->SetPropertyValue("gear/gear-cmd-norm", 0.0);
       exec_->SetPropertyValue("fcs/flap-cmd-norm", 0.0);
 
@@ -236,12 +231,6 @@ void JSBSimAdapter::apply_initial_conditions(
       exec_->SetPropertyValue("simulation/force-on-ground", 1.0);
 
       exec_->RunIC();
-      std::cout << "[JSBSimAdapter] Post-IC (ready_for_takeoff) position: lat="
-                << exec_->GetPropertyValue("position/lat-gc-deg")
-                << " lon=" << exec_->GetPropertyValue("position/long-gc-deg")
-                << " alt=" << exec_->GetPropertyValue("position/h-sl-ft") * FT_TO_M
-                << "m" << std::endl;
-
       exec_->SetPropertyValue("gear/gear-cmd-norm", 1.0);
       exec_->SetPropertyValue("fcs/flap-cmd-norm", 0.0);
       exec_->SetPropertyValue("fcs/left-brake-cmd-norm", 1.0);
@@ -257,25 +246,11 @@ void JSBSimAdapter::apply_initial_conditions(
       fgic->SetClimbRateFpsIC(0.0);
 
       exec_->RunIC();
-      std::cout << "[JSBSimAdapter] Post-IC (cold_and_dark) position: lat="
-                << exec_->GetPropertyValue("position/lat-gc-deg")
-                << " lon=" << exec_->GetPropertyValue("position/long-gc-deg")
-                << " alt=" << exec_->GetPropertyValue("position/h-sl-ft") * FT_TO_M
-                << "m" << std::endl;
-
       exec_->SetPropertyValue("gear/gear-cmd-norm", 1.0);
       exec_->SetPropertyValue("fcs/throttle-cmd-norm[0]", 0.0);
       exec_->SetPropertyValue("fcs/mixture-cmd-norm[0]", 0.0);
       exec_->SetPropertyValue("propulsion/engine[0]/set-running", 0);
     }
-
-    std::cout << "[JSBSimAdapter] IC applied: config=" << config
-              << " lat=" << ic.latitude_rad / DEG_TO_RAD
-              << " lon=" << ic.longitude_rad / DEG_TO_RAD
-              << " alt=" << ic.altitude_msl_m << "m"
-              << " hdg=" << ic.heading_rad / DEG_TO_RAD
-              << " ias=" << ic.airspeed_ms << "m/s"
-              << std::endl;
 
   } catch (const std::exception & e) {
     std::cerr << "[JSBSimAdapter] Exception in apply_initial_conditions: "
@@ -825,11 +800,6 @@ void JSBSimAdapter::refine_terrain_altitude(double alt_msl_m, double terrain_ele
     if (eng_run) {
         exec_->SetPropertyValue("propulsion/set-running", 0);
     }
-
-    std::cout << "[JSBSimAdapter] Terrain refined (RunIC): alt="
-              << alt_msl_m << "m terrain=" << terrain_elev_m
-              << "m lat=" << exec_->GetPropertyValue("position/lat-geod-rad") * (180.0 / M_PI)
-              << "°" << std::endl;
 }
 
 }  // namespace flight_model_adapter

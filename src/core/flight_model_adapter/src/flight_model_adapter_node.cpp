@@ -121,57 +121,25 @@ public:
       [this](const sim_msgs::msg::InitialConditions::SharedPtr msg) {
         if (!adapter_) return;
 
-        double lat_deg = msg->latitude_rad * 180.0 / M_PI;
-        double lon_deg = msg->longitude_rad * 180.0 / M_PI;
         RCLCPP_INFO(this->get_logger(),
-          "[IC] received: lat=%.5f° lon=%.5f° alt=%.1fm hdg=%.1f° spd=%.1fm/s config=%s",
-          lat_deg, lon_deg, msg->altitude_msl_m,
-          msg->heading_rad * 180.0 / M_PI, msg->airspeed_ms,
+          "[IC] received: lat=%.5f° lon=%.5f° alt=%.1fm hdg=%.1f° config=%s",
+          msg->latitude_rad * 180.0 / M_PI,
+          msg->longitude_rad * 180.0 / M_PI,
+          msg->altitude_msl_m,
+          msg->heading_rad * 180.0 / M_PI,
           msg->configuration.c_str());
 
         // Clear stale HOT data from previous position
         terrain_hot_.clear();
         publish_terrain_ready(false);
 
-        // Apply IC to JSBSim immediately — moves entity to new lat/lon
-        // Altitude may be approximate; terrain refinement follows via HOT
+        // Apply IC to JSBSim — moves entity to new lat/lon.
+        // Altitude may be approximate; terrain refinement follows via HOT.
         adapter_->apply_initial_conditions(*msg);
-
-        // Cache the IC position — JSBSim's get_state() can return corrupted
-        // lat/lon after terrain altitude refinement (SetAltitudeASL triggers
-        // FGLocation cache invalidation with geocentric/geodetic roundtrip
-        // error).  We trust the IC values and override get_state() output
-        // until the FDM is actively stepping (STATE_RUNNING).
-        cached_lat_rad_ = msg->latitude_rad;
-        cached_lon_rad_ = msg->longitude_rad;
-        cached_position_valid_ = true;
-
-        // Publish immediately so cigi_bridge sends the new position on its
-        // next frame.  Without this, cigi_bridge keeps sending the OLD
-        // position for up to 20ms (one FMA timer tick) — visible as a
-        // single-frame flash at the old location.
-        {
-          auto state = adapter_->get_state();
-          state.latitude_rad = cached_lat_rad_;
-          state.longitude_rad = cached_lon_rad_;
-          state.is_frozen = (sim_state_ == sim_msgs::msg::SimState::STATE_FROZEN);
-          state.cap_models_fuel_quantities =
-            (caps_.fuel_quantities == flight_model_adapter::CapabilityMode::FDM_NATIVE);
-          state.cap_models_fuel_pump_pressure =
-            (caps_.fuel_pump_pressure == flight_model_adapter::CapabilityMode::FDM_NATIVE);
-          state.cap_models_fuel_crossfeed =
-            (caps_.fuel_crossfeed == flight_model_adapter::CapabilityMode::FDM_NATIVE);
-          state.header.stamp = this->now();
-          flight_model_state_pub_->publish(state);
-        }
-
-        RCLCPP_INFO(this->get_logger(),
-          "[IC] applied + cached + published: lat=%.6f° lon=%.6f°",
-          msg->latitude_rad * 180.0 / M_PI,
-          msg->longitude_rad * 180.0 / M_PI);
 
         // Save IC for terrain refinement when first HOT response arrives
         pending_ic_ = std::make_shared<sim_msgs::msg::InitialConditions>(*msg);
+        pending_ic_time_ = std::chrono::steady_clock::now();
       });
 
     // Engine commands subscription (write-back from sim_engine_systems)
@@ -317,14 +285,23 @@ public:
         if (!adapter_) return;
 
         // Only step when RUNNING and no IC is pending.
-        // pending_ic_ gates stepping to prevent a DDS race: the IC message
-        // and FROZEN state arrive on different topics with no ordering
-        // guarantee.  Without this gate, step() can fire (sim_state_ still
-        // RUNNING) after the IC is applied but before FROZEN arrives,
-        // clearing the position cache and letting JSBSim's corrupted
-        // lat/lon leak into Entity Control packets.
+        // pending_ic_ gates stepping to prevent advancing the FDM while
+        // waiting for CIGI HOT terrain data to refine the IC altitude.
         bool should_step = (sim_state_ == sim_msgs::msg::SimState::STATE_RUNNING)
                         && !pending_ic_;
+
+        // Safety timeout: if CIGI never responds, clear pending_ic_ so the
+        // FDM doesn't stay locked forever (bug #3).
+        if (pending_ic_) {
+          auto age = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - pending_ic_time_).count();
+          if (age > 5.0) {
+            RCLCPP_WARN(this->get_logger(),
+              "[IC] pending_ic_ timeout (%.1fs) — no CIGI HOT received, clearing", age);
+            pending_ic_.reset();
+            publish_terrain_ready(true);
+          }
+        }
 
         // Apply arbitrated controls
         if (latest_flight_controls_) {
@@ -357,48 +334,13 @@ public:
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(),
               5000, "Flight model step() returned false");
           }
-          // FDM is integrating — trust its position output
-          cached_position_valid_ = false;
         }
 
-        // Read state from JSBSim
         auto state = adapter_->get_state();
-
-        double raw_lat = state.latitude_rad;
-        double raw_lon = state.longitude_rad;
-
-        // Override lat/lon with cached IC position when FDM is not stepping.
-        // Prevents JSBSim FGLocation cache corruption (from SetAltitudeASL
-        // in refine_terrain_altitude) from producing alternating old/new
-        // lat/lon in published state — the 30km visual flicker bug.
-        if (cached_position_valid_) {
-          state.latitude_rad = cached_lat_rad_;
-          state.longitude_rad = cached_lon_rad_;
-        }
 
         // Continuous terrain update from HOT data (non-IC)
         if (!pending_ic_) {
           update_terrain_elevation(state);
-        }
-
-        // Wall-clock diagnostic — fires during FROZEN (sim clock is stopped)
-        {
-          static auto s_last = std::chrono::steady_clock::now();
-          auto now_wall = std::chrono::steady_clock::now();
-          auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now_wall - s_last).count();
-          if (ms >= 500) {
-            s_last = now_wall;
-            RCLCPP_WARN(this->get_logger(),
-              "[DIAG] raw=%.6f°/%.6f° pub=%.6f°/%.6f° cache=%s step=%s pend=%s st=%u",
-              raw_lat * 180.0 / M_PI, raw_lon * 180.0 / M_PI,
-              state.latitude_rad * 180.0 / M_PI,
-              state.longitude_rad * 180.0 / M_PI,
-              cached_position_valid_ ? "Y" : "N",
-              should_step ? "Y" : "N",
-              pending_ic_ ? "Y" : "N",
-              sim_state_);
-          }
         }
 
         state.is_frozen = (sim_state_ == sim_msgs::msg::SimState::STATE_FROZEN);
@@ -427,7 +369,7 @@ public:
     latest_flight_controls_.reset();
     latest_engine_controls_.reset();
     terrain_hot_.clear();
-    cached_position_valid_ = false;
+    pending_ic_.reset();
     RCLCPP_INFO(this->get_logger(), "flight_model_adapter deactivated");
     publish_lifecycle_state("inactive");
     return CallbackReturn::SUCCESS;
@@ -570,17 +512,10 @@ private:
   bool has_cigi_ = false;
 
   // ── IC terrain refinement ─────────────────────────────────────────────
-  // pending_ic_ set on IC receipt, cleared when first HOT response refines altitude
+  // pending_ic_ set on IC receipt, cleared when HOT response refines altitude or on 5s timeout
   std::shared_ptr<sim_msgs::msg::InitialConditions> pending_ic_;
+  std::chrono::steady_clock::time_point pending_ic_time_{};
   double gear_cg_height_m_ = 0.5;
-
-  // ── Position cache ──────────────────────────────────────────────────
-  // Cached IC lat/lon overrides get_state() output when FDM is not stepping.
-  // Prevents JSBSim FGLocation cache corruption from producing alternating
-  // old/new positions in Entity Control packets (30km visual flicker).
-  double cached_lat_rad_{0.0};
-  double cached_lon_rad_{0.0};
-  bool cached_position_valid_{false};
 };
 
 int main(int argc, char ** argv)
