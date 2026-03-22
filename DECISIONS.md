@@ -1924,3 +1924,11 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - DECIDED: cigi_bridge subscribes to /sim/state to track sim_state_. Subscription created in on_activate, cleaned up in on_deactivate.
 - REASON: Required to detect REPOSITIONING state for the HOT rate gating bypass.
 - AFFECTS: src/core/cigi_bridge/src/cigi_host_node.cpp, src/core/cigi_bridge/include/cigi_bridge/cigi_host_node.hpp
+
+## 2026-03-22 — 18:00:00 - Claude Code
+
+- DECIDED: Repositioning pipeline implemented end-to-end. STATE_REPOSITIONING = 6 added to SimState.msg. sim_manager transitions to REPOSITIONING on IC, subscribes to /sim/terrain/ready, timeout at 35s. flight_model_adapter publishes terrain_ready, loads gear height from config.yaml gear_points. X-Plane plugin monitors async_scenery_load_in_progress, sends SOF IG Status (Standby/Operate), shows "REPOSITIONING..." overlay. cigi_bridge parses SOF IG Status, bypasses HOT rate gating during REPOSITIONING. IOS shows purple REPOSITIONING badge.
+- DECIDED: Repositioning timeouts — CIGI HOT preferred (no limit), SRTM fallback at 30s, sim_manager exits REPOSITIONING at 35s, hard cleanup at 60s.
+- DECIDED: sim_manager subscribes to /sim/initial_conditions directly — IOS publishes ICs bypassing command handler, sim_manager needs to detect these for REPOSITIONING transition.
+- KNOWN ISSUE: X-Plane async_scenery_load_in_progress reports "loaded" before high-resolution terrain tiles are fully paged. Rapid repositions to distant airports may get stale/low-LOD HOT data at 200ms. First reposition works correctly (17s wait), subsequent nearby repositions are fast. Needs investigation — may need probe stability check in addition to dataref.
+- AFFECTS: SimState.msg, sim_manager, flight_model_adapter, cigi_bridge, X-Plane plugin, ios_backend, IOS frontend
