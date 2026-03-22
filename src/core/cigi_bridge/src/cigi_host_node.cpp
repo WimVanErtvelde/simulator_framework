@@ -91,6 +91,7 @@ CallbackReturn CigiHostNode::on_configure(const rclcpp_lifecycle::State &)
     heartbeat_pub_  = create_publisher<std_msgs::msg::String>("/sim/diagnostics/heartbeat", 10);
     lifecycle_pub_  = create_publisher<std_msgs::msg::String>("/sim/diagnostics/lifecycle_state", 10);
     hat_pub_        = create_publisher<sim_msgs::msg::HatHotResponse>("/sim/cigi/hat_responses", 10);
+    ig_status_pub_  = create_publisher<std_msgs::msg::UInt8>("/sim/cigi/ig_status", 10);
 
     if (!open_sockets()) {
         RCLCPP_ERROR(get_logger(), "cigi_bridge: failed to open UDP sockets (ig=%s:%d host_port=%d)",
@@ -445,11 +446,11 @@ void CigiHostNode::send_hot_requests()
 
     double agl_m = fms->altitude_agl_m;
 
-    // During REPOSITIONING with IG in Operate mode, bypass AGL rate gating
-    // and send HOT requests every frame for all gear points.  This ensures
-    // ground elevation is known before the sim transitions to READY.
+    // During REPOSITIONING, bypass AGL rate gating and send HOT requests
+    // every frame for all gear points. The IG responds with whatever terrain
+    // it has; the host filters by SOF IG Status (only trusts Operate).
     bool repositioning_hot =
-        (sim_state_ == sim_msgs::msg::SimState::STATE_REPOSITIONING && ig_status_ == 2);
+        (sim_state_ == sim_msgs::msg::SimState::STATE_REPOSITIONING);
 
     if (!repositioning_hot) {
         // Normal AGL-based rate gating
@@ -554,6 +555,9 @@ void CigiHostNode::recv_pending()
                     static const char * mode_names[] = {"Standby", "Reset", "Operate", "Debug"};
                     RCLCPP_INFO(get_logger(), "IG status changed: %s → %s",
                                 mode_names[prev & 0x03], mode_names[ig_status_ & 0x03]);
+                    auto status_msg = std_msgs::msg::UInt8();
+                    status_msg.data = ig_status_;
+                    ig_status_pub_->publish(status_msg);
                 }
             }
             offset += pkt_size;

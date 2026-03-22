@@ -2,6 +2,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_lifecycle/lifecycle_node.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <std_msgs/msg/u_int8.hpp>
 #include <sim_msgs/msg/flight_model_state.hpp>
 #include <sim_msgs/msg/flight_model_capabilities.hpp>
 #include <sim_msgs/msg/hat_hot_response.hpp>
@@ -119,6 +120,7 @@ private:
     rclcpp_lifecycle::LifecyclePublisher<sim_msgs::msg::HatHotResponse>::SharedPtr hat_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr heartbeat_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr lifecycle_pub_;
+    rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr ig_status_pub_;
 
     rclcpp::TimerBase::SharedPtr send_timer_;
     rclcpp::TimerBase::SharedPtr heartbeat_timer_;

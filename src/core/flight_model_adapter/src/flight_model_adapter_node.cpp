@@ -17,6 +17,7 @@
 #include <sim_msgs/msg/hat_hot_response.hpp>
 #include <sim_msgs/msg/terrain_source.hpp>
 #include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/u_int8.hpp>
 #include <sim_msgs/srv/get_terrain_elevation.hpp>
 
 #include <yaml-cpp/yaml.h>
@@ -84,26 +85,33 @@ public:
       "/sim/cigi/hat_responses", 10,
       [this](const sim_msgs::msg::HatHotResponse::SharedPtr msg) {
         if (msg->valid && !msg->point_name.empty()) {
-          // Ignore HOT responses in the first 500ms after IC — they're from the old position
+          // During repositioning, only accept HOTs when IG says terrain is ready (Operate=2)
+          if (pending_ic_ && cigi_ig_status_ != 2) {
+            RCLCPP_DEBUG(this->get_logger(),
+              "[HOT] DISCARD point=%s hot=%.1fm (IG status=%u, not Operate)",
+              msg->point_name.c_str(), msg->hot, cigi_ig_status_);
+            return;
+          }
           if (pending_ic_) {
             auto age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
               std::chrono::steady_clock::now() - pending_ic_time_).count();
-            if (age_ms < 500) {
-              RCLCPP_INFO(this->get_logger(),
-                "[HOT] DISCARD point=%s hot=%.1fm (age=%ldms < 500ms, stale)",
-                msg->point_name.c_str(), msg->hot, age_ms);
-              return;
-            }
             RCLCPP_INFO(this->get_logger(),
-              "[HOT] ACCEPT point=%s hot=%.1fm (age=%ldms)",
+              "[HOT] ACCEPT point=%s hot=%.1fm (age=%ldms, IG=Operate)",
               msg->point_name.c_str(), msg->hot, age_ms);
-          } else {
-            RCLCPP_DEBUG(this->get_logger(),
-              "[HOT] point=%s hot=%.1fm (no pending IC)",
-              msg->point_name.c_str(), msg->hot);
           }
           terrain_hot_[msg->point_name] = msg->hot;
           last_cigi_hot_time_ = std::chrono::steady_clock::now();
+        }
+      });
+
+    // CIGI IG status subscription — terrain readiness from IG via SOF
+    ig_status_sub_ = this->create_subscription<std_msgs::msg::UInt8>(
+      "/sim/cigi/ig_status", 10,
+      [this](const std_msgs::msg::UInt8::SharedPtr msg) {
+        if (msg->data != cigi_ig_status_) {
+          RCLCPP_INFO(this->get_logger(), "[CIGI] IG status: %u → %u", cigi_ig_status_, msg->data);
+          cigi_ig_status_ = msg->data;
+          cigi_connected_ = true;
         }
       });
 
@@ -367,7 +375,8 @@ public:
           }
 
           // CIGI HOT: apply when responses received (>200ms for IG to respond)
-          if (!ic_cigi_refined_ && !terrain_hot_.empty() && age_ms >= 1000) {
+          // Accept CIGI HOT when IG is Operate and data has arrived
+          if (!ic_cigi_refined_ && !terrain_hot_.empty() && cigi_ig_status_ == 2) {
             double sum = 0.0;
             for (auto & [name, hot] : terrain_hot_) sum += hot;
             double terrain_m = sum / terrain_hot_.size();
@@ -584,6 +593,9 @@ private:
   std::unique_ptr<flight_model_adapter::IFlightModelAdapter> adapter_;
   flight_model_adapter::FlightModelCapabilities caps_;
   rclcpp::Subscription<sim_msgs::msg::HatHotResponse>::SharedPtr hat_response_sub_;
+  rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr ig_status_sub_;
+  uint8_t cigi_ig_status_ = 0;    // 0=Standby, 2=Operate (from CIGI SOF via cigi_bridge)
+  bool cigi_connected_ = false;    // true once first IG status received
   rclcpp::Publisher<sim_msgs::msg::TerrainSource>::SharedPtr terrain_source_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr terrain_ready_pub_;
   rclcpp::Client<sim_msgs::srv::GetTerrainElevation>::SharedPtr terrain_client_;
