@@ -295,7 +295,7 @@ public:
         if (pending_ic_) {
           auto age = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - pending_ic_time_).count();
-          if (age > 5.0) {
+          if (age > 30.0) {
             RCLCPP_WARN(this->get_logger(),
               "[IC] pending_ic_ timeout (%.1fs) — no CIGI HOT received, clearing", age);
             pending_ic_.reset();
