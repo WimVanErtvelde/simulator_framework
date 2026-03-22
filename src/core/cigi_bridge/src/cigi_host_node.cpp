@@ -133,7 +133,8 @@ CallbackReturn CigiHostNode::on_activate(const rclcpp_lifecycle::State &)
             bool prev = reposition_active_;
             reposition_active_ = msg->reposition_active;
             if (reposition_active_ && !prev) {
-                sent_reset_ = false;  // arm: send Reset on next frame
+                sent_reset_ = false;       // arm: send Reset on next frame
+                hot_frame_counter_ = 0;    // fire HOT immediately on first reposition frame
                 RCLCPP_INFO(get_logger(), "Reposition started — will send IG Reset");
             }
         });
@@ -560,8 +561,8 @@ void CigiHostNode::recv_pending()
                 double hot_m;
                 memcpy(&hot_m, &val_u, 8);
 
-                // Only publish HOT when IG is Operate (terrain valid)
-                if (ig_status_ != 2) { offset += pkt_size; continue; }
+                // Only publish HOT when IG reports terrain valid
+                if (ig_status_ != CIGI_SOF_IG_STATUS_OPERATE) { offset += pkt_size; continue; }
                 auto resp = hat_tracker_.resolve(hat_hot_id, hot_m, valid);
                 if (resp && hat_pub_->is_activated()) {
                     hat_pub_->publish(*resp);

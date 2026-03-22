@@ -53,6 +53,8 @@ private:
     static constexpr uint8_t CIGI_IG_MODE_OPERATE = 0x06;  // Operate(2) | TimestampValid → 0x06
     // Entity state byte[4]: Active(1) in bits[1:0]
     static constexpr uint8_t CIGI_ENTITY_ACTIVE = 0x01;
+    // SOF IG Status byte[4] bits[1:0] (incoming, different encoding from outgoing IG Mode)
+    static constexpr uint8_t CIGI_SOF_IG_STATUS_OPERATE = 0x02;
 
     void encode_ig_ctrl(uint8_t * buf, uint32_t frame_cntr, double timestamp_s,
                         uint8_t ig_mode) const;
