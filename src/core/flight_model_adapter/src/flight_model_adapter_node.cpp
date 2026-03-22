@@ -495,8 +495,14 @@ private:
       now - last_cigi_hot_time_).count();
 
     if (!terrain_hot_.empty() && cigi_age < 2000) {
+      // Fresh CIGI HOT data flowing
       msg.source = sim_msgs::msg::TerrainSource::SOURCE_CIGI;
       msg.description = "CIGI HOT (" + std::to_string(terrain_hot_.size()) + " points)";
+      terrain_source_ = sim_msgs::msg::TerrainSource::SOURCE_CIGI;
+    } else if (ic_cigi_refined_) {
+      // IC was positioned using CIGI — terrain is still valid even if continuous HOT stopped
+      msg.source = sim_msgs::msg::TerrainSource::SOURCE_CIGI;
+      msg.description = "CIGI HOT (from IC)";
       terrain_source_ = sim_msgs::msg::TerrainSource::SOURCE_CIGI;
     } else if (terrain_client_ && terrain_client_->service_is_ready()) {
       msg.source = sim_msgs::msg::TerrainSource::SOURCE_SRTM;
