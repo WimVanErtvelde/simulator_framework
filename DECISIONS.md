@@ -1932,3 +1932,20 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - DECIDED: sim_manager subscribes to /sim/initial_conditions directly — IOS publishes ICs bypassing command handler, sim_manager needs to detect these for REPOSITIONING transition.
 - KNOWN ISSUE: X-Plane async_scenery_load_in_progress reports "loaded" before high-resolution terrain tiles are fully paged. Rapid repositions to distant airports may get stale/low-LOD HOT data at 200ms. First reposition works correctly (17s wait), subsequent nearby repositions are fast. Needs investigation — may need probe stability check in addition to dataref.
 - AFFECTS: SimState.msg, sim_manager, flight_model_adapter, cigi_bridge, X-Plane plugin, ios_backend, IOS frontend
+
+## 2026-03-23 — Claude Code
+
+### Repositioning pipeline refactored — CIGI 3.3 compliant handshake
+
+- DECIDED: **STATE_REPOSITIONING removed** from SimState.msg. Repositioning uses FROZEN state + `reposition_active` bool flag in SimState. Simpler state machine, no new state transitions needed.
+- DECIDED: **CMD_REPOSITION = 11** added to SimCommand.msg. sim_manager owns the full workflow: save pre-reposition state → FROZEN → broadcast IC → wait for terrain_ready or 15s timeout → return to saved state. Rejects INIT, SHUTDOWN, RESETTING states.
+- DECIDED: **IOS sends CMD_REPOSITION** (not direct IC publish). ios_backend set_departure handler creates SimCommand with CMD_REPOSITION, sim_manager controls the workflow.
+- DECIDED: **CIGI IG Mode handshake** — cigi_bridge reads `reposition_active` from SimState. On rising edge: sends IG Mode = Reset (0x05) for one frame, clears HAT tracker (prevents stale HOT from old position). Subsequent frames: IG Mode = Operate (0x06). HOT requests at 10 Hz during reposition (not 60 Hz on every freeze). HOT responses only accepted when SOF IG Status = Operate.
+- DECIDED: **X-Plane plugin driven by IG Mode** (not position-delta detection). Removed: g_repositioning flag, position threshold heuristic, settle timer, REPOSITIONING overlay. Added: parse IG Mode from IG Control byte 3 bits[1:0]. On Reset→Operate transition: begin terrain probe stability (4×0.5s probes within 1m). SOF: Standby during probing, Normal when stable.
+- DECIDED: **pending_ic_ timeout = 30s** in flight_model_adapter. Covers X-Plane tile loading (observed 10-20s for cross-continent repositions). Sim stays FROZEN with REPOSITIONING badge during wait. No-CIGI fallback: waits 30s then accepts runway DB altitude.
+- DECIDED: **FMA stepping gated by pending_ic_** — JSBSim does not step() while waiting for terrain HOT. Prevents DDS race where IC arrives before FROZEN state.
+- DECIDED: **refine_terrain_altitude uses RunIC** with cockpit state save/restore. Avoids SetPropertyValue("position/h-sl-ft") which can corrupt FGLocation geodetic cache.
+- DECIDED: **IOS REPOSITIONING badge** — ios_backend forwards reposition_active to frontend via WS. Frontend store maps to simState='REPOSITIONING' which shows purple badge and locks RUN/FREEZE buttons.
+- DECIDED: **Bug #0 root cause was zombie process** — stale cigi_bridge from previous session held port 8001, sent Entity Control with old position at 60 Hz alongside new process. Fix: kill stale processes before start (`fuser -k 8001/udp 8002/udp`). Defensive code (position cache, immediate publish) was removed as unnecessary.
+- REASON: Previous architecture used position-delta heuristics in X-Plane plugin and STATE_REPOSITIONING in the state machine. Fragile: plugin guessed when reposition happened, settle timers were arbitrary, stale HOT responses accepted. New architecture: host explicitly controls the handshake via CIGI protocol, plugin reports terrain readiness, HAT tracker invalidation prevents stale HOT.
+- AFFECTS: SimState.msg, SimCommand.msg, sim_manager, flight_model_adapter, JSBSimAdapter, cigi_bridge (host + header + tracker), X-Plane plugin (XPluginMain.cpp), ios_backend, useSimStore.js, StatusStrip.jsx, ActionBar.jsx

@@ -174,6 +174,8 @@ INIT → READY → RUNNING ↔ FROZEN → RESETTING → READY
 - Exposes a ROS2 service interface for IOS commands
 - Heartbeat monitoring: 2-second timeout, auto-freeze on required node loss
 - RESETTING state: 100ms wall timer before transitioning to READY (gives nodes time to receive IC broadcast)
+- Repositioning: CMD_REPOSITION → FROZEN + `reposition_active` flag → broadcast IC → wait for
+  `/sim/terrain/ready` (max 15s timeout) → return to previous state. No separate REPOSITIONING state.
 
 ---
 
@@ -338,16 +340,18 @@ lifecycle transitions were missed before ios_backend subscribed.
 
 **SimCommand constants** (src/sim_msgs/msg/SimCommand.msg):
 ```
-CMD_RUN             = 1
-CMD_FREEZE          = 2
-CMD_RESET_FLIGHT    = 3
-CMD_RESET_AIRCRAFT  = 4
-CMD_RESET_FAILURES  = 5
-CMD_SHUTDOWN        = 6
+CMD_RUN             = 0
+CMD_FREEZE          = 1
+CMD_UNFREEZE        = 2
+CMD_RESET           = 3
+CMD_LOAD_SCENARIO   = 4
+CMD_SHUTDOWN        = 5
+CMD_SET_IC          = 6   # update stored IC only — no reposition triggered
 CMD_RELOAD_NODE     = 7   # payload: {node_name}
 CMD_DEACTIVATE_NODE = 8   # payload: {node_name}
 CMD_ACTIVATE_NODE   = 9   # payload: {node_name}
 CMD_RESET_NODE      = 10  # payload: {node_name} — chains deactivate→cleanup→configure→activate
+CMD_REPOSITION      = 11  # payload: IC fields — triggers FROZEN + terrain wait + return to prev state
 ```
 
 **Topic subscriptions:** `/sim/flight_model/state`, `/sim/state`, `/sim/fuel/state`, `/sim/navigation/state`,
@@ -557,10 +561,22 @@ Config files per aircraft:
 
 ## CIGI Bridge (`src/core/cigi_bridge/`)
 
-- CIGI 3.3 / 4.0 host side
-- Subscribes to `/sim/flight_model/state`, `/sim/world/weather`, `/sim/scenario/entities`
-- Publishes `/sim/cigi/host_to_ig` and `/sim/cigi/ig_to_host`
+- CIGI 3.3 host side (raw BE encoding, no CCL dependency)
+- Subscribes to `/sim/flight_model/state`, `/sim/state` (for `reposition_active`)
+- Publishes `/sim/cigi/hat_responses` (HOT terrain data from IG)
+- Sends Entity Control (position/attitude) + IG Control (mode) at 60 Hz via UDP
 - IG identity hidden from rest of sim
+
+**Repositioning handshake (CIGI 3.3 compliant):**
+- On `reposition_active` rising edge: send IG Mode = Reset for ONE frame, clear HOT tracker
+- Subsequent frames: IG Mode = Operate
+- HOT requests sent at 10 Hz during reposition (vs AGL-based gating in normal flight)
+- HOT responses only accepted when SOF IG Status = Operate (terrain loaded)
+- X-Plane plugin: detects Reset→Operate transition, probes terrain stability (4×0.5s),
+  reports SOF Standby during probing, Normal when stable
+
+**Startup note:** Kill stale cigi_bridge processes before starting (`fuser -k 8001/udp 8002/udp`).
+A zombie process holding port 8001 causes position flicker (both old and new process send Entity Control).
 
 ---
 
@@ -624,9 +640,9 @@ source install/setup.bash
 - [x] Virtual cockpit pages: VIRTUAL priority, URL-routed via React Router ✓
 - [x] Terrain service: sim-side SRTM/DTED, IG provides supplementary CIGI HOT ✓
 - [x] Air data: always modeled by sim_air_data (EXTERNAL_DECOUPLED), all FDMs output truth only ✓
-- [ ] IC terrain: simplify to 0 MSL → CIGI HOT → reposition (planned, not yet implemented)
-- [ ] CIGI IG repositioning handshake: X-Plane plugin detect position change → wait for terrain → signal ready
-- [ ] CIGI library: from scratch or cigicl?
+- [x] CIGI IG repositioning handshake: host sends IG Mode Reset/Operate, plugin probes terrain, reports via SOF ✓
+- [x] IC terrain: runway DB altitude initial, CIGI HOT refinement for precision ground placement ✓
+- [ ] CIGI library: from scratch or cigicl? (currently raw encoding, no CCL)
 - [ ] micro-ROS transport: serial UART or CAN?
 - [ ] IOS auth: single-user or multi-role (instructor / examiner / admin)?
 - [ ] Scenario file format: custom YAML or existing standard?
