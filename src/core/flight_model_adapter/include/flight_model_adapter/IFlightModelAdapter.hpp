@@ -110,6 +110,9 @@ public:
 
   /// Read a named FDM property. Returns 0.0 if not found.
   virtual double get_property(const std::string & /*name*/) const { return 0.0; }
+
+  /// Refine altitude and terrain after HOT response — does NOT touch lat/lon/heading.
+  virtual void refine_terrain_altitude(double /*alt_msl_m*/, double /*terrain_elev_m*/) {}
 };
 
 }  // namespace flight_model_adapter

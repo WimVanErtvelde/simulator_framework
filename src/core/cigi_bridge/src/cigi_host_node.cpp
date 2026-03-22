@@ -450,7 +450,7 @@ void CigiHostNode::send_hot_requests()
     // every frame for all gear points. The IG responds with whatever terrain
     // it has; the host filters by SOF IG Status (only trusts Operate).
     bool repositioning_hot =
-        (sim_state_ == sim_msgs::msg::SimState::STATE_REPOSITIONING);
+        (sim_state_ == sim_msgs::msg::SimState::STATE_FROZEN);
 
     if (!repositioning_hot) {
         // Normal AGL-based rate gating
@@ -541,6 +541,8 @@ void CigiHostNode::recv_pending()
                 double hot_m;
                 memcpy(&hot_m, &val_u, 8);
 
+                // Only publish HOT when IG is Operate (terrain valid)
+                if (ig_status_ != 2) { offset += pkt_size; continue; }
                 auto resp = hat_tracker_.resolve(hat_hot_id, hot_m, valid);
                 if (resp && hat_pub_->is_activated()) {
                     hat_pub_->publish(*resp);

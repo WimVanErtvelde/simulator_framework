@@ -226,9 +226,9 @@ class IosBackendNode(Node):
         self._cmd_map = {
             1: SimCommand.CMD_RUN,
             2: SimCommand.CMD_FREEZE,
-            3: SimCommand.CMD_RESET,
-            4: SimCommand.CMD_RESET,
-            5: SimCommand.CMD_RESET,
+            3: SimCommand.CMD_RESET,          # RESET_FLIGHT
+            4: SimCommand.CMD_RESET,          # RESET_AIRCRAFT
+            5: SimCommand.CMD_RESET,          # RESET_FAILURES (no dedicated cmd yet)
             6: SimCommand.CMD_SHUTDOWN,
             7: SimCommand.CMD_RELOAD_NODE,
             8: SimCommand.CMD_DEACTIVATE_NODE,
@@ -1296,28 +1296,28 @@ async def websocket_endpoint(websocket: WebSocket):
                         _handle_get_runways(websocket, msg.get('icao', '')))
 
                 elif msg.get('type') == 'set_departure' and ros_node:
-                    # Publish InitialConditions directly — FDM applies immediately
-                    ic_msg = InitialConditions()
-                    ic_msg.header.stamp = ros_node.get_clock().now().to_msg()
-                    ic_msg.latitude_rad = float(msg.get('lat_rad', 0))
-                    ic_msg.longitude_rad = float(msg.get('lon_rad', 0))
-                    ic_msg.altitude_msl_m = float(msg.get('alt_m', 0))
-                    ic_msg.heading_rad = float(msg.get('heading_rad', 0))
-                    ic_msg.airspeed_ms = float(msg.get('airspeed_ms', 0))
-                    ic_msg.qnh_pa = 101325.0
-                    ic_msg.fuel_total_pct = 0.75
-                    ic_msg.configuration = (
-                        'airborne_clean' if ic_msg.airspeed_ms > 1.0
-                        else 'ready_for_takeoff'
-                    )
-                    ros_node._ic_pub.publish(ic_msg)
+                    # Reposition via CMD_REPOSITION - sim_manager owns the workflow
                     import math as _m
+                    airspeed_ms = float(msg.get('airspeed_ms', 0))
+                    config = 'airborne_clean' if airspeed_ms > 1.0 else 'ready_for_takeoff'
+                    payload = {
+                        'latitude_rad': float(msg.get('lat_rad', 0)),
+                        'longitude_rad': float(msg.get('lon_rad', 0)),
+                        'altitude_msl_m': float(msg.get('alt_m', 0)),
+                        'heading_rad': float(msg.get('heading_rad', 0)),
+                        'airspeed_ms': airspeed_ms,
+                        'configuration': config,
+                    }
+                    cmd_msg = SimCommand()
+                    cmd_msg.header.stamp = ros_node.get_clock().now().to_msg()
+                    cmd_msg.command = 11  # CMD_REPOSITION
+                    cmd_msg.payload_json = json.dumps(payload)
+                    ros_node._cmd_pub.publish(cmd_msg)
                     ros_node.get_logger().info(
-                        f'[IC] set_departure: lat={ic_msg.latitude_rad * 180/_m.pi:.5f}° '
-                        f'lon={ic_msg.longitude_rad * 180/_m.pi:.5f}° alt={ic_msg.altitude_msl_m:.1f}m '
-                        f'hdg={ic_msg.heading_rad * 180/_m.pi:.1f}° spd={ic_msg.airspeed_ms:.1f}m/s '
-                        f'config={ic_msg.configuration}')
-
+                        f'[REPOSITION] lat={payload["latitude_rad"] * 180/_m.pi:.5f} '
+                        f'lon={payload["longitude_rad"] * 180/_m.pi:.5f} alt={payload["altitude_msl_m"]:.1f}m '
+                        f'hdg={payload["heading_rad"] * 180/_m.pi:.1f} '
+                        f'config={config}')
             except json.JSONDecodeError:
                 pass
             except Exception as e:

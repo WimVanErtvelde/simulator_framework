@@ -217,6 +217,11 @@ void JSBSimAdapter::apply_initial_conditions(
       fgic->SetClimbRateFpsIC(0.0);
 
       exec_->RunIC();
+      std::cout << "[JSBSimAdapter] Post-IC (airborne_clean) position: lat="
+                << exec_->GetPropertyValue("position/lat-gc-deg")
+                << " lon=" << exec_->GetPropertyValue("position/long-gc-deg")
+                << " alt=" << exec_->GetPropertyValue("position/h-sl-ft") * FT_TO_M
+                << "m" << std::endl;
       exec_->SetPropertyValue("gear/gear-cmd-norm", 0.0);
       exec_->SetPropertyValue("fcs/flap-cmd-norm", 0.0);
 
@@ -231,6 +236,11 @@ void JSBSimAdapter::apply_initial_conditions(
       exec_->SetPropertyValue("simulation/force-on-ground", 1.0);
 
       exec_->RunIC();
+      std::cout << "[JSBSimAdapter] Post-IC (ready_for_takeoff) position: lat="
+                << exec_->GetPropertyValue("position/lat-gc-deg")
+                << " lon=" << exec_->GetPropertyValue("position/long-gc-deg")
+                << " alt=" << exec_->GetPropertyValue("position/h-sl-ft") * FT_TO_M
+                << "m" << std::endl;
 
       exec_->SetPropertyValue("gear/gear-cmd-norm", 1.0);
       exec_->SetPropertyValue("fcs/flap-cmd-norm", 0.0);
@@ -247,6 +257,11 @@ void JSBSimAdapter::apply_initial_conditions(
       fgic->SetClimbRateFpsIC(0.0);
 
       exec_->RunIC();
+      std::cout << "[JSBSimAdapter] Post-IC (cold_and_dark) position: lat="
+                << exec_->GetPropertyValue("position/lat-gc-deg")
+                << " lon=" << exec_->GetPropertyValue("position/long-gc-deg")
+                << " alt=" << exec_->GetPropertyValue("position/h-sl-ft") * FT_TO_M
+                << "m" << std::endl;
 
       exec_->SetPropertyValue("gear/gear-cmd-norm", 1.0);
       exec_->SetPropertyValue("fcs/throttle-cmd-norm[0]", 0.0);
@@ -768,6 +783,53 @@ void JSBSimAdapter::write_back_fuel(const sim_msgs::msg::FuelState & state)
   } catch (...) {
     std::cerr << "[JSBSimAdapter] Unknown exception in write_back_fuel" << std::endl;
   }
+}
+
+void JSBSimAdapter::refine_terrain_altitude(double alt_msl_m, double terrain_elev_m)
+{
+    if (!initialized_) return;
+
+    // Set terrain elevation first (safe — only touches ground callback)
+    double terrain_ft = terrain_elev_m / FT_TO_M;
+    exec_->SetPropertyValue("position/terrain-elevation-asl-ft", terrain_ft);
+
+    // Save cockpit state that RunIC() will reset
+    double throttle_0 = exec_->GetPropertyValue("fcs/throttle-cmd-norm[0]");
+    double mixture_0  = exec_->GetPropertyValue("fcs/mixture-cmd-norm[0]");
+    double gear_cmd   = exec_->GetPropertyValue("gear/gear-cmd-norm");
+    double flap_cmd   = exec_->GetPropertyValue("fcs/flap-cmd-norm");
+    double brake_l    = exec_->GetPropertyValue("fcs/left-brake-cmd-norm");
+    double brake_r    = exec_->GetPropertyValue("fcs/right-brake-cmd-norm");
+    bool   eng_run    = exec_->GetPropertyValue("propulsion/engine[0]/set-running") > 0.5;
+
+    // Update altitude in IC object and re-run.
+    // The IC object still holds the correct geodetic lat/lon/heading from
+    // the last apply_initial_conditions() call (which uses SetGeodLatitudeDegIC).
+    // This avoids the FGLocation cache corruption caused by
+    // SetPropertyValue("position/h-sl-ft") → SetAltitudeASL → SetRadius,
+    // which introduced a geocentric/geodetic roundtrip error (~0.17° at 51°N).
+    auto fgic = exec_->GetIC();
+    fgic->SetAltitudeASLFtIC(alt_msl_m / FT_TO_M);
+    exec_->RunIC();
+
+    // Re-set terrain after RunIC (RunIC may reset it)
+    exec_->SetPropertyValue("position/terrain-elevation-asl-ft", terrain_ft);
+
+    // Restore cockpit state
+    exec_->SetPropertyValue("fcs/throttle-cmd-norm[0]", throttle_0);
+    exec_->SetPropertyValue("fcs/mixture-cmd-norm[0]", mixture_0);
+    exec_->SetPropertyValue("gear/gear-cmd-norm", gear_cmd);
+    exec_->SetPropertyValue("fcs/flap-cmd-norm", flap_cmd);
+    exec_->SetPropertyValue("fcs/left-brake-cmd-norm", brake_l);
+    exec_->SetPropertyValue("fcs/right-brake-cmd-norm", brake_r);
+    if (eng_run) {
+        exec_->SetPropertyValue("propulsion/set-running", 0);
+    }
+
+    std::cout << "[JSBSimAdapter] Terrain refined (RunIC): alt="
+              << alt_msl_m << "m terrain=" << terrain_elev_m
+              << "m lat=" << exec_->GetPropertyValue("position/lat-geod-rad") * (180.0 / M_PI)
+              << "°" << std::endl;
 }
 
 }  // namespace flight_model_adapter

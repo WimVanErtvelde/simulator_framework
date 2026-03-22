@@ -114,26 +114,16 @@ public:
         }
       });
 
+    // Terrain ready — flight_model_adapter publishes when HOT terrain is valid
     terrain_ready_sub_ = this->create_subscription<std_msgs::msg::Bool>(
       "/sim/terrain/ready", 10,
       [this](const std_msgs::msg::Bool::SharedPtr msg) {
-        if (msg->data && state_ == sim_msgs::msg::SimState::STATE_REPOSITIONING) {
-          RCLCPP_INFO(this->get_logger(), "Terrain ready — exiting REPOSITIONING");
-          transition_to(sim_msgs::msg::SimState::STATE_READY);
-        }
-      });
-
-    // Subscribe to ICs published directly by ios_backend (bypasses command handler)
-    ic_direct_sub_ = this->create_subscription<sim_msgs::msg::InitialConditions>(
-      "/sim/initial_conditions", 10,
-      [this](const sim_msgs::msg::InitialConditions::SharedPtr) {
-        // Transition to REPOSITIONING when an IC arrives from any source
-        if (state_ != sim_msgs::msg::SimState::STATE_SHUTDOWN &&
-            state_ != sim_msgs::msg::SimState::STATE_INIT &&
-            state_ != sim_msgs::msg::SimState::STATE_REPOSITIONING) {
-          RCLCPP_INFO(this->get_logger(), "IC received — entering REPOSITIONING");
-          transition_to(sim_msgs::msg::SimState::STATE_REPOSITIONING);
-          repositioning_start_ = std::chrono::steady_clock::now();
+        if (msg->data && reposition_pending_) {
+          auto age = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - reposition_start_).count();
+          RCLCPP_INFO(this->get_logger(),
+            "Terrain ready — reposition complete (%.1fs)", age);
+          finish_reposition();
         }
       });
 
@@ -183,6 +173,12 @@ private:
   // Reset timer
   rclcpp::TimerBase::SharedPtr reset_timer_;
 
+  // ── Reposition (FROZEN + flag, no separate state) ───────────────────────
+  bool    reposition_pending_    = false;
+  uint8_t pre_reposition_state_  = sim_msgs::msg::SimState::STATE_READY;
+  std::chrono::steady_clock::time_point reposition_start_{};
+  static constexpr double REPOSITION_TIMEOUT_S = 15.0;
+
   // ── Publishers ──────────────────────────────────────────────────────────
   rclcpp::Publisher<rosgraph_msgs::msg::Clock>::SharedPtr clock_pub_;
   rclcpp::Publisher<sim_msgs::msg::SimState>::SharedPtr state_pub_;
@@ -197,10 +193,6 @@ private:
   rclcpp::Subscription<sim_msgs::msg::SimCommand>::SharedPtr command_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr heartbeat_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr terrain_ready_sub_;
-  rclcpp::Subscription<sim_msgs::msg::InitialConditions>::SharedPtr ic_direct_sub_;
-
-  // ── Repositioning ─────────────────────────────────────────────────────
-  std::chrono::steady_clock::time_point repositioning_start_{};
 
   // ── Timers ──────────────────────────────────────────────────────────────
   rclcpp::TimerBase::SharedPtr clock_timer_;
@@ -239,7 +231,6 @@ private:
     if (config_path.empty()) {
       RCLCPP_WARN(this->get_logger(),
         "No config.yaml found for aircraft '%s', using defaults", aircraft_id_.c_str());
-      // Use sensible defaults
       required_nodes_ = {
         "flight_model_adapter", "atmosphere_node", "input_arbitrator"
       };
@@ -306,7 +297,7 @@ private:
   }
 
   // ════════════════════════════════════════════════════════════════════════
-  //  State machine
+  //  State machine (no REPOSITIONING state — uses FROZEN + flag)
   // ════════════════════════════════════════════════════════════════════════
 
   static const char * state_name(uint8_t s)
@@ -317,18 +308,15 @@ private:
       case sim_msgs::msg::SimState::STATE_RUNNING:   return "RUNNING";
       case sim_msgs::msg::SimState::STATE_FROZEN:    return "FROZEN";
       case sim_msgs::msg::SimState::STATE_RESETTING: return "RESETTING";
-      case sim_msgs::msg::SimState::STATE_SHUTDOWN:      return "SHUTDOWN";
-      case sim_msgs::msg::SimState::STATE_REPOSITIONING: return "REPOSITIONING";
+      case sim_msgs::msg::SimState::STATE_SHUTDOWN:  return "SHUTDOWN";
       default: return "UNKNOWN";
     }
   }
 
   bool transition_to(uint8_t new_state)
   {
-    // No-op if already in requested state
     if (new_state == state_) return true;
 
-    // Validate transition
     using S = sim_msgs::msg::SimState;
     bool valid = false;
     switch (state_) {
@@ -336,30 +324,24 @@ private:
         valid = (new_state == S::STATE_READY || new_state == S::STATE_SHUTDOWN);
         break;
       case S::STATE_READY:
-        valid = (new_state == S::STATE_RUNNING ||
-                 new_state == S::STATE_REPOSITIONING ||
-                 new_state == S::STATE_SHUTDOWN);
+        valid = (new_state == S::STATE_RUNNING || new_state == S::STATE_FROZEN || new_state == S::STATE_SHUTDOWN);
         break;
       case S::STATE_RUNNING:
         valid = (new_state == S::STATE_FROZEN ||
                  new_state == S::STATE_RESETTING ||
-                 new_state == S::STATE_REPOSITIONING ||
                  new_state == S::STATE_SHUTDOWN);
         break;
       case S::STATE_FROZEN:
         valid = (new_state == S::STATE_RUNNING ||
+                 new_state == S::STATE_READY ||
                  new_state == S::STATE_RESETTING ||
-                 new_state == S::STATE_REPOSITIONING ||
                  new_state == S::STATE_SHUTDOWN);
         break;
       case S::STATE_RESETTING:
         valid = (new_state == S::STATE_READY || new_state == S::STATE_SHUTDOWN);
         break;
-      case S::STATE_REPOSITIONING:
-        valid = (new_state == S::STATE_READY || new_state == S::STATE_SHUTDOWN);
-        break;
       case S::STATE_SHUTDOWN:
-        valid = false;  // terminal state
+        valid = false;
         break;
     }
 
@@ -391,27 +373,45 @@ private:
 
     switch (msg->command) {
       case C::CMD_RUN:
+        if (reposition_pending_) {
+          RCLCPP_WARN(this->get_logger(), "CMD_RUN ignored — reposition in progress");
+          break;
+        }
         transition_to(S::STATE_RUNNING);
         break;
 
       case C::CMD_FREEZE:
+        if (reposition_pending_) {
+          RCLCPP_WARN(this->get_logger(), "CMD_FREEZE ignored — reposition in progress");
+          break;
+        }
         transition_to(S::STATE_FROZEN);
         break;
 
       case C::CMD_UNFREEZE:
+        if (reposition_pending_) {
+          RCLCPP_WARN(this->get_logger(), "CMD_UNFREEZE ignored — reposition in progress");
+          break;
+        }
         if (state_ == S::STATE_FROZEN) {
           transition_to(S::STATE_RUNNING);
         }
         break;
 
       case C::CMD_RESET:
+        reposition_pending_ = false;  // cancel any in-progress reposition
         if (transition_to(S::STATE_RESETTING)) {
           begin_reset();
         }
         break;
 
       case C::CMD_SET_IC:
+        // Update stored IC only — no reposition triggered
         parse_ic_from_json(msg->payload_json);
+        break;
+
+      case C::CMD_REPOSITION:
+        begin_reposition(msg->payload_json);
         break;
 
       case C::CMD_LOAD_SCENARIO:
@@ -451,9 +451,6 @@ private:
       }
 
       case C::CMD_RESET_NODE: {
-        // TODO: CMD_RESET_NODE should reinitialise state to configured defaults
-        // without re-reading config files. For now, identical to CMD_RELOAD_NODE
-        // (full deactivate->cleanup->configure->activate chain).
         auto node_name = extract_node_name(msg->payload_json);
         if (!node_name.empty()) {
           reload_node(node_name);
@@ -473,20 +470,68 @@ private:
   }
 
   // ════════════════════════════════════════════════════════════════════════
+  //  Reposition — sim_manager owns the entire workflow
+  // ════════════════════════════════════════════════════════════════════════
+
+  void begin_reposition(const std::string & payload)
+  {
+    using S = sim_msgs::msg::SimState;
+
+    if (state_ == S::STATE_INIT || state_ == S::STATE_SHUTDOWN) {
+      RCLCPP_WARN(this->get_logger(), "CMD_REPOSITION rejected — state is %s", state_name(state_));
+      return;
+    }
+
+    // Parse IC from payload
+    if (!payload.empty()) {
+      parse_ic_from_json(payload);
+    }
+
+    // Save current state so we can return to it after terrain loads
+    if (!reposition_pending_) {
+      pre_reposition_state_ = state_;
+    }
+
+    // Freeze the sim
+    if (state_ != S::STATE_FROZEN) {
+      transition_to(S::STATE_FROZEN);
+    }
+
+    // Broadcast the IC — flight_model_adapter will apply it and wait for HOT terrain
+    reposition_pending_ = true;
+    reposition_start_ = std::chrono::steady_clock::now();
+    broadcast_ic();
+
+    RCLCPP_INFO(this->get_logger(),
+      "Reposition started — lat=%.4f° lon=%.4f° (will return to %s)",
+      current_ic_.latitude_rad * 180.0 / M_PI,
+      current_ic_.longitude_rad * 180.0 / M_PI,
+      state_name(pre_reposition_state_));
+
+    // Force state publish so IOS sees reposition_active immediately
+    force_publish_state_ = true;
+    publish_state();
+  }
+
+  void finish_reposition()
+  {
+    if (!reposition_pending_) return;
+    reposition_pending_ = false;
+
+    RCLCPP_INFO(this->get_logger(), "Reposition complete — returning to %s",
+      state_name(pre_reposition_state_));
+
+    // Return to previous state
+    transition_to(pre_reposition_state_);
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
   //  Initial conditions
   // ════════════════════════════════════════════════════════════════════════
 
   void parse_ic_from_json(const std::string & payload)
   {
     if (payload.empty()) return;
-
-    // Transition to REPOSITIONING — sim_manager waits for terrain ready
-    if (state_ != sim_msgs::msg::SimState::STATE_SHUTDOWN &&
-        state_ != sim_msgs::msg::SimState::STATE_INIT) {
-      transition_to(sim_msgs::msg::SimState::STATE_REPOSITIONING);
-      repositioning_start_ = std::chrono::steady_clock::now();
-    }
-
     try {
       auto j = json::parse(payload);
       if (j.contains("latitude_rad"))     current_ic_.latitude_rad     = j["latitude_rad"].get<double>();
@@ -534,6 +579,7 @@ private:
   void begin_reset()
   {
     sim_time_sec_ = 0.0;
+    reposition_pending_ = false;
     broadcast_ic();
 
     // Transition to READY after 100ms
@@ -560,7 +606,6 @@ private:
       auto j = json::parse(payload);
       scenario_path = j.value("path", "");
     } catch (...) {
-      // Treat payload as a plain file path
       scenario_path = payload;
     }
 
@@ -573,7 +618,6 @@ private:
       YAML::Node scenario = YAML::LoadFile(scenario_path);
       scenario_events_.clear();
 
-      // Extract IC from scenario if present
       if (scenario["initial_conditions"]) {
         auto ic = scenario["initial_conditions"];
         if (ic["latitude_rad"])     current_ic_.latitude_rad     = ic["latitude_rad"].as<double>();
@@ -589,7 +633,6 @@ private:
         if (ic["configuration"])    current_ic_.configuration    = ic["configuration"].as<std::string>();
       }
 
-      // Load timed events
       if (scenario["events"]) {
         for (const auto & ev : scenario["events"]) {
           ScenarioEvent se;
@@ -599,7 +642,6 @@ private:
           se.params_json = ev["params_json"] ? ev["params_json"].as<std::string>() : "";
           scenario_events_.push_back(se);
         }
-        // Sort by time
         std::sort(scenario_events_.begin(), scenario_events_.end(),
           [](const ScenarioEvent & a, const ScenarioEvent & b) {
             return a.at_time_s < b.at_time_s;
@@ -641,7 +683,6 @@ private:
     auto now = std::chrono::steady_clock::now();
 
     if (state_ == sim_msgs::msg::SimState::STATE_INIT) {
-      // Check if all required nodes are alive → transition to READY
       bool all_alive = true;
       for (const auto & name : required_nodes_) {
         auto it = last_heartbeat_.find(name);
@@ -686,14 +727,13 @@ private:
       }
     }
 
-    // Repositioning timeout — gives IG time to page terrain, then SRTM fallback
-    if (state_ == sim_msgs::msg::SimState::STATE_REPOSITIONING) {
-      auto age = std::chrono::duration<double>(
-        std::chrono::steady_clock::now() - repositioning_start_).count();
-      if (age > 35.0) {
+    // Reposition timeout — if terrain never reports ready, give up and continue
+    if (reposition_pending_) {
+      auto age = std::chrono::duration<double>(now - reposition_start_).count();
+      if (age > REPOSITION_TIMEOUT_S) {
         RCLCPP_WARN(this->get_logger(),
-          "Repositioning timeout (%.1fs) — transitioning to READY", age);
-        transition_to(sim_msgs::msg::SimState::STATE_READY);
+          "Reposition timeout (%.1fs) — completing without terrain confirmation", age);
+        finish_reposition();
       }
     }
   }
@@ -713,6 +753,7 @@ private:
     msg.aircraft_id  = aircraft_id_;
     msg.sim_time_sec = sim_time_sec_;
     msg.time_scale   = static_cast<float>(time_scale_);
+    msg.reposition_active = reposition_pending_;
     state_pub_->publish(msg);
   }
 
@@ -746,7 +787,6 @@ private:
 
   using ChangeState = lifecycle_msgs::srv::ChangeState;
 
-  // Keep active lifecycle clients alive for async chains
   rclcpp::Client<ChangeState>::SharedPtr reload_client_;
   rclcpp::Client<ChangeState>::SharedPtr single_client_;
 
@@ -817,7 +857,6 @@ private:
 
     using SharedFuture = rclcpp::Client<ChangeState>::SharedFuture;
 
-    // Chain: deactivate → cleanup → configure → activate
     client->async_send_request(make_req(T::TRANSITION_DEACTIVATE),
       [this, client, node_name, make_req](SharedFuture) {
         publish_lifecycle_state(node_name, "inactive");

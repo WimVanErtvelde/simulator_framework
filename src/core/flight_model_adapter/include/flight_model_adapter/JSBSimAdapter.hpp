@@ -42,6 +42,8 @@ public:
   void set_property(const std::string & name, double value) override;
   double get_property(const std::string & name) const override;
 
+  void refine_terrain_altitude(double alt_msl_m, double terrain_elev_m) override;
+
 private:
   std::unique_ptr<JSBSim::FGFDMExec> exec_;
   std::string aircraft_id_;
