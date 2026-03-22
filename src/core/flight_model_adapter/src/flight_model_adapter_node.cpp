@@ -463,7 +463,10 @@ private:
     if (!adapter_) return;
 
     auto modified_ic = ic;
-    bool on_ground = modified_ic.altitude_msl_m < terrain_elev_m + 50.0;
+    // On-ground if: configuration says so, OR altitude is close to terrain
+    bool on_ground = (modified_ic.configuration == "ready_for_takeoff" ||
+                      modified_ic.configuration == "cold_and_dark" ||
+                      modified_ic.altitude_msl_m < terrain_elev_m + 50.0);
     if (on_ground) {
       modified_ic.altitude_msl_m = terrain_elev_m + gear_cg_height_m_;
     }
