@@ -324,11 +324,11 @@ bool AirportDatabase::loadXP12(const std::string & path)
             rwy.end1.designator = d1;
             rwy.end1.threshold_lat_rad = xpLatLonToRad(lat1);
             rwy.end1.threshold_lon_rad = xpLatLonToRad(lon1);
-            rwy.end1.displaced_threshold_m = displ1 * FT2M;
+            rwy.end1.displaced_threshold_m = displ1;  // apt.dat: already in metres
             rwy.end2.designator = d2;
             rwy.end2.threshold_lat_rad = xpLatLonToRad(lat2);
             rwy.end2.threshold_lon_rad = xpLatLonToRad(lon2);
-            rwy.end2.displaced_threshold_m = displ2 * FT2M;
+            rwy.end2.displaced_threshold_m = displ2;  // apt.dat: already in metres
 
             // Compute length from threshold positions (great-circle)
             double dlat = lat2 - lat1;
