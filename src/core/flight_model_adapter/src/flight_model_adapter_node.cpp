@@ -205,20 +205,14 @@ public:
       return CallbackReturn::FAILURE;
     }
 
-    // Load gear CG height from aircraft config.yaml gear_points
+    // Load gear ground height from aircraft config.yaml (for IC placement only)
     try {
       auto pkg_dir = ament_index_cpp::get_package_share_directory("aircraft_" + aircraft_id);
       auto config_path = pkg_dir + "/config/config.yaml";
       YAML::Node config = YAML::LoadFile(config_path);
-      auto gear_points = config["gear_points"];
-      if (gear_points && gear_points.IsSequence()) {
-        double max_z = 0.0;
-        for (const auto & gp : gear_points) {
-          double z = std::abs(gp["z_m"].as<double>(0.0));
-          if (z > max_z) max_z = z;
-        }
-        gear_cg_height_m_ = max_z;
-        RCLCPP_INFO(this->get_logger(), "Gear CG height from config: %.2f m", gear_cg_height_m_);
+      if (config["gear_ground_height_m"]) {
+        gear_cg_height_m_ = config["gear_ground_height_m"].as<double>();
+        RCLCPP_INFO(this->get_logger(), "Gear ground height from config: %.2f m", gear_cg_height_m_);
       }
     } catch (const std::exception & e) {
       RCLCPP_WARN(this->get_logger(), "Could not load gear height: %s — using default %.2fm",
