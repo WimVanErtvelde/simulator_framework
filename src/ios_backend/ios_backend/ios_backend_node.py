@@ -1314,10 +1314,12 @@ async def websocket_endpoint(websocket: WebSocket):
                         else 'ready_for_takeoff'
                     )
                     ros_node._ic_pub.publish(ic_msg)
+                    import math as _m
                     ros_node.get_logger().info(
-                        f'Published IC: lat={ic_msg.latitude_rad:.6f} '
-                        f'lon={ic_msg.longitude_rad:.6f} alt={ic_msg.altitude_msl_m:.1f}m '
-                        f'hdg={ic_msg.heading_rad:.3f}rad spd={ic_msg.airspeed_ms:.1f}m/s')
+                        f'[IC] set_departure: lat={ic_msg.latitude_rad * 180/_m.pi:.5f}° '
+                        f'lon={ic_msg.longitude_rad * 180/_m.pi:.5f}° alt={ic_msg.altitude_msl_m:.1f}m '
+                        f'hdg={ic_msg.heading_rad * 180/_m.pi:.1f}° spd={ic_msg.airspeed_ms:.1f}m/s '
+                        f'config={ic_msg.configuration}')
 
             except json.JSONDecodeError:
                 pass

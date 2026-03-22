@@ -84,11 +84,23 @@ public:
       "/sim/cigi/hat_responses", 10,
       [this](const sim_msgs::msg::HatHotResponse::SharedPtr msg) {
         if (msg->valid && !msg->point_name.empty()) {
-          // Ignore HOT responses in the first second after IC — they're from the old position
+          // Ignore HOT responses in the first 500ms after IC — they're from the old position
           if (pending_ic_) {
             auto age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
               std::chrono::steady_clock::now() - pending_ic_time_).count();
-            if (age_ms < 500) return;  // discard stale pipeline data
+            if (age_ms < 500) {
+              RCLCPP_INFO(this->get_logger(),
+                "[HOT] DISCARD point=%s hot=%.1fm (age=%ldms < 500ms, stale)",
+                msg->point_name.c_str(), msg->hot, age_ms);
+              return;
+            }
+            RCLCPP_INFO(this->get_logger(),
+              "[HOT] ACCEPT point=%s hot=%.1fm (age=%ldms)",
+              msg->point_name.c_str(), msg->hot, age_ms);
+          } else {
+            RCLCPP_DEBUG(this->get_logger(),
+              "[HOT] point=%s hot=%.1fm (no pending IC)",
+              msg->point_name.c_str(), msg->hot);
           }
           terrain_hot_[msg->point_name] = msg->hot;
           last_cigi_hot_time_ = std::chrono::steady_clock::now();
@@ -120,8 +132,13 @@ public:
       "/sim/initial_conditions", 10,
       [this](const sim_msgs::msg::InitialConditions::SharedPtr msg) {
         if (!adapter_) return;
-        RCLCPP_INFO(this->get_logger(), "Applying initial conditions: config=%s",
-                    msg->configuration.c_str());
+        double lat_deg = msg->latitude_rad * 180.0 / M_PI;
+        double lon_deg = msg->longitude_rad * 180.0 / M_PI;
+        RCLCPP_INFO(this->get_logger(),
+          "[IC] lat=%.5f° lon=%.5f° alt=%.1fm hdg=%.1f° spd=%.1fm/s config=%s",
+          lat_deg, lon_deg, msg->altitude_msl_m,
+          msg->heading_rad * 180.0 / M_PI, msg->airspeed_ms,
+          msg->configuration.c_str());
 
         // Clear stale terrain data
         terrain_hot_.clear();
@@ -335,10 +352,19 @@ public:
         // Update JSBSim terrain elevation from HOT data when near ground
         update_terrain_elevation();
 
-        // IC terrain refinement: CIGI HOT preferred, SRTM fallback after 2s
+        // IC terrain refinement: CIGI HOT preferred, SRTM 30s fallback
         if (pending_ic_) {
           auto age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - pending_ic_time_).count();
+
+          // Log progress every 5 seconds
+          if (age_ms > 0 && (age_ms / 5000) != ((age_ms - 20) / 5000)) {
+            RCLCPP_INFO(this->get_logger(),
+              "[REPOSITION] waiting: age=%.1fs hot_count=%zu cigi_refined=%s srtm_applied=%s",
+              age_ms / 1000.0, terrain_hot_.size(),
+              ic_cigi_refined_ ? "true" : "false",
+              ic_srtm_applied_ ? "true" : "false");
+          }
 
           // CIGI HOT: apply when responses received (>200ms for IG to respond)
           if (!ic_cigi_refined_ && !terrain_hot_.empty() && age_ms >= 1000) {
