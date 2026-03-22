@@ -494,7 +494,12 @@ private:
     auto cigi_age = std::chrono::duration_cast<std::chrono::milliseconds>(
       now - last_cigi_hot_time_).count();
 
-    if (!terrain_hot_.empty() && cigi_age < 2000) {
+    if (pending_ic_) {
+      // Repositioning in progress — don't change terrain source indicator
+      // Keep showing whatever was last valid (avoids brief SRTM flicker)
+      msg.source = terrain_source_;
+      msg.description = "waiting for terrain...";
+    } else if (!terrain_hot_.empty() && cigi_age < 2000) {
       // Fresh CIGI HOT data flowing
       msg.source = sim_msgs::msg::TerrainSource::SOURCE_CIGI;
       msg.description = "CIGI HOT (" + std::to_string(terrain_hot_.size()) + " points)";
