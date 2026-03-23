@@ -165,8 +165,8 @@ simulator_framework/
 
 ```
 INIT → READY → RUNNING ↔ FROZEN → RESETTING → READY
-                                        ↓
-                                    SHUTDOWN
+         ↓                            ↓
+       FROZEN (reposition)        SHUTDOWN
 ```
 
 - Loads aircraft config YAML on startup (search path: parameter → `src/aircraft/<id>/config/config.yaml` → installed share)
@@ -175,8 +175,9 @@ INIT → READY → RUNNING ↔ FROZEN → RESETTING → READY
 - Heartbeat monitoring: 2-second timeout, auto-freeze on required node loss
 - RESETTING state: 100ms wall timer before transitioning to READY (gives nodes time to receive IC broadcast)
 - Repositioning: CMD_REPOSITION → FROZEN + `reposition_active` flag → broadcast IC → wait for
-  `/sim/terrain/ready` (max 15s timeout) → return to previous state. No separate REPOSITIONING state.
+  `/sim/terrain/ready` → return to previous state. No separate REPOSITIONING state.
   Rejects INIT, SHUTDOWN, RESETTING states.
+  Timeouts: sim_manager 15s (overall), FMA pending_ic_ 30s (terrain loading).
 
 ---
 
@@ -202,8 +203,7 @@ public:
 
 **JSBSim notes:**
 - Uses wall timer (not sim timer) for its 50Hz update loop — drives JSBSim independently
-- Default IC: EBBR rwy 25L, airborne_clean at 2500ft / 90kt / HDG 040°
-- Simple PID autopilot auto-engages on airborne_clean IC for pipeline testing
+- Default IC: EBBR rwy 25L, on ground, engine running at idle (ready_for_takeoff)
 - Engine start uses `propulsion/set-running` (not per-engine — initializes magnetos correctly)
 - FlightModelState carries position in ECG (lat/lon/alt) AND ECEF (x/y/z); velocity in NED, Body, and ECEF frames
 
@@ -266,8 +266,8 @@ All topics use `snake_case`. No abbreviations unless universally understood (e.g
 | `/sim/navigation/state` | NavigationState | sim_navigation | Onboard receiver outputs: VOR, ILS, GPS, ADF, DME, TACAN |
 | `/sim/failures/active` | FailureList | sim_failures | Broadcast to all nodes |
 | `/sim/alerts` | SimAlert | any node | SEVERITY_INFO/WARN/CRITICAL alerts to IOS |
-| `/sim/cigi/host_to_ig` | CigiPacket | cigi_bridge | Host → IG packets |
-| `/sim/cigi/ig_to_host` | CigiPacket | cigi_bridge | IG → Host packets |
+| `/sim/cigi/hat_responses` | HatHotResponse | cigi_bridge | HOT terrain elevation per gear point |
+| `/sim/cigi/ig_status` | std_msgs/UInt8 | cigi_bridge | SOF IG Status (0=Standby, 2=Operate) |
 
 ### Diagnostics topics
 
