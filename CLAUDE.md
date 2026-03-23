@@ -268,6 +268,8 @@ All topics use `snake_case`. No abbreviations unless universally understood (e.g
 | `/sim/alerts` | SimAlert | any node | SEVERITY_INFO/WARN/CRITICAL alerts to IOS |
 | `/sim/cigi/hat_responses` | HatHotResponse | cigi_bridge | HOT terrain elevation per gear point |
 | `/sim/cigi/ig_status` | std_msgs/UInt8 | cigi_bridge | SOF IG Status (0=Standby, 2=Operate) |
+| `/sim/cigi/host_to_ig` | CigiPacket | cigi_bridge | Host → IG packets (planned — recording/debug) |
+| `/sim/cigi/ig_to_host` | CigiPacket | cigi_bridge | IG → Host packets (planned — recording/debug) |
 
 ### Diagnostics topics
 
