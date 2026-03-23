@@ -176,6 +176,7 @@ INIT → READY → RUNNING ↔ FROZEN → RESETTING → READY
 - RESETTING state: 100ms wall timer before transitioning to READY (gives nodes time to receive IC broadcast)
 - Repositioning: CMD_REPOSITION → FROZEN + `reposition_active` flag → broadcast IC → wait for
   `/sim/terrain/ready` (max 15s timeout) → return to previous state. No separate REPOSITIONING state.
+  Rejects INIT, SHUTDOWN, RESETTING states.
 
 ---
 
@@ -205,6 +206,13 @@ public:
 - Simple PID autopilot auto-engages on airborne_clean IC for pipeline testing
 - Engine start uses `propulsion/set-running` (not per-engine — initializes magnetos correctly)
 - FlightModelState carries position in ECG (lat/lon/alt) AND ECEF (x/y/z); velocity in NED, Body, and ECEF frames
+
+**Terrain refinement on reposition:**
+- IC arrives → apply to JSBSim (runway DB altitude) → set `pending_ic_` → wait for CIGI HOT
+- HOT arrives (from cigi_bridge, gated by IG Status Operate) → `refine_terrain_altitude()` adjusts altitude + terrain
+- `refine_terrain_altitude` uses `RunIC()` with cockpit state save/restore (avoids SetAltitudeASL cache issue)
+- `pending_ic_` gates FDM stepping — JSBSim does not `step()` while waiting for terrain
+- 30s timeout: if no CIGI HOT arrives, clear `pending_ic_` and accept runway DB altitude
 
 **Publishes:** `/sim/flight_model/state` (FlightModelState — position, attitude, velocities, accelerations, aero forces, WoW)
 
@@ -466,6 +474,11 @@ Core framework package. Ground navaid environment node.
 - Data files installed to `share/navaid_sim/data/`
 - SRTM terrain LOS checks on all VHF receivers
 - Startup log: count of VORs, ILS, NDBs, DMEs, markers loaded + source file
+- Airport DB: apt.dat (xp12 format, matches X-Plane visual scenery). Provides runway
+  threshold lat/lon, displaced threshold (metres), airport elevation. ARINC-424 (euramec.pc)
+  also supported — has per-runway-end elevation (feet) and displaced threshold (feet→metres).
+- IOS position panel: ground placement offsets displaced_threshold + 30m along runway heading
+  to place aircraft past the piano bar markings
 
 ---
 
