@@ -171,6 +171,10 @@ private:
   // Reset timer
   rclcpp::TimerBase::SharedPtr reset_timer_;
 
+  // ── Freeze toggles (independent of FROZEN state machine) ─────────────────
+  bool freeze_position_ = false;
+  bool freeze_fuel_     = false;
+
   // ── Reposition (FROZEN + flag, no separate state) ───────────────────────
   bool    reposition_pending_    = false;
   uint8_t pre_reposition_state_  = sim_msgs::msg::SimState::STATE_READY;
@@ -397,6 +401,8 @@ private:
 
       case C::CMD_RESET:
         reposition_pending_ = false;  // cancel any in-progress reposition
+        freeze_position_ = false;
+        freeze_fuel_ = false;
         if (transition_to(S::STATE_RESETTING)) {
           begin_reset();
         }
@@ -455,6 +461,18 @@ private:
         break;
       }
 
+      case C::CMD_FREEZE_POSITION:
+        freeze_position_ = !freeze_position_;
+        RCLCPP_INFO(this->get_logger(), "Freeze position: %s", freeze_position_ ? "ON" : "OFF");
+        publish_state();
+        break;
+
+      case C::CMD_FREEZE_FUEL:
+        freeze_fuel_ = !freeze_fuel_;
+        RCLCPP_INFO(this->get_logger(), "Freeze fuel: %s", freeze_fuel_ ? "ON" : "OFF");
+        publish_state();
+        break;
+
       case C::CMD_SHUTDOWN:
         transition_to(S::STATE_SHUTDOWN);
         RCLCPP_INFO(this->get_logger(), "Shutdown requested — exiting");
@@ -489,6 +507,10 @@ private:
     if (!reposition_pending_) {
       pre_reposition_state_ = state_;
     }
+
+    // Clear freeze toggles — reposition overrides them
+    freeze_position_ = false;
+    freeze_fuel_ = false;
 
     // Freeze the sim
     if (state_ != S::STATE_FROZEN) {
@@ -767,6 +789,8 @@ private:
     msg.sim_time_sec = sim_time_sec_;
     msg.time_scale   = static_cast<float>(time_scale_);
     msg.reposition_active = reposition_pending_;
+    msg.freeze_position   = freeze_position_;
+    msg.freeze_fuel       = freeze_fuel_;
     state_pub_->publish(msg);
   }
 

@@ -2031,3 +2031,10 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - AFFECTED CODE: JSBSimAdapter (add RAD_TO_DEG), cigi_bridge (remove RAD_TO_DEG), ios_backend (remove 180/pi), navigation_node (passthrough), navaid_sim (boundary conversion), PositionPanel.jsx (remove DEG2RAD on IC).
 - AFFECTED CONFIG: c172/ec135 config.yaml default_ic lat/lon now in degrees.
 - NOTE: Attitude angles (roll_rad, pitch_rad, true_heading_rad, heading_rad) remain in radians. Separate decision pending.
+
+## 2026-03-24 — 22:30:00 - Claude Code
+- DECIDED: Freeze Position + Freeze Fuel toggles added as independent flags on SimState (bool freeze_position, bool freeze_fuel). CMD_FREEZE_POSITION=12, CMD_FREEZE_FUEL=13 toggle in sim_manager. Independent of FROZEN state machine — work only while RUNNING. CMD_RESET and CMD_REPOSITION clear both.
+- DECIDED: Freeze position implementation: capture lat/lon/alt on rising edge, let JSBSim step() normally, write frozen position back via property tree after step() + zero velocities. JSBSim computes aero/engines each frame but position resets before publish.
+- DECIDED: Freeze fuel implementation: gate fuel_node update() on freeze_fuel flag (same pattern as existing is_frozen_ gate). No fuel drain while active.
+- REASON: Instructor needs independent position/fuel freeze for training scenarios — hold position while monitoring engine behavior, or fly without fuel penalty.
+- AFFECTS: SimState.msg, SimCommand.msg, sim_manager, flight_model_adapter, fuel_node, ios_backend, ActionBar.jsx, useSimStore.js

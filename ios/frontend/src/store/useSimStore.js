@@ -28,6 +28,8 @@ export const useSimStore = create((set, get) => ({
   simState: 'UNKNOWN',
   simTimeSec: 0,
   aircraftId: 'c172',
+  freezePosition: false,
+  freezeFuel: false,
 
   // FDM
   fdm: {
@@ -199,6 +201,13 @@ export const useSimStore = create((set, get) => ({
 
   clearTrack: () => set({ track: [] }),
 
+  sendToggle: (type) => {
+    const { ws, wsConnected } = get()
+    if (!wsConnected || !ws) return false
+    ws.send(JSON.stringify({ type }))
+    return true
+  },
+
   sendAvionics: (data) => {
     const { ws, wsConnected } = get()
     if (!wsConnected || !ws) return false
@@ -310,6 +319,8 @@ export const useSimStore = create((set, get) => ({
               simState: newState,
               simTimeSec: msg.sim_time_sec ?? s.simTimeSec,
               aircraftId: msg.aircraft_id ?? s.aircraftId,
+              freezePosition: msg.freeze_position ?? s.freezePosition,
+              freezeFuel: msg.freeze_fuel ?? s.freezeFuel,
             }
             // Clear track on reset
             if (newState === 'RESETTING' || newState === 'READY') {

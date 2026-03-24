@@ -110,6 +110,7 @@ public:
       [this](const sim_msgs::msg::SimState::SharedPtr msg) {
         uint8_t prev = sim_state_;
         sim_state_ = msg->state;
+        freeze_position_ = msg->freeze_position;
         if (prev != sim_state_) {
           RCLCPP_INFO(this->get_logger(), "Sim state: %u → %u", prev, sim_state_);
         }
@@ -329,11 +330,33 @@ public:
           }
         }
 
+        // Freeze position: capture on rising edge, write back after step
+        if (freeze_position_ && !prev_freeze_position_) {
+          frozen_lat_gc_deg_ = adapter_->get_property("position/lat-gc-deg");
+          frozen_lon_gc_deg_ = adapter_->get_property("position/long-gc-deg");
+          frozen_alt_sl_ft_  = adapter_->get_property("position/h-sl-ft");
+          RCLCPP_INFO(this->get_logger(),
+            "[FRZ POS] captured: lat_gc=%.8f lon=%.8f alt=%.1fft",
+            frozen_lat_gc_deg_, frozen_lon_gc_deg_, frozen_alt_sl_ft_);
+        }
+        prev_freeze_position_ = freeze_position_;
+
         if (should_step) {
           if (!adapter_->step(dt_sec)) {
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(),
               5000, "Flight model step() returned false");
           }
+        }
+
+        // Write frozen position back after step — JSBSim computed
+        // engines/aero this frame, now slam position back
+        if (freeze_position_ && should_step) {
+          adapter_->set_property("position/lat-gc-deg", frozen_lat_gc_deg_);
+          adapter_->set_property("position/long-gc-deg", frozen_lon_gc_deg_);
+          adapter_->set_property("position/h-sl-ft", frozen_alt_sl_ft_);
+          adapter_->set_property("velocities/u-fps", 0.0);
+          adapter_->set_property("velocities/v-fps", 0.0);
+          adapter_->set_property("velocities/w-fps", 0.0);
         }
 
         auto state = adapter_->get_state();
@@ -505,6 +528,11 @@ private:
   std::unique_ptr<flight_model_adapter::IFlightModelAdapter> adapter_;
   flight_model_adapter::FlightModelCapabilities caps_;
   uint8_t sim_state_{255};
+  bool freeze_position_ = false;
+  bool prev_freeze_position_ = false;
+  double frozen_lat_gc_deg_ = 0.0;
+  double frozen_lon_gc_deg_ = 0.0;
+  double frozen_alt_sl_ft_  = 0.0;
 
   // ── Terrain ───────────────────────────────────────────────────────────
   std::map<std::string, double> terrain_hot_;  // point_name → terrain MSL (m)

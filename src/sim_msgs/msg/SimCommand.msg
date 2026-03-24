@@ -15,6 +15,8 @@ uint8 CMD_ACTIVATE_NODE    = 9   # payload_json: {"node_name": "sim_fuel"}
 uint8 CMD_RESET_NODE       = 10  # payload_json: {"node_name": "sim_fuel"}
                                  # chains: deactivate->cleanup->configure->activate
 uint8 CMD_REPOSITION       = 11  # payload_json: IC fields — triggers FROZEN + terrain wait + return to prev state
+uint8 CMD_FREEZE_POSITION  = 12  # toggle: hold lat/lon/alt while sim keeps running
+uint8 CMD_FREEZE_FUEL      = 13  # toggle: hold fuel quantities constant
 
 std_msgs/Header header
 uint8 command            # one of the CMD_* constants above

@@ -46,7 +46,7 @@ function ActionBtn({ label, style, disabled, onClick, isPending }) {
 }
 
 export default function ActionBar() {
-  const { simState, wsConnected, wsReconnectCount, sendCommand, requestAction, pendingAction } = useSimStore()
+  const { simState, wsConnected, wsReconnectCount, sendCommand, sendToggle, requestAction, pendingAction, freezePosition, freezeFuel } = useSimStore()
   const [resetOpen, setResetOpen] = useState(false)
   const [simOpen, setSimOpen] = useState(false)
   const resetRef = useRef(null)
@@ -73,6 +73,23 @@ export default function ActionBar() {
         disabled={runDisabled}
         style={{ minWidth: 140, background: '#1a4731', color: '#3fb950', border: '1px solid #2d6a4f' }}
         onClick={() => sendCommand(CMD.RUN)}
+      />
+
+      <ActionBtn
+        label="FRZ POS"
+        disabled={!wsConnected || simState !== 'RUNNING'}
+        style={freezePosition
+          ? { minWidth: 110, background: '#0a3a3a', color: '#39d0d8', border: '1px solid #39d0d8' }
+          : { minWidth: 110, background: '#1c2333', color: '#64748b', border: '1px solid #1e293b' }}
+        onClick={() => sendToggle('freeze_position')}
+      />
+      <ActionBtn
+        label="FRZ FUEL"
+        disabled={!wsConnected || simState !== 'RUNNING'}
+        style={freezeFuel
+          ? { minWidth: 110, background: '#0a3a3a', color: '#39d0d8', border: '1px solid #39d0d8' }
+          : { minWidth: 110, background: '#1c2333', color: '#64748b', border: '1px solid #1e293b' }}
+        onClick={() => sendToggle('freeze_fuel')}
       />
 
       {/* RESET dropdown */}

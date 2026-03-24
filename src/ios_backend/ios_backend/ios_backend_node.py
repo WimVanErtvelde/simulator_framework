@@ -305,6 +305,8 @@ class IosBackendNode(Node):
             'type': 'sim_state',
             'state': state_names.get(msg.state, 'UNKNOWN'),
             'reposition_active': bool(msg.reposition_active),
+            'freeze_position': bool(msg.freeze_position),
+            'freeze_fuel': bool(msg.freeze_fuel),
             'aircraft_id': msg.aircraft_id,
             'sim_time_sec': float(msg.sim_time_sec),
             'time_scale': float(msg.time_scale),
@@ -1295,6 +1297,18 @@ async def websocket_endpoint(websocket: WebSocket):
                 elif msg.get('type') == 'get_runways' and ros_node:
                     asyncio.create_task(
                         _handle_get_runways(websocket, msg.get('icao', '')))
+
+                elif msg.get('type') == 'freeze_position' and ros_node:
+                    cmd_msg = SimCommand()
+                    cmd_msg.header.stamp = ros_node.get_clock().now().to_msg()
+                    cmd_msg.command = SimCommand.CMD_FREEZE_POSITION
+                    ros_node._cmd_pub.publish(cmd_msg)
+
+                elif msg.get('type') == 'freeze_fuel' and ros_node:
+                    cmd_msg = SimCommand()
+                    cmd_msg.header.stamp = ros_node.get_clock().now().to_msg()
+                    cmd_msg.command = SimCommand.CMD_FREEZE_FUEL
+                    ros_node._cmd_pub.publish(cmd_msg)
 
                 elif msg.get('type') == 'set_departure' and ros_node:
                     # Reposition via CMD_REPOSITION - sim_manager owns the workflow

@@ -66,6 +66,7 @@ public:
       "/sim/state", 10,
       [this](sim_msgs::msg::SimState::SharedPtr msg) {
         is_frozen_ = (msg->state == sim_msgs::msg::SimState::STATE_FROZEN);
+        freeze_fuel_ = msg->freeze_fuel;
       });
 
     panel_sub_ = this->create_subscription<sim_msgs::msg::PanelControls>(
@@ -175,7 +176,7 @@ public:
     update_timer_ = this->create_wall_timer(
       std::chrono::milliseconds(period_ms),
       [this, dt_sec]() {
-        if (is_frozen_) {
+        if (is_frozen_ || freeze_fuel_) {
           auto state = model_->get_state();
           overlay_config_fields(state);
           state.header.stamp = this->now();
@@ -335,6 +336,7 @@ private:
   std::vector<std::string> active_failures_;
   bool flight_model_received_ = false;
   bool is_frozen_ = false;
+  bool freeze_fuel_ = false;
 
   // Fuel config (from YAML, constant after configure)
   float density_kg_per_liter_ = 0.72f;
