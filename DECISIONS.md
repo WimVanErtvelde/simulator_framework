@@ -50,10 +50,8 @@
 - `sim_hydraulic`, `sim_ice_protection`, `sim_pressurization` — heartbeat only, no solver
 - Virtual cockpit avionics page — placeholder
 
-### Known bugs (see bugs.md)
-- #7: finish_reposition() doesn't check node health before resuming RUNNING
-- #12: Hardcoded c172 config path in cigi_bridge (HOT fails for other aircraft)
-- #13: reload_node() doesn't check lifecycle transition success
+### Known bugs (see BUGS.md)
+No open bugs.
 
 ### Not yet implemented
 - IOS: COM/NAV freq entry, flight departure/arrival graphs, freeze pos/fuel toggles, debrief
@@ -2017,3 +2015,10 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - DECIDED: **apt.dat displaced threshold is in metres** — AirportDatabase.cpp was multiplying by FT2M (treating metres as feet), shrinking the value to 30%. Fixed: no conversion for apt.dat (already metres). ARINC-424 loader correctly uses FT2M (stores feet).
 - DECIDED: **Ground placement: displaced_threshold + 30m offset** along runway heading. The 30m clears the piano bar markings — apt.dat threshold coordinates are at the physical pavement end, not at the markings. For runways with displaced thresholds, the offset also advances past the displaced area.
 - AFFECTS: cigi_bridge (hat_request_tracker), flight_model_adapter, AirportDatabase.cpp, PositionPanel.jsx
+
+## 2026-03-24 — Claude Code
+
+- FIXED: Bug #7 — finish_reposition() now checks required node health before resuming RUNNING. Stays FROZEN + SimAlert if any node is LOST/OFFLINE.
+- FIXED: Bug #12 — cigi_bridge uses aircraft_id parameter instead of hardcoded c172 config path.
+- FIXED: Bug #13 — reload_node() checks each lifecycle transition return code, stops chain and logs error on failure.
+- AFFECTS: sim_manager_node.cpp, cigi_host_node.cpp, BUGS.md
