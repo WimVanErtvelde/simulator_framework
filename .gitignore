@@ -58,3 +58,5 @@ NavSim/
 
 # Reference documents (ICDs, specs — not for version control)
 references/
+src/core/navaid_sim/data/apt.dat
+src/core/navaid_sim/data/euramec.pc
