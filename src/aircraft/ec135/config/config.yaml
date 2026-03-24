@@ -13,8 +13,8 @@ aircraft:
     - sim_navigation
 
 initial_conditions:
-  latitude_rad: 0.9145218    # ~52.3 deg N (EHAM)
-  longitude_rad: 0.0777841   # ~4.46 deg E
+  latitude_deg: 52.3          # EHAM
+  longitude_deg: 4.46
   altitude_msl_m: -3.35      # on ground at Schiphol (-11 ft)
   heading_rad: 0.6109        # ~35 deg
   airspeed_ms: 0.0

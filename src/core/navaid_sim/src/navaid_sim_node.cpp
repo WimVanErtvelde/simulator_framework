@@ -164,8 +164,8 @@ public:
           resp->elevation_msl_m = 0.0;
           return;
         }
-        double lat_deg = req->latitude_rad / DEG_TO_RAD;
-        double lon_deg = req->longitude_rad / DEG_TO_RAD;
+        double lat_deg = req->latitude_deg;
+        double lon_deg = req->longitude_deg;
         if (task_->getTerrainModel().hasTile(lat_deg, lon_deg)) {
           resp->elevation_msl_m = task_->getTerrainModel().getElevationM(lat_deg, lon_deg);
           resp->valid = true;
@@ -398,8 +398,8 @@ private:
     if (!flight_model_received_ || !task_) return;
 
     // Feed aircraft position to the nav model
-    float lat_deg = static_cast<float>(last_flight_model_state_.latitude_rad / DEG_TO_RAD);
-    float lon_deg = static_cast<float>(last_flight_model_state_.longitude_rad / DEG_TO_RAD);
+    float lat_deg = static_cast<float>(last_flight_model_state_.latitude_deg);
+    float lon_deg = static_cast<float>(last_flight_model_state_.longitude_deg);
     float alt_ft  = static_cast<float>(last_flight_model_state_.altitude_msl_m * 3.28084);
     float hdg_deg = static_cast<float>(last_flight_model_state_.true_heading_rad / DEG_TO_RAD);
     model_->setPosition(lat_deg, lon_deg, alt_ft, hdg_deg);
@@ -590,20 +590,20 @@ private:
     msg.city = apt.city;
     msg.country = apt.country;
     msg.iata = apt.iata;
-    msg.arp_lat_rad = apt.arp_lat_rad;
-    msg.arp_lon_rad = apt.arp_lon_rad;
+    msg.arp_lat_deg = apt.arp_lat_rad / DEG_TO_RAD;
+    msg.arp_lon_deg = apt.arp_lon_rad / DEG_TO_RAD;
     msg.elevation_m = apt.elevation_m;
     msg.transition_altitude_ft = apt.transition_altitude_ft;
     for (auto & r : apt.runways) {
       sim_msgs::msg::Runway rmsg;
       rmsg.designator_end1 = r.end1.designator;
-      rmsg.threshold_lat_rad_end1 = r.end1.threshold_lat_rad;
-      rmsg.threshold_lon_rad_end1 = r.end1.threshold_lon_rad;
+      rmsg.threshold_lat_deg_end1 = r.end1.threshold_lat_rad / DEG_TO_RAD;
+      rmsg.threshold_lon_deg_end1 = r.end1.threshold_lon_rad / DEG_TO_RAD;
       rmsg.heading_deg_end1 = r.end1.heading_deg;
       rmsg.displaced_threshold_m_end1 = r.end1.displaced_threshold_m;
       rmsg.designator_end2 = r.end2.designator;
-      rmsg.threshold_lat_rad_end2 = r.end2.threshold_lat_rad;
-      rmsg.threshold_lon_rad_end2 = r.end2.threshold_lon_rad;
+      rmsg.threshold_lat_deg_end2 = r.end2.threshold_lat_rad / DEG_TO_RAD;
+      rmsg.threshold_lon_deg_end2 = r.end2.threshold_lon_rad / DEG_TO_RAD;
       rmsg.heading_deg_end2 = r.end2.heading_deg;
       rmsg.displaced_threshold_m_end2 = r.end2.displaced_threshold_m;
       rmsg.width_m = r.width_m;

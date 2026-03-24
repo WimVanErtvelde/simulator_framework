@@ -1,5 +1,5 @@
-float64 latitude_rad
-float64 longitude_rad
+float64 latitude_deg
+float64 longitude_deg
 ---
 float64 elevation_msl_m
 bool valid

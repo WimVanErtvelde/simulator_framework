@@ -3,8 +3,8 @@
 # Broadcast during RESETTING state so all nodes can reset to these values
 
 std_msgs/Header header
-float64 latitude_rad
-float64 longitude_rad
+float64 latitude_deg
+float64 longitude_deg
 float64 altitude_msl_m
 float64 heading_rad
 float64 bank_rad           # initial roll angle (positive = right bank)

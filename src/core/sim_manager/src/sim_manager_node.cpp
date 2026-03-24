@@ -30,8 +30,8 @@ using namespace std::chrono_literals;
 // ---------------------------------------------------------------------------
 
 struct InitialConditions {
-  double latitude_rad      = 0.0;
-  double longitude_rad     = 0.0;
+  double latitude_deg      = 0.0;
+  double longitude_deg     = 0.0;
   double altitude_msl_m    = 0.0;
   double heading_rad       = 0.0;
   double bank_rad          = 0.0;
@@ -248,8 +248,8 @@ private:
       // Load default IC from config
       if (config["initial_conditions"]) {
         auto ic = config["initial_conditions"];
-        if (ic["latitude_rad"])     current_ic_.latitude_rad     = ic["latitude_rad"].as<double>();
-        if (ic["longitude_rad"])    current_ic_.longitude_rad    = ic["longitude_rad"].as<double>();
+        if (ic["latitude_deg"])     current_ic_.latitude_deg     = ic["latitude_deg"].as<double>();
+        if (ic["longitude_deg"])    current_ic_.longitude_deg    = ic["longitude_deg"].as<double>();
         if (ic["altitude_msl_m"])   current_ic_.altitude_msl_m   = ic["altitude_msl_m"].as<double>();
         if (ic["heading_rad"])      current_ic_.heading_rad      = ic["heading_rad"].as<double>();
         if (ic["bank_rad"])         current_ic_.bank_rad         = ic["bank_rad"].as<double>();
@@ -502,8 +502,8 @@ private:
 
     RCLCPP_INFO(this->get_logger(),
       "Reposition started — lat=%.4f° lon=%.4f° (will return to %s)",
-      current_ic_.latitude_rad * 180.0 / M_PI,
-      current_ic_.longitude_rad * 180.0 / M_PI,
+      current_ic_.latitude_deg,
+      current_ic_.longitude_deg,
       state_name(pre_reposition_state_));
 
     // Publish state immediately so IOS sees reposition_active
@@ -550,8 +550,8 @@ private:
     if (payload.empty()) return;
     try {
       auto j = json::parse(payload);
-      if (j.contains("latitude_rad"))     current_ic_.latitude_rad     = j["latitude_rad"].get<double>();
-      if (j.contains("longitude_rad"))    current_ic_.longitude_rad    = j["longitude_rad"].get<double>();
+      if (j.contains("latitude_deg"))     current_ic_.latitude_deg     = j["latitude_deg"].get<double>();
+      if (j.contains("longitude_deg"))    current_ic_.longitude_deg    = j["longitude_deg"].get<double>();
       if (j.contains("altitude_msl_m"))   current_ic_.altitude_msl_m   = j["altitude_msl_m"].get<double>();
       if (j.contains("heading_rad"))      current_ic_.heading_rad      = j["heading_rad"].get<double>();
       if (j.contains("bank_rad"))         current_ic_.bank_rad         = j["bank_rad"].get<double>();
@@ -571,8 +571,8 @@ private:
   {
     auto msg = sim_msgs::msg::InitialConditions();
     msg.header.stamp = this->now();
-    msg.latitude_rad     = current_ic_.latitude_rad;
-    msg.longitude_rad    = current_ic_.longitude_rad;
+    msg.latitude_deg     = current_ic_.latitude_deg;
+    msg.longitude_deg    = current_ic_.longitude_deg;
     msg.altitude_msl_m   = current_ic_.altitude_msl_m;
     msg.heading_rad      = current_ic_.heading_rad;
     msg.bank_rad         = current_ic_.bank_rad;
@@ -585,8 +585,8 @@ private:
     ic_pub_->publish(msg);
     RCLCPP_INFO(this->get_logger(),
       "IC broadcast: lat=%.4f° lon=%.4f° alt=%.1fm hdg=%.1f° config=%s",
-      current_ic_.latitude_rad * 180.0 / M_PI,
-      current_ic_.longitude_rad * 180.0 / M_PI,
+      current_ic_.latitude_deg,
+      current_ic_.longitude_deg,
       current_ic_.altitude_msl_m,
       current_ic_.heading_rad * 180.0 / M_PI,
       current_ic_.configuration.c_str());
@@ -636,8 +636,8 @@ private:
 
       if (scenario["initial_conditions"]) {
         auto ic = scenario["initial_conditions"];
-        if (ic["latitude_rad"])     current_ic_.latitude_rad     = ic["latitude_rad"].as<double>();
-        if (ic["longitude_rad"])    current_ic_.longitude_rad    = ic["longitude_rad"].as<double>();
+        if (ic["latitude_deg"])     current_ic_.latitude_deg     = ic["latitude_deg"].as<double>();
+        if (ic["longitude_deg"])    current_ic_.longitude_deg    = ic["longitude_deg"].as<double>();
         if (ic["altitude_msl_m"])   current_ic_.altitude_msl_m   = ic["altitude_msl_m"].as<double>();
         if (ic["heading_rad"])      current_ic_.heading_rad      = ic["heading_rad"].as<double>();
         if (ic["bank_rad"])         current_ic_.bank_rad         = ic["bank_rad"].as<double>();

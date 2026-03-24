@@ -416,8 +416,8 @@ void CigiHostNode::send_cigi_frame()
         roll_deg    = static_cast<float>(fms->roll_rad  * RAD_TO_DEG);
         pitch_deg   = static_cast<float>(fms->pitch_rad * RAD_TO_DEG);
         yaw_deg     = static_cast<float>(fms->true_heading_rad * RAD_TO_DEG);
-        lat_deg     = fms->latitude_rad  * RAD_TO_DEG;
-        lon_deg     = fms->longitude_rad * RAD_TO_DEG;
+        lat_deg     = fms->latitude_deg;
+        lon_deg     = fms->longitude_deg;
         alt_m       = fms->altitude_msl_m;
     }
 
@@ -488,8 +488,8 @@ void CigiHostNode::send_hot_requests()
         hot_frame_counter_ = 0;
     }
 
-    double ac_lat_rad = fms->latitude_rad;
-    double ac_lon_rad = fms->longitude_rad;
+    double ac_lat_rad = fms->latitude_deg * DEG_TO_RAD;
+    double ac_lon_rad = fms->longitude_deg * DEG_TO_RAD;
     double heading_rad = fms->true_heading_rad;
 
     // Build one UDP datagram with all HOT request packets
@@ -507,8 +507,8 @@ void CigiHostNode::send_hot_requests()
                            req_id, pt_lat_deg, pt_lon_deg);
 
         hat_tracker_.add_request(req_id,
-                                 pt_lat_deg * DEG_TO_RAD,
-                                 pt_lon_deg * DEG_TO_RAD,
+                                 pt_lat_deg,
+                                 pt_lon_deg,
                                  gp.name);
     }
 

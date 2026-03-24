@@ -156,8 +156,8 @@ private:
     // ── GPS1 (derived from FDM state) ──────────────────────────────────────
     if (flight_model_received_) {
       out.gps1_valid = true;
-      out.gps1_lat_deg = last_flight_model_state_.latitude_rad * RAD_TO_DEG;
-      out.gps1_lon_deg = last_flight_model_state_.longitude_rad * RAD_TO_DEG;
+      out.gps1_lat_deg = last_flight_model_state_.latitude_deg;
+      out.gps1_lon_deg = last_flight_model_state_.longitude_deg;
       out.gps1_alt_ft = static_cast<float>(last_flight_model_state_.altitude_msl_m * M_TO_FT);
       out.gps1_gs_kt = static_cast<float>(last_flight_model_state_.ground_speed_ms * MS_TO_KT);
       out.gps1_track_deg = static_cast<float>(last_flight_model_state_.ground_track_rad * RAD_TO_DEG);

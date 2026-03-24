@@ -14,8 +14,8 @@ aircraft:
     - sim_navigation
 
 initial_conditions:
-  latitude_rad: 0.8886045    # 50.9014 deg N (EBBR)
-  longitude_rad: 0.0782834   # 4.4844 deg E
+  latitude_deg: 50.9014       # EBBR
+  longitude_deg: 4.4844
   altitude_msl_m: 100.0    # approximate — on-ground overrides to terrain
   heading_rad: 0.6981        # 040 deg
   bank_rad: 0.0

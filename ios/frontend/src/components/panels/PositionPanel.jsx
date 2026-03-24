@@ -115,8 +115,8 @@ function RunwaySelector({ airport, selected, onSelect }) {
     if (rwy.designator_end1) {
       ends.push({
         designator: rwy.designator_end1,
-        lat_rad: rwy.threshold_lat_rad_end1,
-        lon_rad: rwy.threshold_lon_rad_end1,
+        lat_deg: rwy.threshold_lat_deg_end1,
+        lon_deg: rwy.threshold_lon_deg_end1,
         heading_deg: rwy.heading_deg_end1,
         displaced_m: rwy.displaced_threshold_m_end1,
         elevation_m: rwy.elevation_m || airport.elevation_m,
@@ -126,8 +126,8 @@ function RunwaySelector({ airport, selected, onSelect }) {
     if (rwy.designator_end2) {
       ends.push({
         designator: rwy.designator_end2,
-        lat_rad: rwy.threshold_lat_rad_end2,
-        lon_rad: rwy.threshold_lon_rad_end2,
+        lat_deg: rwy.threshold_lat_deg_end2,
+        lon_deg: rwy.threshold_lon_deg_end2,
         heading_deg: rwy.heading_deg_end2,
         displaced_m: rwy.displaced_threshold_m_end2,
         elevation_m: rwy.elevation_m || airport.elevation_m,
@@ -168,7 +168,7 @@ const POSITIONS = [
 
 function computePosition(rwy, airport, p) {
   const hdg = rwy.heading_deg * DEG2RAD
-  const cos_lat = Math.cos(rwy.lat_rad)
+  const cos_lat = Math.cos(rwy.lat_deg * DEG2RAD)
   const elev_m = rwy.elevation_m || airport.elevation_m || 0
   const alt_m = elev_m + p.altFt * FT2M
 
@@ -214,8 +214,8 @@ function computePosition(rwy, airport, p) {
   }
 
   return {
-    lat_rad: rwy.lat_rad + n_nm * NM_TO_DEG_LAT * DEG2RAD,
-    lon_rad: rwy.lon_rad + (e_nm * NM_TO_DEG_LAT * DEG2RAD) / cos_lat,
+    lat_deg: rwy.lat_deg + n_nm * NM_TO_DEG_LAT,
+    lon_deg: rwy.lon_deg + (e_nm * NM_TO_DEG_LAT) / cos_lat,
     alt_m,
     heading_rad: heading * DEG2RAD,
     airspeed_ms: p.kt * KT2MS,
@@ -295,8 +295,8 @@ export default function PositionPanel() {
   const handlePositionApply = () => {
     if (!pendingIC) return
     setDeparture({
-      lat_rad: pendingIC.lat_rad,
-      lon_rad: pendingIC.lon_rad,
+      lat_deg: pendingIC.lat_deg,
+      lon_deg: pendingIC.lon_deg,
       alt_m: pendingIC.alt_m,
       heading_rad: pendingIC.heading_rad,
       airspeed_ms: pendingIC.airspeed_ms,
@@ -328,9 +328,8 @@ export default function PositionPanel() {
             RUNWAY
           </div>
           <RunwaySelector airport={activeAirport} selected={depRunway} onSelect={(rwy) => {
-            const R2D = 180 / Math.PI
             console.log('[POS] runway selected:', rwy.designator,
-              'lat_deg=', rwy.lat_rad * R2D, 'lon_deg=', rwy.lon_rad * R2D,
+              'lat_deg=', rwy.lat_deg, 'lon_deg=', rwy.lon_deg,
               'hdg=', rwy.heading_deg)
             setDepRunway(rwy)
           }} />
@@ -347,7 +346,7 @@ export default function PositionPanel() {
           {pendingIC && (
             <div style={{ marginTop: 10 }}>
               <div style={{ fontSize: 10, color: '#475569', fontFamily: 'monospace', marginBottom: 6 }}>
-                {(pendingIC.lat_rad * 180 / Math.PI).toFixed(4)}° / {(pendingIC.lon_rad * 180 / Math.PI).toFixed(4)}°
+                {pendingIC.lat_deg.toFixed(4)}° / {pendingIC.lon_deg.toFixed(4)}°
                 &nbsp; {Math.round(pendingIC.alt_m * 3.28084)}ft
                 &nbsp; HDG {Math.round(pendingIC.heading_deg)}°
                 &nbsp; {Math.round(pendingIC.airspeed_ms * 1.94384)}kt

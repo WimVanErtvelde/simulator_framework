@@ -123,8 +123,8 @@ public:
 
         RCLCPP_INFO(this->get_logger(),
           "[IC] received: lat=%.5f° lon=%.5f° alt=%.1fm hdg=%.1f° config=%s",
-          msg->latitude_rad * 180.0 / M_PI,
-          msg->longitude_rad * 180.0 / M_PI,
+          msg->latitude_deg,
+          msg->longitude_deg,
           msg->altitude_msl_m,
           msg->heading_rad * 180.0 / M_PI,
           msg->configuration.c_str());

@@ -1,13 +1,13 @@
 # Runway data — two ends per physical runway strip
 string designator_end1            # "25L", "07R", "01", etc
-float64 threshold_lat_rad_end1
-float64 threshold_lon_rad_end1
+float64 threshold_lat_deg_end1
+float64 threshold_lon_deg_end1
 float64 heading_deg_end1          # magnetic heading
 float64 displaced_threshold_m_end1
 
 string designator_end2
-float64 threshold_lat_rad_end2
-float64 threshold_lon_rad_end2
+float64 threshold_lat_deg_end2
+float64 threshold_lon_deg_end2
 float64 heading_deg_end2
 float64 displaced_threshold_m_end2
 

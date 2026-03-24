@@ -258,8 +258,8 @@ class IosBackendNode(Node):
         import math as _m
         data = {
             'type': 'flight_model_state',
-            'lat': float(msg.latitude_rad) * 180.0 / _m.pi,
-            'lon': float(msg.longitude_rad) * 180.0 / _m.pi,
+            'lat': float(msg.latitude_deg),
+            'lon': float(msg.longitude_deg),
             'alt_ft_msl': float(msg.altitude_msl_m) * 3.28084,
             'ias_kt': float(msg.ias_ms) * 1.94384,
             'gnd_speed_kt': float(msg.ground_speed_ms) * 1.94384,
@@ -1066,13 +1066,13 @@ def _airport_msg_to_dict(apt):
     for r in apt.runways:
         runways.append({
             'designator_end1': r.designator_end1,
-            'threshold_lat_rad_end1': r.threshold_lat_rad_end1,
-            'threshold_lon_rad_end1': r.threshold_lon_rad_end1,
+            'threshold_lat_deg_end1': r.threshold_lat_deg_end1,
+            'threshold_lon_deg_end1': r.threshold_lon_deg_end1,
             'heading_deg_end1': r.heading_deg_end1,
             'displaced_threshold_m_end1': r.displaced_threshold_m_end1,
             'designator_end2': r.designator_end2,
-            'threshold_lat_rad_end2': r.threshold_lat_rad_end2,
-            'threshold_lon_rad_end2': r.threshold_lon_rad_end2,
+            'threshold_lat_deg_end2': r.threshold_lat_deg_end2,
+            'threshold_lon_deg_end2': r.threshold_lon_deg_end2,
             'heading_deg_end2': r.heading_deg_end2,
             'displaced_threshold_m_end2': r.displaced_threshold_m_end2,
             'width_m': r.width_m,
@@ -1086,8 +1086,8 @@ def _airport_msg_to_dict(apt):
         'city': apt.city,
         'country': apt.country,
         'iata': apt.iata,
-        'arp_lat_rad': apt.arp_lat_rad,
-        'arp_lon_rad': apt.arp_lon_rad,
+        'arp_lat_deg': apt.arp_lat_deg,
+        'arp_lon_deg': apt.arp_lon_deg,
         'elevation_m': apt.elevation_m,
         'transition_altitude_ft': apt.transition_altitude_ft,
         'runways': runways,
@@ -1302,8 +1302,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     airspeed_ms = float(msg.get('airspeed_ms', 0))
                     config = 'airborne_clean' if airspeed_ms > 1.0 else 'ready_for_takeoff'
                     payload = {
-                        'latitude_rad': float(msg.get('lat_rad', 0)),
-                        'longitude_rad': float(msg.get('lon_rad', 0)),
+                        'latitude_deg': float(msg.get('lat_deg', 0)),
+                        'longitude_deg': float(msg.get('lon_deg', 0)),
                         'altitude_msl_m': float(msg.get('alt_m', 0)),
                         'heading_rad': float(msg.get('heading_rad', 0)),
                         'airspeed_ms': airspeed_ms,
@@ -1315,8 +1315,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     cmd_msg.payload_json = json.dumps(payload)
                     ros_node._cmd_pub.publish(cmd_msg)
                     ros_node.get_logger().info(
-                        f'[REPOSITION] lat={payload["latitude_rad"] * 180/_m.pi:.5f} '
-                        f'lon={payload["longitude_rad"] * 180/_m.pi:.5f} alt={payload["altitude_msl_m"]:.1f}m '
+                        f'[REPOSITION] lat={payload["latitude_deg"]:.5f} '
+                        f'lon={payload["longitude_deg"]:.5f} alt={payload["altitude_msl_m"]:.1f}m '
                         f'hdg={payload["heading_rad"] * 180/_m.pi:.1f} '
                         f'config={config}')
             except json.JSONDecodeError:

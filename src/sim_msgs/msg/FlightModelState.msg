@@ -97,8 +97,8 @@ bool is_frozen
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Geodetic
-float64 latitude_rad        # geodetic latitude (positive North)
-float64 longitude_rad       # geodetic longitude (positive East)
+float64 latitude_deg        # geodetic latitude (positive North, degrees)
+float64 longitude_deg       # geodetic longitude (positive East, degrees)
 float64 altitude_msl_m      # altitude above mean sea level
 float64 altitude_agl_m      # altitude above ground level (terrain)
                              # [JSBSim position/h-agl-ft converted]

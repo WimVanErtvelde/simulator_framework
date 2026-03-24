@@ -198,9 +198,9 @@ void JSBSimAdapter::apply_initial_conditions(
   try {
     auto fgic = exec_->GetIC();
 
-    // Position (geodetic latitude — SetLatitudeDegIC is geocentric!)
-    fgic->SetGeodLatitudeDegIC(ic.latitude_rad / DEG_TO_RAD);
-    fgic->SetLongitudeDegIC(ic.longitude_rad / DEG_TO_RAD);
+    // Position — IC now carries degrees, JSBSim expects degrees
+    fgic->SetGeodLatitudeDegIC(ic.latitude_deg);
+    fgic->SetLongitudeDegIC(ic.longitude_deg);
     fgic->SetAltitudeASLFtIC(ic.altitude_msl_m / FT_TO_M);
 
     // Heading and attitude
@@ -396,8 +396,8 @@ sim_msgs::msg::FlightModelState JSBSimAdapter::get_state() const
   double alt_msl_ft = exec_->GetPropertyValue("position/h-sl-ft");
   double alt_agl_ft = exec_->GetPropertyValue("position/h-agl-ft");
 
-  state.latitude_rad = lat_rad;
-  state.longitude_rad = lon_rad;
+  state.latitude_deg = lat_rad * (180.0 / M_PI);
+  state.longitude_deg = lon_rad * (180.0 / M_PI);
   state.altitude_msl_m = alt_msl_ft * FT_TO_M;
   state.altitude_agl_m = alt_agl_ft * FT_TO_M;
 
