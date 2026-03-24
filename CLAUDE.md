@@ -594,6 +594,11 @@ NavigationState       computed instrument outputs (/sim/navigation/state)
 - `float32` for all other numeric fields
 - `bool` for flags, `string` for idents
 
+**Normalized field conventions (locked):**
+- `_pct` suffix = 0.0-1.0 ratio (NOT 0-100). Applies to: fuel_total_pct, gear_position_pct, pitot_ice_pct
+- `_norm` = -1.0-1.0 or 0.0-1.0 normalized control input (future — current FlightControls/EngineControls lack suffix)
+- Dimensionless fields (mach, load_factor, epr) have no unit suffix — this is correct
+
 **NavigationState** includes frequency echoes (`com1/2/3_freq_mhz`, `adf1/2_freq_khz`) from
 AvionicsControls for IOS display convenience.
 

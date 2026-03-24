@@ -82,7 +82,7 @@ public:
       [this](const sim_msgs::msg::HatHotResponse::SharedPtr msg) {
         if (!msg->valid || msg->point_name.empty()) return;
 
-        terrain_hot_[msg->point_name] = msg->hot;
+        terrain_hot_[msg->point_name] = msg->hot_m;
         last_hot_time_ = std::chrono::steady_clock::now();
         has_cigi_ = true;
 

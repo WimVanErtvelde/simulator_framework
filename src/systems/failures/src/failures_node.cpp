@@ -72,6 +72,11 @@ static std::string build_params_json(const std::map<std::string, std::string> & 
   return oss.str();
 }
 
+// ─── Unit conversions ────────────────────────────────────────────────────────
+static constexpr double MS_TO_KT  = 1.94384;   // m/s → knots
+static constexpr double M_TO_FT   = 3.28084;   // metres → feet
+static constexpr double MS_TO_FPM = 196.85;    // m/s → feet/minute
+
 // ─── Extract FDM condition param from FlightModelState ──────────────────────
 
 static double extract_fdm_param(
@@ -79,13 +84,13 @@ static double extract_fdm_param(
   const std::string & param)
 {
   if (param == "airspeed_kt") {
-    return fdm.ias_ms * 1.94384;  // m/s → kt
+    return fdm.ias_ms * MS_TO_KT;
   } else if (param == "altitude_ft_msl") {
-    return fdm.altitude_msl_m * 3.28084;  // m → ft
+    return fdm.altitude_msl_m * M_TO_FT;
   } else if (param == "altitude_ft_agl") {
-    return fdm.altitude_agl_m * 3.28084;
+    return fdm.altitude_agl_m * M_TO_FT;
   } else if (param == "vertical_speed_fpm") {
-    return fdm.vertical_speed_ms * 196.85;  // m/s → fpm
+    return fdm.vertical_speed_ms * MS_TO_FPM;
   } else if (param == "on_ground") {
     return fdm.on_ground ? 1.0 : 0.0;
   } else if (param == "fuel_total_kg") {

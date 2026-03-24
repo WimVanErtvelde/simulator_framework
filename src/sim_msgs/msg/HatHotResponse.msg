@@ -4,8 +4,8 @@
 
 uint32  request_id
 string  point_name        # "nose", "left_main", "right_main"
-float64 lat
-float64 lon
-float64 hat
-float64 hot
+float64 lat_rad
+float64 lon_rad
+float64 hat_m             # height above terrain (metres)
+float64 hot_m             # height of terrain MSL (metres)
 bool    valid

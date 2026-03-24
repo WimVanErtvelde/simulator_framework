@@ -17,10 +17,10 @@ HatRequestTracker::resolve(uint32_t request_id, double hot, bool valid)
         sim_msgs::msg::HatHotResponse resp;
         resp.request_id = request_id;
         resp.point_name = e.point_name;
-        resp.lat        = e.lat;
-        resp.lon        = e.lon;
-        resp.hot        = hot;
-        resp.hat        = 0.0;   // HAT needs current aircraft alt — caller fills if needed
+        resp.lat_rad    = e.lat;
+        resp.lon_rad    = e.lon;
+        resp.hot_m      = hot;
+        resp.hat_m      = 0.0;   // HAT needs current aircraft alt — caller fills if needed
         resp.valid      = valid;
         return resp;
     }
