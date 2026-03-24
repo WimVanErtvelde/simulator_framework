@@ -47,10 +47,9 @@ Frontend store maps to `simState='REPOSITIONING'` which shows purple badge and l
 ### ~~6. `begin_reposition()` doesn't guard RESETTING state~~
 **FIXED** — Added `STATE_RESETTING` to the rejection guard in `begin_reposition()`.
 
-### 7. `finish_reposition()` returns to RUNNING without checking node health
-**OPEN** — `sim_manager_node.cpp`
-
-If a required node died during the reposition, the sim blindly resumes RUNNING with a dead node.
+### ~~7. `finish_reposition()` returns to RUNNING without checking node health~~
+**FIXED** — Checks heartbeat age of all required nodes before transitioning to RUNNING.
+If any node timed out (>2s), stays FROZEN and publishes SimAlert.
 
 ---
 
@@ -68,15 +67,13 @@ If a required node died during the reposition, the sim blindly resumes RUNNING w
 ### ~~11. `send_fd_` missing guard on second `sendto()`~~
 **FIXED** — Added `if (send_fd_ >= 0)` guard on HOT sendto.
 
-### 12. Hardcoded `c172` config path in cigi_bridge
-**OPEN** — `cigi_host_node.cpp:191`
+### ~~12. Hardcoded `c172` config path in cigi_bridge~~
+**FIXED** — Added `aircraft_id` parameter (passed from launch file). Config path uses
+`aircraft_id` instead of hardcoded `c172`.
 
-HOT silently stops working for non-C172 aircraft. Should use `aircraft_id` parameter.
-
-### 13. `reload_node()` doesn't check success before chaining
-**OPEN** — `sim_manager_node.cpp`
-
-All 4 lifecycle transitions fire regardless of failure.
+### ~~13. `reload_node()` doesn't check success before chaining~~
+**FIXED** — Each lifecycle transition callback checks `future.get()->success`. On failure:
+logs error, publishes SimAlert, stops the chain.
 
 ### ~~14. Stale `REPOSITIONING` in backend state_names~~
 **FIXED** — Removed dead `6: 'REPOSITIONING'` entry.
@@ -117,5 +114,5 @@ heading. The 30m clears the piano bar markings.
 
 | Status | Count |
 |--------|-------|
-| Fixed  | 17    |
-| Open   | 3 (#7, #12, #13) |
+| Fixed  | 20    |
+| Open   | 0     |

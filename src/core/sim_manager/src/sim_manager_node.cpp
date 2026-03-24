@@ -515,10 +515,29 @@ private:
     if (!reposition_pending_) return;
     reposition_pending_ = false;
 
+    // Check node health before resuming — if a required node died during
+    // reposition, stay FROZEN so the heartbeat monitor handles it.
+    if (pre_reposition_state_ == sim_msgs::msg::SimState::STATE_RUNNING) {
+      auto now = std::chrono::steady_clock::now();
+      for (const auto & name : required_nodes_) {
+        auto it = last_heartbeat_.find(name);
+        if (it == last_heartbeat_.end() ||
+            it->second == std::chrono::steady_clock::time_point::min()) continue;
+        auto age = std::chrono::duration<double>(now - it->second).count();
+        if (age > 2.0) {
+          RCLCPP_WARN(this->get_logger(),
+            "Reposition complete but node '%s' timed out (%.1fs) — staying FROZEN",
+            name.c_str(), age);
+          publish_alert(sim_msgs::msg::SimAlert::SEVERITY_CRITICAL,
+            name, "Node lost during reposition — sim stays FROZEN");
+          return;  // stay FROZEN, heartbeat monitor will handle it
+        }
+      }
+    }
+
     RCLCPP_INFO(this->get_logger(), "Reposition complete — returning to %s",
       state_name(pre_reposition_state_));
 
-    // Return to previous state
     transition_to(pre_reposition_state_);
   }
 
@@ -851,17 +870,33 @@ private:
 
     using SharedFuture = rclcpp::Client<ChangeState>::SharedFuture;
 
+    auto on_fail = [this, node_name](const std::string & step) {
+      RCLCPP_ERROR(this->get_logger(),
+        "Reload '%s' failed at %s — aborting chain", node_name.c_str(), step.c_str());
+      publish_lifecycle_state(node_name, "error");
+      publish_alert(sim_msgs::msg::SimAlert::SEVERITY_CRITICAL,
+        node_name, "Reload failed at " + step);
+    };
+
     client->async_send_request(make_req(T::TRANSITION_DEACTIVATE),
-      [this, client, node_name, make_req](SharedFuture) {
+      [this, client, node_name, make_req, on_fail](SharedFuture future) {
+        auto res = future.get();
+        if (!res || !res->success) { on_fail("deactivate"); return; }
         publish_lifecycle_state(node_name, "inactive");
         client->async_send_request(make_req(T::TRANSITION_CLEANUP),
-          [this, client, node_name, make_req](SharedFuture) {
+          [this, client, node_name, make_req, on_fail](SharedFuture future) {
+            auto res = future.get();
+            if (!res || !res->success) { on_fail("cleanup"); return; }
             publish_lifecycle_state(node_name, "unconfigured");
             client->async_send_request(make_req(T::TRANSITION_CONFIGURE),
-              [this, client, node_name, make_req](SharedFuture) {
+              [this, client, node_name, make_req, on_fail](SharedFuture future) {
+                auto res = future.get();
+                if (!res || !res->success) { on_fail("configure"); return; }
                 publish_lifecycle_state(node_name, "inactive");
                 client->async_send_request(make_req(T::TRANSITION_ACTIVATE),
-                  [this, node_name](SharedFuture) {
+                  [this, node_name, on_fail](SharedFuture future) {
+                    auto res = future.get();
+                    if (!res || !res->success) { on_fail("activate"); return; }
                     publish_lifecycle_state(node_name, "active");
                     RCLCPP_INFO(this->get_logger(),
                       "Node '%s' reloaded successfully", node_name.c_str());

@@ -64,6 +64,7 @@ CigiHostNode::CigiHostNode()
     declare_parameter("host_port",        8001);
     declare_parameter("entity_id",        0);
     declare_parameter("publish_rate_hz",  60.0);
+    declare_parameter("aircraft_id",          std::string("c172"));
     declare_parameter("aircraft_config_path", std::string(""));
 
     auto_start_timer_ = create_wall_timer(
@@ -86,6 +87,7 @@ CallbackReturn CigiHostNode::on_configure(const rclcpp_lifecycle::State &)
     host_port_        = get_parameter("host_port").as_int();
     entity_id_        = get_parameter("entity_id").as_int();
     publish_rate_hz_  = get_parameter("publish_rate_hz").as_double();
+    aircraft_id_      = get_parameter("aircraft_id").as_string();
     aircraft_config_path_ = get_parameter("aircraft_config_path").as_string();
 
     heartbeat_pub_  = create_publisher<std_msgs::msg::String>("/sim/diagnostics/heartbeat", 10);
@@ -197,7 +199,7 @@ void CigiHostNode::load_gear_points()
     if (path.empty()) {
         // Try common locations
         std::vector<std::string> candidates = {
-            "src/aircraft/c172/config/config.yaml",
+            "src/aircraft/" + aircraft_id_ + "/config/config.yaml",
         };
         // Check AMENT_PREFIX_PATH
         const char* env = std::getenv("AMENT_PREFIX_PATH");
@@ -209,7 +211,7 @@ void CigiHostNode::load_gear_points()
                 if (end == std::string::npos) end = paths.size();
                 std::string prefix = paths.substr(pos, end - pos);
                 candidates.insert(candidates.begin(),
-                    prefix + "/share/aircraft_c172/config/config.yaml");
+                    prefix + "/share/aircraft_" + aircraft_id_ + "/config/config.yaml");
                 pos = end + 1;
             }
         }

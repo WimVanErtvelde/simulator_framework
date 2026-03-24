@@ -96,6 +96,7 @@ private:
     int         host_port_        = 8001;
     int         entity_id_        = 0;
     double      publish_rate_hz_  = 60.0;
+    std::string aircraft_id_       = "c172";
     std::string aircraft_config_path_;
 
     // ── Sockets ───────────────────────────────────────────────────────────
