@@ -1,8 +1,80 @@
 # CLAUDE.md — Simulator Framework
 
 This file is the working memory for Claude Code sessions.
-Read this at the start of every session before touching any code.
-Update it whenever architectural decisions are made or changed.
+Read the WORKFLOW section first. Read REFERENCE sections as needed for the task at hand.
+
+---
+
+## Workflow Rules — READ THIS FIRST
+
+### Before ANY code change:
+
+1. **Read the relevant source files** — do not assume you know what's there
+2. **State back your plan** in this format:
+   - MODIFYING: [file list]
+   - CURRENT BEHAVIOR: [what the code does now]
+   - NEW BEHAVIOR: [what it will do after your change]
+   - COULD BREAK: [what might go wrong]
+3. **WAIT for approval** — do not proceed until Wim confirms
+4. After approval, make the change, then `colcon build --packages-select <pkg>` to verify
+
+### Task card format
+
+When Wim gives you a task, it will follow this structure. Do NOT expand scope beyond it:
+
+```
+TASK: [short name]
+GOAL: [one sentence — what changes when this is done]
+FILES TO CREATE: [explicit list, or "none"]
+FILES TO MODIFY: [explicit list]
+DO NOT TOUCH: [files/packages that are off-limits]
+READS FROM: [configs, topics, messages this code consumes]
+PUBLISHES TO: [topics this code produces]
+ACCEPTANCE: [build command, observable behavior, or test]
+CONSTRAINTS: [no new deps, no message changes, etc.]
+```
+
+If a task card is provided, follow it literally. If something seems wrong or missing,
+ask — do not improvise. If no task card is provided, create one yourself and present it
+for approval before writing any code.
+
+### Diagnostic-first rule
+
+When investigating a bug or unexpected behavior:
+1. Add diagnostic logging (RCLCPP_INFO with relevant state)
+2. Build and test — observe the logs
+3. Report findings with log evidence
+4. Propose a fix with reasoning
+5. WAIT for approval before applying the fix
+
+Never apply a fix without first understanding the root cause. The repositioning
+entity flicker (bug #0) proved this: the original hypothesis (JSBSim cache corruption)
+was wrong — the actual cause was a zombie process. Fixing the wrong thing wastes time
+and adds unnecessary code.
+
+### What to check before finishing
+
+- [ ] `colcon build` passes (at minimum the affected packages)
+- [ ] No hardcoded aircraft-specific values in framework code
+- [ ] No new cross-node subscriptions that violate topic conventions
+- [ ] Error paths handled (not just happy path)
+- [ ] If you modified a .msg or .srv, full rebuild + all consumers still compile
+
+### bugs.md
+
+`bugs.md` in repo root tracks known issues. Before modifying a file that has an open bug,
+check bugs.md first. After fixing a bug, update bugs.md.
+
+### Doc update task cards
+
+Design sessions in Claude Desktop produce "doc update" task cards. These contain
+exact text replacements for .md files (CLAUDE.md, DECISIONS.md, agent files, bugs.md).
+When you receive one:
+- Apply the edits mechanically — do not rephrase, expand, or reinterpret
+- Do not modify any source code
+- Verify with grep or cat that the new text is in place
+- If a replacement target doesn't match (file changed since the card was written),
+  report the mismatch — do not guess at the correct edit
 
 ---
 

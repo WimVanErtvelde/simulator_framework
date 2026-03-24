@@ -9,7 +9,67 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 ## CURRENT STATE
-<!-- Last updated: 2026-03-11 — This section is editable -->
+<!-- Last updated: 2026-03-23 — This section is editable -->
+
+### Architecture
+- **Middleware:** ROS2 Jazzy (LTS), all nodes use sim time (`/clock` + `use_sim_time`)
+- **Sim Manager** owns `/clock` (50 Hz), state machine (INIT→READY→RUNNING↔FROZEN→RESETTING→READY). Heartbeat monitoring (2s timeout). CMD_REPOSITION=11 triggers FROZEN + `reposition_active` flag + IC broadcast + terrain wait + return to previous state. No separate REPOSITIONING sim state.
+- **Input Arbitrator** sole subscriber to `/devices/`. Priority: INSTRUCTOR > HARDWARE > VIRTUAL > FROZEN. 4 channels: flight, engine, avionics, panel. Hardware timeout 500ms → auto-fallback.
+- **Flight Model Adapter** abstract C++ interface (`IFlightModelAdapter`). Implementations: JSBSimAdapter, XPlaneUDPAdapter, HelisimUDPAdapter. Publishes `/sim/flight_model/state` + `/sim/flight_model/capabilities` (transient_local). CapabilityMode tri-state: FDM_NATIVE / EXTERNAL_COUPLED / EXTERNAL_DECOUPLED. Subscribes to writeback topics for coupled subsystems. Terrain refinement: runway DB altitude → CIGI HOT via `refine_terrain_altitude` (RunIC with cockpit save/restore). `pending_ic_` gates stepping during terrain wait (30s timeout).
+- **Systems nodes** (C++) subscribe to `/sim/flight_model/state` + `/sim/failures/active` + `/sim/world/*`, publish own `/sim/<s>/state`. Aircraft-specific logic via pluginlib plugins. Never talk to each other directly.
+- **CIGI bridge** — raw CIGI 3.3 big-endian encoding (no CCL). Entity Control + IG Control at 60 Hz. HOT terrain requests rate-gated by AGL (50Hz <10m, 10Hz 10-100m, off above). Repositioning handshake: IG Mode Reset for one frame on `reposition_active` rising edge, clear HAT tracker, then Operate. HOT responses gated by SOF IG Status=Operate.
+- **IOS Backend** (FastAPI + rclpy) bridges ROS2 ↔ WebSocket. Run manually, not in launch file.
+- **IOS Frontend** (React + Zustand + WebSocket). URL routing: `/` = IOS app, `/cockpit/c172/*` = virtual cockpit panels. Dynamic A/C page and StatusStrip radio row driven by aircraft `navigation.yaml`.
+
+### Avionics message conventions
+- **Three tiers:** RawAvionicsControls → AvionicsControls → NavigationState
+- **Frequency naming:** `_freq_mhz` / `_freq_khz` — no bare `_freq`
+- **Wire keys** (WS): `com1_mhz`, `nav1_mhz`, `adf1_khz` etc.
+- **Store keys** (Zustand): `com1Mhz`, `nav1Mhz`, `adf1Khz` etc.
+
+### Implemented (functional)
+- `sim_manager` — clock, state machine, heartbeat monitoring, CMD_REPOSITION with terrain wait
+- `input_arbitrator` — 4-channel arbitration (flight, engine, avionics, panel)
+- `flight_model_adapter` — JSBSim adapter, CapabilityMode, writeback, terrain refinement via RunIC, pending_ic_ gating
+- `atmosphere_node` — full ISA model, OAT deviation, QNH override
+- `cigi_bridge` — CIGI 3.3 host, multi-point HOT (3 gear points), IG Mode repositioning handshake, SOF parsing
+- `navaid_sim` — VOR/ILS/NDB/DME/Marker, terrain LOS, A424 + XP12 parsers. Airport/runway DB (SearchAirports/GetRunways/GetTerrainElevation services)
+- `sim_electrical` — pluginlib, ElectricalSolver, JSON topology. C172 + EC135 plugins. CB 3-state override (NORMAL/POPPED/LOCKED). Capability gating + writeback.
+- `sim_engine_systems` — pluginlib → IEnginesModel. C172 piston + EC135 turboshaft plugins. EngineCommands published (zeros for current aircraft, pre-wired for turboprop/FADEC).
+- `sim_fuel` — pluginlib → IFuelModel. C172 plugin. Capability gating + writeback. FuelState arrays [8] (future graph solver).
+- `sim_failures` — failure catalog from YAML (ATA grouped), armed triggers (delay/condition), 3-topic routing (flight_model/electrical/navaid commands). params_override_json for runtime params.
+- `sim_navigation` — GPS/VOR/ILS/ADF/DME, CDI/TO-FROM, DME source selection, failure gating. No pluginlib.
+- `sim_gear` — pluginlib → IGearModel. C172 fixed-tricycle. WoW per leg, nosewheel angle, brake echo.
+- `sim_air_data` — pluginlib → IAirDataModel. Pitot-static with icing, turbulence noise, alternate static. C172 plugin.
+- `ios_backend` — dynamic node discovery, FDM/fuel/nav/electrical/sim state WS forwarding. Panel + avionics commands. Failure catalog + injection/clear/clear_all. Navaid search API.
+- `ios_frontend` — map, status strip (dynamic radio row), 9 panel tabs, action bar. Electrical switches (FORCE), ground services (tri-state), radio tuning. Failure panel with ATA grouping + navaid search. REPOSITIONING badge + button lockout. Dynamic A/C page from navigation.yaml. Virtual cockpit electrical page.
+- `xplanecigi plugin` — raw CIGI 3.3 IG plugin for X-Plane 12. Entity Control + HOT Response. IG Mode-driven terrain probing (4×0.5s stability). SOF Standby→Normal reporting.
+
+### Stub / scaffold only
+- `microros_bridge` — skeleton lifecycle node
+- `sim_hydraulic`, `sim_ice_protection`, `sim_pressurization` — heartbeat only, no solver
+- Virtual cockpit avionics page — placeholder
+
+### Known bugs (see bugs.md)
+- #7: finish_reposition() doesn't check node health before resuming RUNNING
+- #12: Hardcoded c172 config path in cigi_bridge (HOT fails for other aircraft)
+- #13: reload_node() doesn't check lifecycle transition success
+
+### Not yet implemented
+- IOS: COM/NAV freq entry, flight departure/arrival graphs, freeze pos/fuel toggles, debrief
+- SimSnapshot save/load (designed, deferred)
+- QTG test runner
+- Audio system (RPi5/libpd architecture decided, not started)
+- Remaining systems: hydraulic, ice_protection, pressurization (stubs exist)
+- micro-ROS hardware bridge
+- Integration test suite
+
+### Open decisions
+- [ ] CIGI library: raw encoding (current) or cigicl?
+- [ ] micro-ROS transport: serial UART or CAN?
+- [ ] IOS auth: single-user or multi-role?
+- [ ] Scenario file format: custom YAML or standard?
+- [ ] IG manager: lifecycle node on remote hardware?
 
 ### Architecture
 - **Middleware:** ROS2 Jazzy (LTS), all nodes use sim time (`/clock` + `use_sim_time`)
