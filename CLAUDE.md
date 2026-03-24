@@ -279,6 +279,11 @@ public:
 - Engine start uses `propulsion/set-running` (not per-engine — initializes magnetos correctly)
 - FlightModelState carries position in ECG (lat/lon/alt) AND ECEF (x/y/z); velocity in NED, Body, and ECEF frames
 
+**Lat/lon units:** All ROS2 messages carry lat/lon in **degrees**. JSBSimAdapter is the
+single conversion point (JSBSim radians → degrees). Internal solver code may use radians
+for trig — convert deg→rad locally at point of use. Attitude angles (roll, pitch, heading)
+remain in radians.
+
 **Terrain refinement on reposition:**
 - IC arrives → apply to JSBSim (runway DB altitude) → set `pending_ic_` → wait for CIGI HOT
 - HOT arrives (from cigi_bridge, gated by IG Status Operate) → `refine_terrain_altitude()` adjusts altitude + terrain
@@ -590,7 +595,7 @@ NavigationState       computed instrument outputs (/sim/navigation/state)
 - Numbering: `adf1`/`adf2`, `gps1`/`gps2` — consistent `1`/`2` suffix, never unprefixed
 
 **NavigationState field types:**
-- `float64` for lat/lon only
+- `float64` for lat/lon (degrees) only
 - `float32` for all other numeric fields
 - `bool` for flags, `string` for idents
 

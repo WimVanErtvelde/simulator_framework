@@ -2022,3 +2022,12 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - FIXED: Bug #12 — cigi_bridge uses aircraft_id parameter instead of hardcoded c172 config path.
 - FIXED: Bug #13 — reload_node() checks each lifecycle transition return code, stops chain and logs error on failure.
 - AFFECTS: sim_manager_node.cpp, cigi_host_node.cpp, BUGS.md
+
+## 2026-03-24 — Design Intent (Chat) + Claude Code
+
+- DECIDED: All ROS2 messages, services, and config files carry lat/lon in degrees, not radians. Internal solver code (navaid_sim, AirportDatabase) may use radians for trig — conversion happens at the ROS2 boundary only. JSBSimAdapter is the single rad→deg conversion point for FlightModelState.
+- REASON: Helisim outputs degrees, CIGI needs degrees, IOS displays degrees, pilots read degrees. Only JSBSim uses radians natively. Unit audit showed every consumer immediately converting rad→deg on receipt — N redundant conversions eliminated.
+- AFFECTED MESSAGES: FlightModelState.msg (latitude_deg/longitude_deg), InitialConditions.msg, HatHotResponse.msg (lat_deg/lon_deg/hat_m/hot_m), HotRequest.msg, Airport.msg (arp_lat_deg/arp_lon_deg), Runway.msg (threshold_lat_deg_end1/end2, threshold_lon_deg_end1/end2), GetTerrainElevation.srv.
+- AFFECTED CODE: JSBSimAdapter (add RAD_TO_DEG), cigi_bridge (remove RAD_TO_DEG), ios_backend (remove 180/pi), navigation_node (passthrough), navaid_sim (boundary conversion), PositionPanel.jsx (remove DEG2RAD on IC).
+- AFFECTED CONFIG: c172/ec135 config.yaml default_ic lat/lon now in degrees.
+- NOTE: Attitude angles (roll_rad, pitch_rad, true_heading_rad, heading_rad) remain in radians. Separate decision pending.
