@@ -354,7 +354,7 @@ void JSBSimAdapter::apply_failure(const std::string & method,
   } else if (method == "set_gear_unable_to_extend") {
     int idx = json_int(params_json, "gear_index");
     std::string prop = "gear/unit[" + std::to_string(idx) + "]/pos-norm";
-    exec_->SetPropertyValue(prop, active ? 0.0 : -1.0);
+    exec_->SetPropertyValue(prop, active ? 0.0 : 1.0);
   } else if (method == "set_tail_rotor_failed") {
     exec_->SetPropertyValue("systems/tail-rotor/serviceable", active ? 0.0 : 1.0);
   } else {

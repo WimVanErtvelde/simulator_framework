@@ -2038,3 +2038,17 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - DECIDED: Freeze fuel implementation: gate fuel_node update() on freeze_fuel flag (same pattern as existing is_frozen_ gate). No fuel drain while active.
 - REASON: Instructor needs independent position/fuel freeze for training scenarios — hold position while monitoring engine behavior, or fly without fuel penalty.
 - AFFECTS: SimState.msg, SimCommand.msg, sim_manager, flight_model_adapter, fuel_node, ios_backend, ActionBar.jsx, useSimStore.js
+
+## 2026-03-25 — Claude Code
+
+### Architecture audit Batch 1 bug fixes
+
+- FIXED: F2.1 — Removed dead FailureList subscriptions from 5 systems nodes (electrical, fuel, engines, gear, air_data). These subscribed to `/sim/failures/active` which was never published. Failure system works exclusively through FailureInjection routing topics. FailureList message type is now unused.
+- FIXED: F2.3 — ios_backend virtual panel WS handler now routes to publish_virtual_panel() instead of publish_panel(). Virtual cockpit inputs no longer silently elevated to INSTRUCTOR priority.
+- FIXED: F1.2 — sim_failures YAML path now uses ament_index_cpp::get_package_share_directory() instead of hardcoded relative path.
+- FIXED: F4.1 — JSBSimAdapter gear failure clear path now sets pos-norm to 1.0 (fully extended) instead of -1.0 (invalid).
+- FIXED: F4.3 — Moot: FailureList callbacks removed with F2.1.
+- FIXED: F4.4 — False positive: null guard already present.
+- FIXED: F1.1 — Added EngineSwitchConfig to IEnginesModel interface. C172 and EC135 plugins return switch IDs from engine.yaml config. engines_node reads switch IDs from plugin, no hardcoded strings in framework code.
+- ALSO: Added COLCON_IGNORE to x-plane_plugins/ (requires cross-compilation, not part of workspace build).
+- AFFECTS: electrical_node, fuel_node, engines_node, gear_node, air_data_node, failures_node, JSBSimAdapter, ios_backend, IEnginesModel interface, C172/EC135 engine plugins, engine.yaml configs.

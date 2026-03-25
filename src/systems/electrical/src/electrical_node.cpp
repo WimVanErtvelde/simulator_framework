@@ -9,7 +9,6 @@
 #include <sim_msgs/msg/electrical_state.hpp>
 #include <sim_msgs/msg/sim_state.hpp>
 #include <sim_msgs/msg/sim_alert.hpp>
-#include <sim_msgs/msg/failure_list.hpp>
 #include <sim_msgs/msg/failure_injection.hpp>
 #include <sim_msgs/msg/panel_controls.hpp>
 #include <sim_msgs/msg/flight_model_state.hpp>
@@ -120,24 +119,6 @@ public:
       [this](const sim_msgs::msg::FlightModelState::SharedPtr msg) {
         on_ground_ = msg->on_ground;
         update_ground_state();
-      });
-
-    failure_sub_ = this->create_subscription<sim_msgs::msg::FailureList>(
-      "/sim/failures/active", 10,
-      [this](const sim_msgs::msg::FailureList::SharedPtr msg) {
-        if (!model_) return;
-        std::set<std::string> current_failures(msg->failure_ids.begin(), msg->failure_ids.end());
-        for (const auto & prev : active_failures_) {
-          if (current_failures.find(prev) == current_failures.end()) {
-            model_->apply_failure(prev, false);
-          }
-        }
-        for (size_t i = 0; i < msg->failure_ids.size(); ++i) {
-          if (msg->severity[i] > 0) {
-            model_->apply_failure(msg->failure_ids[i], true);
-          }
-        }
-        active_failures_ = current_failures;
       });
 
     // Failure injection commands from sim_failures
@@ -319,14 +300,12 @@ public:
     sim_state_sub_.reset();
     panel_sub_.reset();
     flight_model_sub_.reset();
-    failure_sub_.reset();
     failure_injection_sub_.reset();
     caps_sub_.reset();
     elec_writeback_pub_.reset();
     latest_caps_.reset();
     model_.reset();
     loader_.reset();
-    active_failures_.clear();
     failed_components_.clear();
     cb_overrides_.clear();
     RCLCPP_INFO(this->get_logger(), "sim_electrical cleaned up");
@@ -420,7 +399,6 @@ private:
   rclcpp::Subscription<sim_msgs::msg::SimState>::SharedPtr sim_state_sub_;
   rclcpp::Subscription<sim_msgs::msg::PanelControls>::SharedPtr panel_sub_;
   rclcpp::Subscription<sim_msgs::msg::FlightModelState>::SharedPtr flight_model_sub_;
-  rclcpp::Subscription<sim_msgs::msg::FailureList>::SharedPtr failure_sub_;
   rclcpp::Subscription<sim_msgs::msg::FailureInjection>::SharedPtr failure_injection_sub_;
   rclcpp::Subscription<sim_msgs::msg::FlightModelCapabilities>::SharedPtr caps_sub_;
 
@@ -443,7 +421,6 @@ private:
   bool on_ground_ = true;
   enum class Override { AUTO, FORCE_ON, FORCE_OFF };
   Override ext_pwr_override_ = Override::AUTO;
-  std::set<std::string> active_failures_;
   std::set<std::string> failed_components_;
   std::map<std::string, CBOverride> cb_overrides_;
 };

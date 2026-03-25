@@ -708,7 +708,8 @@ source install/setup.bash
 
 - Never call flight model code directly from a systems node — always go through `/sim/flight_model/state`
 - Never hard-code aircraft parameters in node code — always read from aircraft YAML config
-- Never let system nodes subscribe to each other — all coupling via `/sim/flight_model/state`, `/sim/failures/active`, or `/sim/world/`
+- Never let system nodes subscribe to each other — all coupling via `/sim/flight_model/state`, `/sim/failure/<handler>_commands`, or `/sim/world/`
+- Never subscribe to `/sim/failures/active` (FailureList) — this topic does not exist. Failure broadcast uses `/sim/failure_state` (FailureState). Failure injection uses `/sim/failure/<handler>_commands` (FailureInjection).
 - Never let any sim node subscribe to `/devices/` topics — only input_arbitrator reads device topics
 - Never let ios_backend publish to `/sim/` topics directly — it publishes to `/devices/instructor/` only
 - Never put IOS logic in Sim Manager — IOS sends commands, Sim Manager executes them

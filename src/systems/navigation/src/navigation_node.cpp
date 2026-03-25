@@ -7,7 +7,6 @@
 #include <sim_msgs/msg/avionics_controls.hpp>
 #include <sim_msgs/msg/navigation_state.hpp>
 #include <sim_msgs/msg/failure_state.hpp>
-#include <sim_msgs/msg/flight_model_capabilities.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -82,15 +81,6 @@ public:
         latest_failure_state_ = msg;
       });
 
-    // Capabilities subscription (transient_local to receive latched message)
-    auto caps_qos = rclcpp::QoS(1).transient_local().reliable();
-    caps_sub_ = this->create_subscription<sim_msgs::msg::FlightModelCapabilities>(
-      "/sim/flight_model/capabilities", caps_qos,
-      [this](const sim_msgs::msg::FlightModelCapabilities::SharedPtr msg) {
-        latest_caps_ = msg;
-        RCLCPP_INFO(this->get_logger(), "Received FDM capabilities");
-      });
-
     RCLCPP_INFO(this->get_logger(), "sim_navigation configured");
     publish_lifecycle_state("inactive");
     return CallbackReturn::SUCCESS;
@@ -139,8 +129,6 @@ public:
     nav_signals_sub_.reset();
     avionics_sub_.reset();
     failure_state_sub_.reset();
-    caps_sub_.reset();
-    latest_caps_.reset();
     latest_failure_state_.reset();
     RCLCPP_INFO(this->get_logger(), "sim_navigation cleaned up");
     publish_lifecycle_state("unconfigured");
@@ -434,11 +422,6 @@ private:
   rclcpp::Subscription<sim_msgs::msg::NavSignalTable>::SharedPtr nav_signals_sub_;
   rclcpp::Subscription<sim_msgs::msg::AvionicsControls>::SharedPtr avionics_sub_;
   rclcpp::Subscription<sim_msgs::msg::FailureState>::SharedPtr failure_state_sub_;
-  rclcpp::Subscription<sim_msgs::msg::FlightModelCapabilities>::SharedPtr caps_sub_;
-
-  // Capabilities
-  sim_msgs::msg::FlightModelCapabilities::SharedPtr latest_caps_;
-
   // Timers
   rclcpp::TimerBase::SharedPtr heartbeat_timer_;
   rclcpp::TimerBase::SharedPtr auto_start_timer_;

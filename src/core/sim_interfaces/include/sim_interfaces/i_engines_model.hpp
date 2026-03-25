@@ -92,6 +92,17 @@ struct EngineStateData
   std::array<std::string, 4> fadec_mode = {};
 };
 
+/// Switch/selector ID config — populated by plugin from aircraft YAML, read by node wrapper.
+struct EngineSwitchConfig
+{
+  std::vector<std::string> starter_ids;         // per engine index
+  std::vector<std::string> ignition_ids;        // magneto/ignition switch per engine
+  std::vector<std::string> fuel_cutoff_ids;     // per engine
+  std::vector<std::string> prop_lever_ids;      // selector, per engine
+  std::vector<std::string> condition_lever_ids; // selector, per engine
+  std::vector<std::string> power_lever_ids;     // selector, per engine
+};
+
 class IEnginesModel
 {
 public:
@@ -122,6 +133,9 @@ public:
 
   /// Get current state snapshot for ROS2 publishing.
   virtual EngineStateData get_state() const = 0;
+
+  /// Get panel switch/selector ID configuration (read from aircraft YAML).
+  virtual EngineSwitchConfig get_switch_config() const = 0;
 };
 
 }  // namespace sim_interfaces

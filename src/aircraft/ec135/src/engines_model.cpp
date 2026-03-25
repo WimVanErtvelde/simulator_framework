@@ -18,12 +18,19 @@ public:
     auto cfg = YAML::LoadFile(yaml_path);
     engine_count_ = static_cast<uint8_t>(cfg["engine_count"].as<int>(2));
 
+    sw_cfg_ = {};
     auto engines = cfg["engines"];
     if (engines && engines.IsSequence()) {
       for (size_t i = 0; i < engines.size() && i < 4; ++i) {
         auto e = engines[i];
         tgt_max_degc_[i] = e["tgt_max_degc"].as<float>(810.0f);
         torque_max_pct_[i] = e["torque_max_pct"].as<float>(100.0f);
+        sw_cfg_.starter_ids.push_back(e["starter_id"].as<std::string>(""));
+        sw_cfg_.ignition_ids.push_back(e["ignition_id"].as<std::string>(""));
+        sw_cfg_.fuel_cutoff_ids.push_back(e["fuel_cutoff_id"].as<std::string>(""));
+        sw_cfg_.prop_lever_ids.push_back(e["prop_lever_id"].as<std::string>(""));
+        sw_cfg_.condition_lever_ids.push_back(e["condition_lever_id"].as<std::string>(""));
+        sw_cfg_.power_lever_ids.push_back(e["power_lever_id"].as<std::string>(""));
       }
     }
 
@@ -128,6 +135,8 @@ public:
 
   sim_interfaces::EngineStateData get_state() const override { return state_; }
 
+  sim_interfaces::EngineSwitchConfig get_switch_config() const override { return sw_cfg_; }
+
 private:
   sim_interfaces::EngineStateData state_;
   uint8_t engine_count_ = 2;
@@ -135,6 +144,8 @@ private:
   // Per-engine YAML config
   float tgt_max_degc_[4] = {810.0f, 810.0f, 810.0f, 810.0f};
   float torque_max_pct_[4] = {100.0f, 100.0f, 100.0f, 100.0f};
+
+  sim_interfaces::EngineSwitchConfig sw_cfg_;
 
   // Runtime state
   bool engine_running_[4] = {};

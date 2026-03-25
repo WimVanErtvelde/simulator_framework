@@ -67,7 +67,6 @@ public:
       "/sim/flight_model/state", 10,
       [this](sim_msgs::msg::FlightModelState::ConstSharedPtr msg) {
         altitude_msl_m_ = msg->altitude_msl_m;
-        flight_model_received_ = true;
       });
 
     weather_sub_ = this->create_subscription<sim_msgs::msg::WeatherState>(
@@ -75,15 +74,12 @@ public:
       [this](sim_msgs::msg::WeatherState::ConstSharedPtr msg) {
         oat_deviation_k_ = msg->oat_deviation_k;
         qnh_pa_ = msg->qnh_pa;
-        weather_received_ = true;
       });
 
     // ISA defaults until weather is received
     oat_deviation_k_ = 0.0;
     qnh_pa_ = ISA_P0;
     altitude_msl_m_ = 0.0;
-    flight_model_received_ = false;
-    weather_received_ = false;
 
     RCLCPP_INFO(this->get_logger(), "atmosphere_node configured");
     publish_lifecycle_state("inactive");
@@ -216,8 +212,6 @@ private:
   double altitude_msl_m_ = 0.0;
   double oat_deviation_k_ = 0.0;
   double qnh_pa_ = ISA_P0;
-  bool flight_model_received_ = false;
-  bool weather_received_ = false;
 };
 
 int main(int argc, char ** argv)

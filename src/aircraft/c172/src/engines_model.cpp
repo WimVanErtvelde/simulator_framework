@@ -20,15 +20,27 @@ public:
     auto cfg = YAML::LoadFile(yaml_path);
     engine_count_ = static_cast<uint8_t>(cfg["engine_count"].as<int>(1));
 
+    sw_cfg_ = {};
     auto engines = cfg["engines"];
-    if (engines && engines.IsSequence() && engines.size() > 0) {
-      auto e = engines[0];
-      rpm_max_ = e["rpm_max"].as<float>(2700.0f);
-      rpm_idle_ = e["rpm_idle"].as<float>(700.0f);
-      egt_max_degc_ = e["egt_max_degc"].as<float>(900.0f);
-      cht_max_degc_ = e["cht_max_degc"].as<float>(240.0f);
-      oil_pressure_min_psi_ = e["oil_pressure_min_psi"].as<float>(25.0f);
-      oil_temp_max_degc_ = e["oil_temp_max_degc"].as<float>(118.0f);
+    if (engines && engines.IsSequence()) {
+      for (size_t i = 0; i < engines.size() && i < 4; ++i) {
+        auto e = engines[i];
+        if (i == 0) {
+          rpm_max_ = e["rpm_max"].as<float>(2700.0f);
+          rpm_idle_ = e["rpm_idle"].as<float>(700.0f);
+          egt_max_degc_ = e["egt_max_degc"].as<float>(900.0f);
+          cht_max_degc_ = e["cht_max_degc"].as<float>(240.0f);
+          oil_pressure_min_psi_ = e["oil_pressure_min_psi"].as<float>(25.0f);
+          oil_temp_max_degc_ = e["oil_temp_max_degc"].as<float>(118.0f);
+        }
+        sw_cfg_.starter_ids.push_back(e["starter_id"].as<std::string>(""));
+        sw_cfg_.ignition_ids.push_back(e["magneto_switch_id"].as<std::string>(
+            e["ignition_id"].as<std::string>("")));
+        sw_cfg_.fuel_cutoff_ids.push_back(e["fuel_cutoff_id"].as<std::string>(""));
+        sw_cfg_.prop_lever_ids.push_back(e["prop_lever_id"].as<std::string>(""));
+        sw_cfg_.condition_lever_ids.push_back(e["condition_lever_id"].as<std::string>(""));
+        sw_cfg_.power_lever_ids.push_back(e["power_lever_id"].as<std::string>(""));
+      }
     }
 
     reset();
@@ -156,6 +168,8 @@ public:
 
   sim_interfaces::EngineStateData get_state() const override { return state_; }
 
+  sim_interfaces::EngineSwitchConfig get_switch_config() const override { return sw_cfg_; }
+
 private:
   sim_interfaces::EngineStateData state_;
   uint8_t engine_count_ = 1;
@@ -167,6 +181,8 @@ private:
   float cht_max_degc_ = 240.0f;
   float oil_pressure_min_psi_ = 25.0f;
   float oil_temp_max_degc_ = 118.0f;
+
+  sim_interfaces::EngineSwitchConfig sw_cfg_;
 
   // Runtime state
   bool engine_running_ = false;

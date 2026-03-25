@@ -10,7 +10,6 @@
 #include <sim_msgs/msg/sim_state.hpp>
 #include <sim_msgs/msg/sim_alert.hpp>
 #include <sim_msgs/msg/panel_controls.hpp>
-#include <sim_msgs/msg/failure_list.hpp>
 #include <sim_msgs/msg/initial_conditions.hpp>
 #include <sim_msgs/msg/flight_model_capabilities.hpp>
 #include <ament_index_cpp/get_package_share_directory.hpp>
@@ -73,12 +72,6 @@ public:
       "/sim/controls/panel", 10,
       [this](sim_msgs::msg::PanelControls::SharedPtr msg) {
         latest_panel_ = *msg;
-      });
-
-    failures_sub_ = this->create_subscription<sim_msgs::msg::FailureList>(
-      "/sim/failures/active", 10,
-      [this](sim_msgs::msg::FailureList::SharedPtr msg) {
-        active_failures_ = msg->failure_ids;
       });
 
     ic_sub_ = this->create_subscription<sim_msgs::msg::InitialConditions>(
@@ -192,7 +185,8 @@ public:
             latest_flight_model_state_.fuel_flow_kgs.end());
         }
 
-        model_->update(dt_sec, engine_flows, latest_panel_, active_failures_);
+        static const std::vector<std::string> no_failures;
+        model_->update(dt_sec, engine_flows, latest_panel_, no_failures);
 
         auto state = model_->get_state();
         overlay_config_fields(state);
@@ -230,7 +224,6 @@ public:
     flight_model_sub_.reset();
     sim_state_sub_.reset();
     panel_sub_.reset();
-    failures_sub_.reset();
     ic_sub_.reset();
     caps_sub_.reset();
     fuel_writeback_pub_.reset();
@@ -313,7 +306,6 @@ private:
   rclcpp::Subscription<sim_msgs::msg::FlightModelState>::SharedPtr flight_model_sub_;
   rclcpp::Subscription<sim_msgs::msg::SimState>::SharedPtr sim_state_sub_;
   rclcpp::Subscription<sim_msgs::msg::PanelControls>::SharedPtr panel_sub_;
-  rclcpp::Subscription<sim_msgs::msg::FailureList>::SharedPtr failures_sub_;
   rclcpp::Subscription<sim_msgs::msg::InitialConditions>::SharedPtr ic_sub_;
   rclcpp::Subscription<sim_msgs::msg::FlightModelCapabilities>::SharedPtr caps_sub_;
 
@@ -333,7 +325,6 @@ private:
   // Cached state
   sim_msgs::msg::FlightModelState latest_flight_model_state_;
   sim_msgs::msg::PanelControls latest_panel_;
-  std::vector<std::string> active_failures_;
   bool flight_model_received_ = false;
   bool is_frozen_ = false;
   bool freeze_fuel_ = false;

@@ -1,6 +1,5 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rosgraph_msgs/msg/clock.hpp>
-#include <std_msgs/msg/header.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <sim_msgs/msg/sim_state.hpp>
@@ -89,8 +88,6 @@ public:
       "/sim/initial_conditions", rclcpp::QoS(10).transient_local());
     scenario_event_pub_ = this->create_publisher<sim_msgs::msg::ScenarioEvent>(
       "/sim/scenario/event", 10);
-    heartbeat_pub_ = this->create_publisher<std_msgs::msg::Header>(
-      "/sim/heartbeat/sim_manager", 10);
     lifecycle_state_pub_ = this->create_publisher<std_msgs::msg::String>(
       "/sim/diagnostics/lifecycle_state", 10);
     diagnostics_heartbeat_pub_ = this->create_publisher<std_msgs::msg::String>(
@@ -142,11 +139,6 @@ public:
 
     // Own heartbeat at 1 Hz
     own_heartbeat_timer_ = this->create_wall_timer(1s, [this]() {
-      auto msg = std_msgs::msg::Header();
-      msg.stamp = this->now();
-      msg.frame_id = "sim_manager";
-      heartbeat_pub_->publish(msg);
-      // Also publish on diagnostics heartbeat topic
       auto diag_msg = std_msgs::msg::String();
       diag_msg.data = "sim_manager";
       diagnostics_heartbeat_pub_->publish(diag_msg);
@@ -187,7 +179,6 @@ private:
   rclcpp::Publisher<sim_msgs::msg::SimAlert>::SharedPtr alert_pub_;
   rclcpp::Publisher<sim_msgs::msg::InitialConditions>::SharedPtr ic_pub_;
   rclcpp::Publisher<sim_msgs::msg::ScenarioEvent>::SharedPtr scenario_event_pub_;
-  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr heartbeat_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr lifecycle_state_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr diagnostics_heartbeat_pub_;
 

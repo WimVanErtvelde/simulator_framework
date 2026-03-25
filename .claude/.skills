@@ -95,7 +95,12 @@ The flow is always:
 ```
 IOS frontend → FailureCommand → failures_node → FailureInjection → downstream handlers
                                       ↓
-                              FailureState (broadcast to all consumers)
+                              FailureState (broadcast — status tracking only)
+
+Note: FailureInjection routing is the ONLY active failure delivery path.
+FailureState carries active_failure_ids for UI display and recording.
+Systems nodes do NOT subscribe to FailureState for failure handling —
+they receive failures via /sim/failure/<handler>_commands topics.
 ```
 
 Routing topics (all recordable in rosbag2):

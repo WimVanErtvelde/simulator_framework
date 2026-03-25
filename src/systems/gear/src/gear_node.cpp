@@ -9,7 +9,6 @@
 #include <sim_msgs/msg/gear_state.hpp>
 #include <sim_msgs/msg/sim_state.hpp>
 #include <sim_msgs/msg/sim_alert.hpp>
-#include <sim_msgs/msg/failure_list.hpp>
 #include <sim_msgs/msg/failure_injection.hpp>
 #include <sim_msgs/msg/flight_controls.hpp>
 #include <sim_msgs/msg/flight_model_state.hpp>
@@ -81,24 +80,6 @@ public:
       "/sim/controls/flight", 10,
       [this](const sim_msgs::msg::FlightControls::SharedPtr msg) {
         latest_controls_ = msg;
-      });
-
-    failure_sub_ = this->create_subscription<sim_msgs::msg::FailureList>(
-      "/sim/failures/active", 10,
-      [this](const sim_msgs::msg::FailureList::SharedPtr msg) {
-        if (!model_) return;
-        std::set<std::string> current_failures(msg->failure_ids.begin(), msg->failure_ids.end());
-        for (const auto & prev : active_failures_) {
-          if (current_failures.find(prev) == current_failures.end()) {
-            model_->apply_failure(prev, false);
-          }
-        }
-        for (size_t i = 0; i < msg->failure_ids.size(); ++i) {
-          if (msg->severity[i] > 0) {
-            model_->apply_failure(msg->failure_ids[i], true);
-          }
-        }
-        active_failures_ = current_failures;
       });
 
     // Failure injection commands from sim_failures
@@ -287,7 +268,6 @@ public:
     sim_state_sub_.reset();
     flight_model_sub_.reset();
     flight_controls_sub_.reset();
-    failure_sub_.reset();
     failure_injection_sub_.reset();
     caps_sub_.reset();
     latest_fms_.reset();
@@ -295,7 +275,6 @@ public:
     latest_caps_.reset();
     model_.reset();
     loader_.reset();
-    active_failures_.clear();
     RCLCPP_INFO(this->get_logger(), "sim_gear cleaned up");
     publish_lifecycle_state("unconfigured");
     return CallbackReturn::SUCCESS;
@@ -333,7 +312,6 @@ private:
   rclcpp::Subscription<sim_msgs::msg::SimState>::SharedPtr sim_state_sub_;
   rclcpp::Subscription<sim_msgs::msg::FlightModelState>::SharedPtr flight_model_sub_;
   rclcpp::Subscription<sim_msgs::msg::FlightControls>::SharedPtr flight_controls_sub_;
-  rclcpp::Subscription<sim_msgs::msg::FailureList>::SharedPtr failure_sub_;
   rclcpp::Subscription<sim_msgs::msg::FailureInjection>::SharedPtr failure_injection_sub_;
   rclcpp::Subscription<sim_msgs::msg::FlightModelCapabilities>::SharedPtr caps_sub_;
 
@@ -353,7 +331,6 @@ private:
 
   // State
   uint8_t sim_state_ = sim_msgs::msg::SimState::STATE_INIT;
-  std::set<std::string> active_failures_;
 };
 
 int main(int argc, char ** argv)

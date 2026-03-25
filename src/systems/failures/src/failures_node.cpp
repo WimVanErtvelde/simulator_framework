@@ -8,6 +8,7 @@
 #include <sim_msgs/msg/flight_model_state.hpp>
 #include <sim_msgs/msg/sim_alert.hpp>
 
+#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <yaml-cpp/yaml.h>
 
 #include <map>
@@ -150,7 +151,9 @@ public:
 
     // Load failures.yaml catalog
     std::string aircraft_id = this->get_parameter("aircraft_id").as_string();
-    std::string yaml_path = "src/aircraft/" + aircraft_id + "/config/failures.yaml";
+    std::string yaml_path =
+      ament_index_cpp::get_package_share_directory("aircraft_" + aircraft_id) +
+      "/config/failures.yaml";
 
     try {
       YAML::Node root = YAML::LoadFile(yaml_path);

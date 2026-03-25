@@ -207,10 +207,6 @@ class IosBackendNode(Node):
         self._lifecycle_pub = self.create_publisher(
             String, '/sim/diagnostics/lifecycle_state', 10)
 
-        # IC publisher — for direct position set from IOS
-        self._ic_pub = self.create_publisher(
-            InitialConditions, '/sim/initial_conditions', 10)
-
         # Service clients for airport/runway queries
         self._search_airports_cli = self.create_client(
             SearchAirports, '/navaid_sim/search_airports')
@@ -1287,7 +1283,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     ros_node.publish_engine_controls(msg.get('data', msg))
 
                 elif msg.get('topic') == '/devices/virtual/panel' and ros_node:
-                    ros_node.publish_panel(msg.get('data', {}))
+                    ros_node.publish_virtual_panel(msg.get('data', {}))
 
                 elif msg.get('type') == 'search_airports' and ros_node:
                     asyncio.create_task(

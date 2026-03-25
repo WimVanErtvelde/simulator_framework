@@ -10,7 +10,6 @@
 #include <sim_msgs/msg/engine_commands.hpp>
 #include <sim_msgs/msg/sim_state.hpp>
 #include <sim_msgs/msg/sim_alert.hpp>
-#include <sim_msgs/msg/failure_list.hpp>
 #include <sim_msgs/msg/panel_controls.hpp>
 #include <sim_msgs/msg/flight_model_state.hpp>
 #include <sim_msgs/msg/engine_controls.hpp>
@@ -95,17 +94,6 @@ public:
         latest_engine_controls_ = *msg;
       });
 
-    failure_sub_ = this->create_subscription<sim_msgs::msg::FailureList>(
-      "/sim/failures/active", 10,
-      [this](const sim_msgs::msg::FailureList::SharedPtr msg) {
-        active_failures_.clear();
-        for (size_t i = 0; i < msg->failure_ids.size(); ++i) {
-          if (i < msg->severity.size() && msg->severity[i] > 0) {
-            active_failures_.push_back(msg->failure_ids[i]);
-          }
-        }
-      });
-
     // Electrical state for bus_voltage coupling
     electrical_sub_ = this->create_subscription<sim_msgs::msg::ElectricalState>(
       "/sim/electrical/state", 10,
@@ -152,6 +140,7 @@ public:
         "sim_interfaces", "sim_interfaces::IEnginesModel");
       model_ = loader_->createSharedInstance(plugin_name);
       model_->configure(yaml_path);
+      sw_cfg_ = model_->get_switch_config();
 
       // Read engine_type from YAML for logging and msg field
       auto root = YAML::LoadFile(yaml_path);
@@ -201,10 +190,12 @@ public:
                         sim_state_ == sim_msgs::msg::SimState::STATE_RUNNING);
 
         if (running) {
-          model_->update(dt_sec, inputs, latest_fdm_, active_failures_);
+          static const std::vector<std::string> no_failures;
+          model_->update(dt_sec, inputs, latest_fdm_, no_failures);
         } else if (panel_dirty_) {
           // Frozen but panel changed — run once with dt=0 (no time advance)
-          model_->update(0.0, inputs, latest_fdm_, active_failures_);
+          static const std::vector<std::string> no_failures;
+          model_->update(0.0, inputs, latest_fdm_, no_failures);
           panel_dirty_ = false;
         }
 
@@ -239,12 +230,11 @@ public:
     flight_model_sub_.reset();
     panel_sub_.reset();
     engine_controls_sub_.reset();
-    failure_sub_.reset();
     electrical_sub_.reset();
     fuel_sub_.reset();
     model_.reset();
     loader_.reset();
-    active_failures_.clear();
+    sw_cfg_ = {};
     RCLCPP_INFO(this->get_logger(), "sim_engine_systems cleaned up");
     publish_lifecycle_state("unconfigured");
     return CallbackReturn::SUCCESS;
@@ -286,36 +276,45 @@ private:
       inputs.mixture[i] = ec.mixture[i];
     }
 
-    // Panel switches → discrete inputs
+    // Panel switches → discrete inputs (IDs from aircraft YAML via plugin)
     for (size_t i = 0; i < latest_panel_.switch_ids.size() &&
                         i < latest_panel_.switch_states.size(); ++i) {
       const auto & id = latest_panel_.switch_ids[i];
       bool on = latest_panel_.switch_states[i];
 
-      // Map panel switch IDs to engine input fields
-      if (id == "sw_starter_0" || id == "sw_starter")   inputs.starter[0] = on;
-      else if (id == "sw_starter_1")                     inputs.starter[1] = on;
-      else if (id == "sw_starter_2")                     inputs.starter[2] = on;
-      else if (id == "sw_starter_3")                     inputs.starter[3] = on;
-      else if (id == "sw_ignition_0" || id == "sw_magnetos") inputs.ignition[0] = on;
-      else if (id == "sw_ignition_1")                    inputs.ignition[1] = on;
-      else if (id == "sw_fuel_cutoff_0")                 inputs.fuel_cutoff[0] = on;
-      else if (id == "sw_fuel_cutoff_1")                 inputs.fuel_cutoff[1] = on;
+      for (size_t e = 0; e < sw_cfg_.starter_ids.size() && e < 4; ++e) {
+        if (!sw_cfg_.starter_ids[e].empty() && id == sw_cfg_.starter_ids[e])
+          inputs.starter[e] = on;
+      }
+      for (size_t e = 0; e < sw_cfg_.ignition_ids.size() && e < 4; ++e) {
+        if (!sw_cfg_.ignition_ids[e].empty() && id == sw_cfg_.ignition_ids[e])
+          inputs.ignition[e] = on;
+      }
+      for (size_t e = 0; e < sw_cfg_.fuel_cutoff_ids.size() && e < 4; ++e) {
+        if (!sw_cfg_.fuel_cutoff_ids[e].empty() && id == sw_cfg_.fuel_cutoff_ids[e])
+          inputs.fuel_cutoff[e] = on;
+      }
     }
 
-    // Selectors → power/prop/condition levers (from panel selectors)
+    // Selectors → power/prop/condition levers (IDs from aircraft YAML via plugin)
     for (size_t i = 0; i < latest_panel_.selector_ids.size() &&
                         i < latest_panel_.selector_values.size(); ++i) {
       const auto & id = latest_panel_.selector_ids[i];
       int val = latest_panel_.selector_values[i];
       float norm = static_cast<float>(val) / 100.0f;  // selector 0-100 → 0.0-1.0
 
-      if (id == "sel_prop_0")           inputs.prop_lever[0] = norm;
-      else if (id == "sel_prop_1")      inputs.prop_lever[1] = norm;
-      else if (id == "sel_condition_0") inputs.condition_lever[0] = norm;
-      else if (id == "sel_condition_1") inputs.condition_lever[1] = norm;
-      else if (id == "sel_power_0")     inputs.power_lever[0] = norm;
-      else if (id == "sel_power_1")     inputs.power_lever[1] = norm;
+      for (size_t e = 0; e < sw_cfg_.prop_lever_ids.size() && e < 4; ++e) {
+        if (!sw_cfg_.prop_lever_ids[e].empty() && id == sw_cfg_.prop_lever_ids[e])
+          inputs.prop_lever[e] = norm;
+      }
+      for (size_t e = 0; e < sw_cfg_.condition_lever_ids.size() && e < 4; ++e) {
+        if (!sw_cfg_.condition_lever_ids[e].empty() && id == sw_cfg_.condition_lever_ids[e])
+          inputs.condition_lever[e] = norm;
+      }
+      for (size_t e = 0; e < sw_cfg_.power_lever_ids.size() && e < 4; ++e) {
+        if (!sw_cfg_.power_lever_ids[e].empty() && id == sw_cfg_.power_lever_ids[e])
+          inputs.power_lever[e] = norm;
+      }
     }
 
     // Systems coupling
@@ -389,7 +388,6 @@ private:
   rclcpp::Subscription<sim_msgs::msg::FlightModelState>::SharedPtr flight_model_sub_;
   rclcpp::Subscription<sim_msgs::msg::PanelControls>::SharedPtr panel_sub_;
   rclcpp::Subscription<sim_msgs::msg::EngineControls>::SharedPtr engine_controls_sub_;
-  rclcpp::Subscription<sim_msgs::msg::FailureList>::SharedPtr failure_sub_;
   rclcpp::Subscription<sim_msgs::msg::ElectricalState>::SharedPtr electrical_sub_;
   rclcpp::Subscription<sim_msgs::msg::FuelState>::SharedPtr fuel_sub_;
 
@@ -409,8 +407,8 @@ private:
   sim_msgs::msg::FlightModelState latest_fdm_;
   sim_msgs::msg::PanelControls latest_panel_;
   sim_msgs::msg::EngineControls latest_engine_controls_;
-  std::vector<std::string> active_failures_;
   std::string engine_type_ = "unknown";
+  sim_interfaces::EngineSwitchConfig sw_cfg_;
 
   // Systems coupling state
   float latest_bus_voltage_ = 0.0f;
