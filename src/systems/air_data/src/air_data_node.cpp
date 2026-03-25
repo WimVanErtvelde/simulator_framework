@@ -1,6 +1,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_lifecycle/lifecycle_node.hpp>
 #include <lifecycle_msgs/msg/transition.hpp>
+#include <lifecycle_msgs/msg/state.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <pluginlib/class_loader.hpp>
 #include <sim_interfaces/i_air_data_model.hpp>
@@ -36,8 +37,12 @@ public:
       [this]() {
         auto_start_timer_->cancel();
         auto_start_timer_.reset();
-        this->trigger_transition(
+        auto st = this->trigger_transition(
           lifecycle_msgs::msg::Transition::TRANSITION_CONFIGURE);
+        if (st.id() != lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE) {
+          RCLCPP_ERROR(this->get_logger(), "Auto-start: configure failed — stays unconfigured");
+          return;
+        }
         this->trigger_transition(
           lifecycle_msgs::msg::Transition::TRANSITION_ACTIVATE);
       });
@@ -302,6 +307,7 @@ public:
   {
     heartbeat_timer_.reset();
     update_timer_.reset();
+    air_data_state_pub_->on_deactivate();
     RCLCPP_INFO(this->get_logger(), "sim_air_data deactivated");
     publish_lifecycle_state("inactive");
     return CallbackReturn::SUCCESS;

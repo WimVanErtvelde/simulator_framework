@@ -50,8 +50,8 @@
 - `sim_hydraulic`, `sim_ice_protection`, `sim_pressurization` — heartbeat only, no solver
 - Virtual cockpit avionics page — placeholder
 
-### Known bugs (see BUGS.md)
-No open bugs.
+### Known bugs (see bugs.md, ARCHITECTURE_AUDIT.md)
+Architecture audit complete (2026-03-25). All Batch 1/2/3 bugs fixed. Remaining items are documented inconsistencies for opportunistic cleanup.
 
 ### Not yet implemented
 - IOS: COM/NAV freq entry, flight departure/arrival graphs, freeze pos/fuel toggles, debrief
@@ -2064,3 +2064,17 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - FIXED: F1.14 — Created SearchNavaids.srv. navaid_sim provides search service (works with any data source). ios_backend calls service instead of maintaining its own XP-only parser.
 - FALSE POSITIVE: F2.13 — navaid_sim already subscribes to /sim/failure/navaid_commands.
 - AFFECTS: IFuelModel interface, fuel_node, C172/EC135 fuel plugins, navigation_node, JSBSimAdapter, config.yaml (both aircraft), navaid_sim, ios_backend, useSimStore.js, sim_msgs (new SearchNavaids.srv)
+
+## 2026-03-25 — Claude Code
+
+### Architecture audit Batch 3 fixes
+
+- FIXED: EC135 missing air_data.yaml — created config (unblocks EC135 launch with sim_air_data).
+- FIXED: F4.2 — cigi_bridge inet_aton replaced with inet_pton + error check + socket cleanup on failure.
+- FIXED: F4.10 — atmosphere_node density now computed from actual OAT (not ISA temp). Correct density altitude in non-ISA conditions.
+- FIXED: F4.7 — All 13 ios_backend ROS2 callbacks wrapped with @_safe_callback decorator. Errors logged instead of silently swallowed.
+- FIXED: F3.1+F3.2 — flight_model_adapter and cigi_bridge now publish SimAlert on configure failure.
+- FIXED: F3.3 — Added on_deactivate() call on LifecyclePublisher in 4 nodes (electrical, engines, gear, air_data).
+- FIXED: F3.9 — All 13 lifecycle nodes check configure state before calling activate.
+- FIXED: F3.12 — sim_navigation now has alert_pub_ for error reporting to IOS.
+- AFFECTS: atmosphere_node, cigi_bridge, flight_model_adapter, ios_backend, sim_electrical, sim_engine_systems, sim_gear, sim_air_data, sim_navigation, all lifecycle nodes (configure guard), ec135 config.

@@ -59,6 +59,18 @@ import uvicorn
 
 
 
+def _safe_callback(fn):
+    """Decorator: catch exceptions in ROS2 subscription callbacks so spin_once survives."""
+    from functools import wraps
+    @wraps(fn)
+    def wrapper(self, msg):
+        try:
+            fn(self, msg)
+        except Exception as e:
+            self.get_logger().warn(f'[{fn.__name__}] callback error: {e}')
+    return wrapper
+
+
 # ── ROS2 Node ────────────────────────────────────────────────────────────────
 
 class IosBackendNode(Node):
@@ -172,6 +184,7 @@ class IosBackendNode(Node):
         msg.data = f'{self.get_name()}:{state}'
         self._lifecycle_pub.publish(msg)
 
+    @_safe_callback
     def _on_flight_model_state(self, msg: FlightModelState):
         import math as _m
         data = {
@@ -191,6 +204,7 @@ class IosBackendNode(Node):
         with self._lock:
             self._latest['flight_model_state'] = data
 
+    @_safe_callback
     def _on_fuel_state(self, msg: FuelState):
         n = int(msg.tank_count) if msg.tank_count > 0 else 4
         data = {
@@ -216,6 +230,7 @@ class IosBackendNode(Node):
         with self._lock:
             self._latest['fuel_state'] = data
 
+    @_safe_callback
     def _on_sim_state(self, msg: SimState):
         state_names = {0: 'INIT', 1: 'READY', 2: 'RUNNING', 3: 'FROZEN',
                        4: 'RESETTING', 5: 'SHUTDOWN'}
@@ -238,6 +253,7 @@ class IosBackendNode(Node):
                 self._load_fuel_config(msg.aircraft_id)
                 self._load_failures_config(msg.aircraft_id)
 
+    @_safe_callback
     def _on_nav_state(self, msg: NavigationState):
         xpdr_modes = {0: 'OFF', 1: 'STBY', 2: 'ON', 3: 'ALT'}
         to_from_names = {0: 'OFF', 1: 'TO', 2: 'FROM'}
@@ -324,6 +340,7 @@ class IosBackendNode(Node):
         with self._lock:
             self._latest['nav_state'] = data
 
+    @_safe_callback
     def _on_avionics_controls(self, msg: AvionicsControls):
         xpdr_modes = {0: 'OFF', 1: 'STBY', 2: 'ON', 3: 'ALT'}
         data = {
@@ -347,6 +364,7 @@ class IosBackendNode(Node):
         with self._lock:
             self._latest['avionics'] = data
 
+    @_safe_callback
     def _on_electrical_state(self, msg: ElectricalState):
         data = {
             'type': 'electrical_state',
@@ -372,6 +390,7 @@ class IosBackendNode(Node):
         with self._lock:
             self._latest['electrical_state'] = data
 
+    @_safe_callback
     def _on_sim_alert(self, msg: SimAlert):
         severity_names = {0: 'INFO', 1: 'WARNING', 2: 'CRITICAL'}
         data = {
@@ -395,6 +414,7 @@ class IosBackendNode(Node):
                         'last_error': msg.message,
                     }
 
+    @_safe_callback
     def _on_engine_state(self, msg: EngineState):
         n = msg.engine_count
         # Map engine_state enum to running/failed bools for frontend compatibility
@@ -514,6 +534,7 @@ class IosBackendNode(Node):
         except Exception as e:
             self.get_logger().error(f'Failed to load fuel config: {e}')
 
+    @_safe_callback
     def _on_failure_state(self, msg: FailureState):
         data = {
             'type': 'failure_state',
@@ -526,6 +547,7 @@ class IosBackendNode(Node):
         with self._lock:
             self._latest['failure_state'] = data
 
+    @_safe_callback
     def _on_terrain_source(self, msg: TerrainSource):
         source_names = {0: 'CIGI', 1: 'SRTM', 2: 'MSL', 255: 'UNKNOWN'}
         data = {
@@ -537,6 +559,7 @@ class IosBackendNode(Node):
         with self._lock:
             self._latest['terrain_source'] = data
 
+    @_safe_callback
     def _on_air_data_state(self, msg: AirDataState):
         data = {
             'type': 'air_data_state',
@@ -669,6 +692,7 @@ class IosBackendNode(Node):
         msg.starter = bool(data.get('starter', False))
         self._raw_engine_pub.publish(msg)
 
+    @_safe_callback
     def _on_heartbeat(self, msg: String):
         node_name = msg.data
         with nodes_lock:
@@ -680,6 +704,7 @@ class IosBackendNode(Node):
                     discovered_nodes[node_name]['lifecycle_state'] = 'active'
             discovered_nodes[node_name]['last_seen'] = time.time()
 
+    @_safe_callback
     def _on_lifecycle_state(self, msg: String):
         parts = msg.data.split(':', 1)
         if len(parts) == 2:

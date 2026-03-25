@@ -17,6 +17,7 @@
 #include <sim_msgs/msg/engine_controls.hpp>
 #include <sim_msgs/msg/hat_hot_response.hpp>
 #include <sim_msgs/msg/terrain_source.hpp>
+#include <sim_msgs/msg/sim_alert.hpp>
 
 #include <yaml-cpp/yaml.h>
 #include <ament_index_cpp/get_package_share_directory.hpp>
@@ -75,6 +76,8 @@ public:
       "/sim/terrain/source", 10);
     terrain_ready_pub_ = this->create_publisher<std_msgs::msg::Bool>(
       "/sim/terrain/ready", 10);
+    alert_pub_ = this->create_publisher<sim_msgs::msg::SimAlert>(
+      "/sim/alerts", 10);
 
     // CIGI HOT response subscription — terrain data from IG (already filtered by cigi_bridge)
     hat_response_sub_ = this->create_subscription<sim_msgs::msg::HatHotResponse>(
@@ -213,12 +216,22 @@ public:
       RCLCPP_INFO(this->get_logger(), "JSBSim root dir: %s", jsbsim_root.c_str());
       if (!adapter_->initialize(aircraft_id, jsbsim_root, jsbsim_model_name, default_ic)) {
         RCLCPP_ERROR(this->get_logger(), "Failed to initialize JSBSim adapter");
+        auto alert = sim_msgs::msg::SimAlert();
+        alert.severity = sim_msgs::msg::SimAlert::SEVERITY_CRITICAL;
+        alert.source = "flight_model_adapter";
+        alert.message = "Failed to initialize JSBSim adapter for " + aircraft_id;
+        alert_pub_->publish(alert);
         return CallbackReturn::FAILURE;
       }
       RCLCPP_INFO(this->get_logger(), "JSBSim model loaded successfully");
       caps_ = adapter_->get_capabilities();
     } else {
       RCLCPP_ERROR(this->get_logger(), "Unknown flight model type: %s", fdm_type.c_str());
+      auto alert = sim_msgs::msg::SimAlert();
+      alert.severity = sim_msgs::msg::SimAlert::SEVERITY_CRITICAL;
+      alert.source = "flight_model_adapter";
+      alert.message = "Unknown flight model type: " + fdm_type;
+      alert_pub_->publish(alert);
       return CallbackReturn::FAILURE;
     }
 
@@ -520,6 +533,7 @@ private:
   rclcpp::Publisher<sim_msgs::msg::FlightModelCapabilities>::SharedPtr caps_pub_;
   rclcpp::Publisher<sim_msgs::msg::TerrainSource>::SharedPtr terrain_source_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr terrain_ready_pub_;
+  rclcpp::Publisher<sim_msgs::msg::SimAlert>::SharedPtr alert_pub_;
 
   rclcpp::Subscription<sim_msgs::msg::SimState>::SharedPtr sim_state_sub_;
   rclcpp::Subscription<sim_msgs::msg::InitialConditions>::SharedPtr ic_sub_;

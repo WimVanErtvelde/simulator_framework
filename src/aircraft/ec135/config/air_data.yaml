@@ -1,0 +1,13 @@
+air_data:
+  systems:
+    - name: primary
+      pitot:
+        heat_load: "pitot_heat"
+        ice_delay_s: 45.0
+        ice_clear_rate: 2.0
+      static:
+        alternate_switch: "sw_alt_static"
+        alternate_offset_pa: -25.0
+      turbulence:
+        pitot_noise_gain: 0.12
+      vsi_lag_s: 1.5

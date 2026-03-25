@@ -1,6 +1,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_lifecycle/lifecycle_node.hpp>
 #include <lifecycle_msgs/msg/transition.hpp>
+#include <lifecycle_msgs/msg/state.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <sim_msgs/msg/flight_model_state.hpp>
 #include <sim_msgs/msg/nav_signal_table.hpp>
@@ -8,6 +9,7 @@
 #include <sim_msgs/msg/navigation_state.hpp>
 #include <sim_msgs/msg/failure_state.hpp>
 #include <sim_msgs/msg/sim_state.hpp>
+#include <sim_msgs/msg/sim_alert.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -36,8 +38,12 @@ public:
       [this]() {
         auto_start_timer_->cancel();
         auto_start_timer_.reset();
-        this->trigger_transition(
+        auto st = this->trigger_transition(
           lifecycle_msgs::msg::Transition::TRANSITION_CONFIGURE);
+        if (st.id() != lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE) {
+          RCLCPP_ERROR(this->get_logger(), "Auto-start: configure failed — stays unconfigured");
+          return;
+        }
         this->trigger_transition(
           lifecycle_msgs::msg::Transition::TRANSITION_ACTIVATE);
       });
@@ -51,6 +57,8 @@ public:
       "/sim/diagnostics/heartbeat", 10);
     lifecycle_state_pub_ = this->create_publisher<std_msgs::msg::String>(
       "/sim/diagnostics/lifecycle_state", 10);
+    alert_pub_ = this->create_publisher<sim_msgs::msg::SimAlert>(
+      "/sim/alerts", 10);
     nav_state_pub_ = this->create_publisher<sim_msgs::msg::NavigationState>(
       "/sim/navigation/state", 10);
 
@@ -139,6 +147,7 @@ public:
   {
     heartbeat_pub_.reset();
     lifecycle_state_pub_.reset();
+    alert_pub_.reset();
     nav_state_pub_.reset();
     flight_model_sub_.reset();
     nav_signals_sub_.reset();
@@ -432,6 +441,7 @@ private:
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr heartbeat_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr lifecycle_state_pub_;
   rclcpp_lifecycle::LifecyclePublisher<sim_msgs::msg::NavigationState>::SharedPtr nav_state_pub_;
+  rclcpp::Publisher<sim_msgs::msg::SimAlert>::SharedPtr alert_pub_;
 
   // Subscriptions
   rclcpp::Subscription<sim_msgs::msg::FlightModelState>::SharedPtr flight_model_sub_;

@@ -1,6 +1,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_lifecycle/lifecycle_node.hpp>
 #include <lifecycle_msgs/msg/transition.hpp>
+#include <lifecycle_msgs/msg/state.hpp>
 #include <std_msgs/msg/header.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <sim_msgs/msg/flight_model_state.hpp>
@@ -44,8 +45,12 @@ public:
       [this]() {
         auto_start_timer_->cancel();
         auto_start_timer_.reset();
-        this->trigger_transition(
+        auto st = this->trigger_transition(
           lifecycle_msgs::msg::Transition::TRANSITION_CONFIGURE);
+        if (st.id() != lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE) {
+          RCLCPP_ERROR(this->get_logger(), "Auto-start: configure failed — stays unconfigured");
+          return;
+        }
         this->trigger_transition(
           lifecycle_msgs::msg::Transition::TRANSITION_ACTIVATE);
       });
@@ -156,12 +161,13 @@ private:
       // The coefficient g/(R*T) = 9.80665/(287.058*216.65) ≈ 0.0001577
     }
 
-    double density = P_isa / (ISA_R * T_isa);
-    double speed_of_sound = std::sqrt(ISA_GAMMA * ISA_R * T_isa);
-
-    // Apply instructor deviations
+    // Apply instructor OAT deviation to get actual temperature
     double oat_k = T_isa + oat_deviation_k_;
     double qnh = qnh_pa_;
+
+    // Density uses actual OAT (not ISA) — affects TAS, dynamic pressure, density altitude
+    double density = P_isa / (ISA_R * oat_k);
+    double speed_of_sound = std::sqrt(ISA_GAMMA * ISA_R * oat_k);
 
     // Derived altitudes
     double pressure_altitude = HYPSO_SCALE * (1.0 - std::pow(P_isa / ISA_P0, HYPSO_P_EXP));

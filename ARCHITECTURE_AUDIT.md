@@ -3,6 +3,8 @@
 **Date:** 2026-03-25
 **Batch 1 fixes applied:** 2026-03-25. F2.1, F2.3, F1.1, F1.2, F4.1, F4.3, F4.4 resolved.
 **Batch 2 fixes applied:** 2026-03-25. F3.6, F3.7, F3.13, F1.3, F1.4, F6.5, F1.14 resolved. F2.13 false positive.
+**Batch 3 fixes applied:** 2026-03-25. F4.2, F4.7, F4.10, F3.1, F3.2, F3.3, F3.9, F3.12, EC135 air_data.yaml resolved.
+All batches complete. Remaining items in Batch 3 (F1.5–F1.13, F2.2, F2.6, F2.9, F3.4, F3.8, F3.10, F3.11, F4.5, F4.6, F4.8, F4.9, F4.11, F4.12) are documented inconsistencies — fix when next touching those files.
 See DECISIONS.md for details.
 **Scope:** Read-only review of all nodes, messages, configs, and wiring
 **Method:** Automated agent analysis of every .cpp, .hpp, .py, .msg, .srv, .yaml file under src/, ios/, and launch/

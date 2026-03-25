@@ -1,4 +1,5 @@
 #include "cigi_bridge/cigi_host_node.hpp"
+#include <lifecycle_msgs/msg/state.hpp>
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -72,7 +73,11 @@ CigiHostNode::CigiHostNode()
         [this]() {
             auto_start_timer_->cancel();
             auto_start_timer_.reset();
-            trigger_transition(lifecycle_msgs::msg::Transition::TRANSITION_CONFIGURE);
+            auto st = trigger_transition(lifecycle_msgs::msg::Transition::TRANSITION_CONFIGURE);
+            if (st.id() != lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE) {
+                RCLCPP_ERROR(get_logger(), "Auto-start: configure failed — stays unconfigured");
+                return;
+            }
             trigger_transition(lifecycle_msgs::msg::Transition::TRANSITION_ACTIVATE);
         });
 
@@ -94,10 +99,16 @@ CallbackReturn CigiHostNode::on_configure(const rclcpp_lifecycle::State &)
     lifecycle_pub_  = create_publisher<std_msgs::msg::String>("/sim/diagnostics/lifecycle_state", 10);
     hat_pub_        = create_publisher<sim_msgs::msg::HatHotResponse>("/sim/cigi/hat_responses", 10);
     ig_status_pub_  = create_publisher<std_msgs::msg::UInt8>("/sim/cigi/ig_status", 10);
+    alert_pub_      = create_publisher<sim_msgs::msg::SimAlert>("/sim/alerts", 10);
 
     if (!open_sockets()) {
         RCLCPP_ERROR(get_logger(), "cigi_bridge: failed to open UDP sockets (ig=%s:%d host_port=%d)",
                      ig_address_.c_str(), ig_port_, host_port_);
+        auto alert = sim_msgs::msg::SimAlert();
+        alert.severity = sim_msgs::msg::SimAlert::SEVERITY_CRITICAL;
+        alert.source = "cigi_bridge";
+        alert.message = "Failed to open UDP sockets (ig=" + ig_address_ + ":" + std::to_string(ig_port_) + ")";
+        alert_pub_->publish(alert);
         return CallbackReturn::FAILURE;
     }
 
@@ -598,7 +609,12 @@ bool CigiHostNode::open_sockets()
     memset(&ig_addr_, 0, sizeof ig_addr_);
     ig_addr_.sin_family = AF_INET;
     ig_addr_.sin_port   = htons(static_cast<uint16_t>(ig_port_));
-    inet_aton(ig_address_.c_str(), &ig_addr_.sin_addr);
+    if (inet_pton(AF_INET, ig_address_.c_str(), &ig_addr_.sin_addr) != 1) {
+        RCLCPP_ERROR(get_logger(), "cigi_bridge: invalid ig_address '%s'", ig_address_.c_str());
+        close(send_fd_);
+        send_fd_ = -1;
+        return false;
+    }
 
     recv_fd_ = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (recv_fd_ < 0) return false;

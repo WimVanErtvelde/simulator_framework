@@ -7,6 +7,7 @@
 #include <sim_msgs/msg/flight_model_capabilities.hpp>
 #include <sim_msgs/msg/hat_hot_response.hpp>
 #include <sim_msgs/msg/sim_state.hpp>
+#include <sim_msgs/msg/sim_alert.hpp>
 
 #include "cigi_bridge/hat_request_tracker.hpp"
 
@@ -127,6 +128,7 @@ private:
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr heartbeat_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr lifecycle_pub_;
     rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr ig_status_pub_;
+    rclcpp::Publisher<sim_msgs::msg::SimAlert>::SharedPtr alert_pub_;
 
     rclcpp::TimerBase::SharedPtr send_timer_;
     rclcpp::TimerBase::SharedPtr heartbeat_timer_;
