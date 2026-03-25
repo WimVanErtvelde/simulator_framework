@@ -183,6 +183,15 @@ public:
     return state;
   }
 
+  void reset() override
+  {
+    for (size_t i = 0; i < tanks_.size(); ++i) {
+      tank_qty_kg_[i] = tanks_[i].capacity_kg;
+    }
+    engine_fuel_flow_kgs_.clear();
+    boost_pump_on_.clear();
+  }
+
 private:
   std::vector<TankDef> tanks_;
   std::vector<FeedDef> feeds_;

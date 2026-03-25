@@ -7,6 +7,7 @@
 #include <sim_msgs/msg/avionics_controls.hpp>
 #include <sim_msgs/msg/navigation_state.hpp>
 #include <sim_msgs/msg/failure_state.hpp>
+#include <sim_msgs/msg/sim_state.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -74,6 +75,20 @@ public:
         last_avionics_ = *msg;
       });
 
+    sim_state_sub_ = this->create_subscription<sim_msgs::msg::SimState>(
+      "/sim/state", 10,
+      [this](const sim_msgs::msg::SimState::SharedPtr msg) {
+        auto prev = sim_state_;
+        sim_state_ = msg->state;
+        if (sim_state_ == sim_msgs::msg::SimState::STATE_RESETTING &&
+            prev != sim_msgs::msg::SimState::STATE_RESETTING) {
+          dme_hold_valid_ = false;
+          dme_hold_distance_nm_ = 0.0f;
+          dme_hold_gs_kt_ = 0.0f;
+          RCLCPP_INFO(this->get_logger(), "Navigation state reset (DME HOLD cleared)");
+        }
+      });
+
     failure_state_sub_ = this->create_subscription<sim_msgs::msg::FailureState>(
       "/sim/failure_state",
       rclcpp::QoS(10).reliable(),
@@ -128,6 +143,7 @@ public:
     flight_model_sub_.reset();
     nav_signals_sub_.reset();
     avionics_sub_.reset();
+    sim_state_sub_.reset();
     failure_state_sub_.reset();
     latest_failure_state_.reset();
     RCLCPP_INFO(this->get_logger(), "sim_navigation cleaned up");
@@ -421,6 +437,7 @@ private:
   rclcpp::Subscription<sim_msgs::msg::FlightModelState>::SharedPtr flight_model_sub_;
   rclcpp::Subscription<sim_msgs::msg::NavSignalTable>::SharedPtr nav_signals_sub_;
   rclcpp::Subscription<sim_msgs::msg::AvionicsControls>::SharedPtr avionics_sub_;
+  rclcpp::Subscription<sim_msgs::msg::SimState>::SharedPtr sim_state_sub_;
   rclcpp::Subscription<sim_msgs::msg::FailureState>::SharedPtr failure_state_sub_;
   // Timers
   rclcpp::TimerBase::SharedPtr heartbeat_timer_;
@@ -433,6 +450,8 @@ private:
   sim_msgs::msg::AvionicsControls last_avionics_;
   bool flight_model_received_{false};
   bool nav_signals_received_{false};
+
+  uint8_t sim_state_{0};
 
   // Latest failure state from sim_failures
   sim_msgs::msg::FailureState::SharedPtr latest_failure_state_;

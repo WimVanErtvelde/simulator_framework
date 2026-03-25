@@ -20,6 +20,7 @@ public:
       const sim_msgs::msg::PanelControls & panel,
       const std::vector<std::string> & active_failures) = 0;
   virtual void apply_initial_conditions(float fuel_total_pct) = 0;
+  virtual void reset() = 0;
   virtual sim_msgs::msg::FuelState get_state() const = 0;
 };
 

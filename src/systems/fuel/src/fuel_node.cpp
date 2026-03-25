@@ -64,8 +64,18 @@ public:
     sim_state_sub_ = this->create_subscription<sim_msgs::msg::SimState>(
       "/sim/state", 10,
       [this](sim_msgs::msg::SimState::SharedPtr msg) {
+        auto prev = sim_state_;
+        sim_state_ = msg->state;
         is_frozen_ = (msg->state == sim_msgs::msg::SimState::STATE_FROZEN);
         freeze_fuel_ = msg->freeze_fuel;
+
+        if (sim_state_ == sim_msgs::msg::SimState::STATE_RESETTING &&
+            prev != sim_msgs::msg::SimState::STATE_RESETTING) {
+          if (model_) {
+            model_->reset();
+            RCLCPP_INFO(this->get_logger(), "Fuel reset to initial conditions");
+          }
+        }
       });
 
     panel_sub_ = this->create_subscription<sim_msgs::msg::PanelControls>(
@@ -326,6 +336,7 @@ private:
   sim_msgs::msg::FlightModelState latest_flight_model_state_;
   sim_msgs::msg::PanelControls latest_panel_;
   bool flight_model_received_ = false;
+  uint8_t sim_state_ = sim_msgs::msg::SimState::STATE_INIT;
   bool is_frozen_ = false;
   bool freeze_fuel_ = false;
 

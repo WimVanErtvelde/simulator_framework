@@ -1,0 +1,11 @@
+string query          # ident prefix or name substring, min 2 chars
+uint8 max_results     # default 20
+string types          # comma-sep filter: "VOR,NDB,ILS,DME" or empty for all
+---
+string[] idents
+string[] names
+string[] types
+float64[] latitudes
+float64[] longitudes
+float32[] frequencies_mhz
+float32[] ranges_nm

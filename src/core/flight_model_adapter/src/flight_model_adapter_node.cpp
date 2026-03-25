@@ -178,13 +178,40 @@ public:
     RCLCPP_INFO(this->get_logger(), "Configuring flight model: type=%s, aircraft=%s",
       fdm_type.c_str(), aircraft_id.c_str());
 
+    // Load aircraft config.yaml (model name, default IC, gear height)
+    std::string jsbsim_model_name;
+    sim_msgs::msg::InitialConditions default_ic;
+    try {
+      auto pkg_dir = ament_index_cpp::get_package_share_directory("aircraft_" + aircraft_id);
+      auto config_path = pkg_dir + "/config/config.yaml";
+      YAML::Node config = YAML::LoadFile(config_path);
+      if (config["jsbsim_model_name"]) {
+        jsbsim_model_name = config["jsbsim_model_name"].as<std::string>();
+      }
+      if (config["gear_ground_height_m"]) {
+        gear_cg_height_m_ = config["gear_ground_height_m"].as<double>();
+        RCLCPP_INFO(this->get_logger(), "Gear ground height from config: %.2f m", gear_cg_height_m_);
+      }
+      if (config["initial_conditions"]) {
+        auto ic = config["initial_conditions"];
+        default_ic.latitude_deg = ic["latitude_deg"].as<double>(0.0);
+        default_ic.longitude_deg = ic["longitude_deg"].as<double>(0.0);
+        default_ic.altitude_msl_m = ic["altitude_msl_m"].as<double>(0.0);
+        default_ic.heading_rad = ic["heading_rad"].as<double>(0.0);
+        default_ic.airspeed_ms = ic["airspeed_ms"].as<double>(0.0);
+      }
+    } catch (const std::exception & e) {
+      RCLCPP_WARN(this->get_logger(), "Could not load aircraft config: %s — using defaults",
+        e.what());
+    }
+
     if (fdm_type == "jsbsim") {
       adapter_ = std::make_unique<flight_model_adapter::JSBSimAdapter>();
       if (jsbsim_root.empty()) {
         jsbsim_root = JSBSIM_ROOT_DIR;
       }
       RCLCPP_INFO(this->get_logger(), "JSBSim root dir: %s", jsbsim_root.c_str());
-      if (!adapter_->initialize(aircraft_id, jsbsim_root)) {
+      if (!adapter_->initialize(aircraft_id, jsbsim_root, jsbsim_model_name, default_ic)) {
         RCLCPP_ERROR(this->get_logger(), "Failed to initialize JSBSim adapter");
         return CallbackReturn::FAILURE;
       }
@@ -193,20 +220,6 @@ public:
     } else {
       RCLCPP_ERROR(this->get_logger(), "Unknown flight model type: %s", fdm_type.c_str());
       return CallbackReturn::FAILURE;
-    }
-
-    // Load gear ground height from aircraft config.yaml
-    try {
-      auto pkg_dir = ament_index_cpp::get_package_share_directory("aircraft_" + aircraft_id);
-      auto config_path = pkg_dir + "/config/config.yaml";
-      YAML::Node config = YAML::LoadFile(config_path);
-      if (config["gear_ground_height_m"]) {
-        gear_cg_height_m_ = config["gear_ground_height_m"].as<double>();
-        RCLCPP_INFO(this->get_logger(), "Gear ground height from config: %.2f m", gear_cg_height_m_);
-      }
-    } catch (const std::exception & e) {
-      RCLCPP_WARN(this->get_logger(), "Could not load gear height: %s — using default %.2fm",
-        e.what(), gear_cg_height_m_);
     }
 
     RCLCPP_INFO(this->get_logger(),

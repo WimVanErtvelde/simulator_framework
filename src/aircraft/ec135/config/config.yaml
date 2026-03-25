@@ -12,6 +12,8 @@ aircraft:
     - sim_gear
     - sim_navigation
 
+jsbsim_model_name: "ec135"
+
 initial_conditions:
   latitude_deg: 52.3          # EHAM
   longitude_deg: 4.46

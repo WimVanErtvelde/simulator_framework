@@ -52,6 +52,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/GetTerrainElevation.srv"
   "srv/SearchAirports.srv"
   "srv/GetRunways.srv"
+  "srv/SearchNavaids.srv"
   DEPENDENCIES builtin_interfaces std_msgs
 )
 

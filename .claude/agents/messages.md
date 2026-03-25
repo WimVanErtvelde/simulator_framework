@@ -31,7 +31,7 @@ src/sim_msgs/
 ├── CMakeLists.txt     ← rosidl_generate_interfaces() with all .msg/.srv files
 ├── package.xml
 ├── msg/               ← all .msg definitions
-└── srv/               ← all .srv definitions (SearchAirports, GetRunways, GetTerrainElevation)
+└── srv/               ← all .srv definitions (SearchAirports, GetRunways, GetTerrainElevation, SearchNavaids)
 ```
 
 ## SimCommand constants (AUTHORITATIVE — verify against SimCommand.msg if in doubt)

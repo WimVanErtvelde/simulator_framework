@@ -49,93 +49,13 @@ from sim_msgs.msg import (FlightModelState, FuelState, SimState, SimCommand, Pan
 from std_msgs.msg import String
 from lifecycle_msgs.srv import ChangeState
 from lifecycle_msgs.msg import Transition
-from sim_msgs.srv import SearchAirports, GetRunways
+from sim_msgs.srv import SearchAirports, GetRunways, SearchNavaids
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import JSONResponse
 import uvicorn
 
 
-# ── Navaid database (loaded once at startup) ─────────────────────────────────
-
-_navaid_db = []  # list of dicts: {ident, name, type, freq_mhz, lat, lon, range_nm}
-
-
-def _load_navaid_database():
-    """Parse earth_nav.dat (X-Plane format) and cache navaid entries."""
-    global _navaid_db
-
-    # Try installed share path first, then source tree
-    candidates = []
-    ament_path = os.environ.get('AMENT_PREFIX_PATH', '')
-    for prefix in ament_path.split(':'):
-        if prefix:
-            candidates.append(os.path.join(prefix, 'share', 'navaid_sim', 'data', 'earth_nav.dat'))
-    candidates.append('src/core/navaid_sim/data/earth_nav.dat')
-
-    path = None
-    for c in candidates:
-        if os.path.isfile(c):
-            path = c
-            break
-
-    if not path:
-        return
-
-    entries = []
-    with open(path, 'r', errors='replace') as f:
-        for line in f:
-            tokens = line.split()
-            if len(tokens) < 9:
-                continue
-            try:
-                type_code = int(tokens[0])
-            except ValueError:
-                continue
-
-            if type_code == 3 and len(tokens) >= 9:
-                # VOR: lat, lon, ele, freq*100, range, variation, ident, [airport, region,] name
-                lat = float(tokens[1])
-                lon = float(tokens[2])
-                freq_mhz = int(tokens[4]) / 100.0
-                range_nm = float(tokens[5])
-                ident = tokens[7]
-                name = tokens[10] if len(tokens) >= 11 else tokens[8]
-                entries.append({
-                    'ident': ident.upper(), 'name': name.upper(), 'type': 'VOR',
-                    'freq_mhz': round(freq_mhz, 2), 'lat': round(lat, 5),
-                    'lon': round(lon, 5), 'range_nm': round(range_nm, 0),
-                })
-            elif type_code == 2 and len(tokens) >= 9:
-                # NDB: lat, lon, ele, freq_khz (not *100 in some versions), range, ?, ident, name
-                lat = float(tokens[1])
-                lon = float(tokens[2])
-                freq_raw = int(tokens[4])
-                # XP earth_nav.dat stores NDB freq in kHz directly (not *100)
-                freq_mhz = freq_raw / 1000.0  # convert kHz to MHz for display
-                range_nm = float(tokens[5])
-                ident = tokens[7]
-                name = tokens[10] if len(tokens) >= 11 else tokens[8]
-                entries.append({
-                    'ident': ident.upper(), 'name': name.upper(), 'type': 'NDB',
-                    'freq_mhz': round(freq_mhz, 3), 'lat': round(lat, 5),
-                    'lon': round(lon, 5), 'range_nm': round(range_nm, 0),
-                })
-            elif type_code in (4, 5) and len(tokens) >= 11:
-                # ILS/LOC: lat, lon, ele, freq*100, range, bearing, ident, airport, ...
-                lat = float(tokens[1])
-                lon = float(tokens[2])
-                freq_mhz = int(tokens[4]) / 100.0
-                range_nm = float(tokens[5])
-                ident = tokens[7]
-                name = tokens[11] if len(tokens) >= 12 else tokens[10]
-                entries.append({
-                    'ident': ident.upper(), 'name': name.upper(), 'type': 'ILS',
-                    'freq_mhz': round(freq_mhz, 2), 'lat': round(lat, 5),
-                    'lon': round(lon, 5), 'range_nm': round(range_nm, 0),
-                })
-
-    _navaid_db = entries
 
 
 
@@ -212,6 +132,8 @@ class IosBackendNode(Node):
             SearchAirports, '/navaid_sim/search_airports')
         self._get_runways_cli = self.create_client(
             GetRunways, '/navaid_sim/get_runways')
+        self._search_navaids_cli = self.create_client(
+            SearchNavaids, '/navaid_sim/search_navaids')
 
         # Own heartbeat at 1 Hz
         self._heartbeat_timer = self.create_timer(1.0, self._publish_heartbeat)
@@ -1026,36 +948,47 @@ async def root():
 
 
 @app.get('/api/navaids/search')
-async def search_navaids(
+async def search_navaids_endpoint(
     q: str = Query('', min_length=1),
     types: str = Query(''),
     limit: int = Query(20, ge=1, le=50),
 ):
-    """Search navaid database by ident prefix or name substring."""
-    query = q.upper().strip()
-    if not query:
+    """Search navaid database via navaid_sim ROS2 service."""
+    query = q.strip()
+    if not query or len(query) < 2 or not ros_node:
         return JSONResponse([])
 
-    # Filter by type if specified
-    type_filter = set()
-    if types:
-        type_filter = {t.strip().upper() for t in types.split(',')}
-
-    ident_matches = []
-    name_matches = []
-    for nav in _navaid_db:
-        if type_filter and nav['type'] not in type_filter:
-            continue
-        if nav['ident'].startswith(query):
-            ident_matches.append(nav)
-        elif query in nav['name']:
-            name_matches.append(nav)
-
-    # Ident prefix matches first (sorted), then name matches (sorted)
-    ident_matches.sort(key=lambda n: n['ident'])
-    name_matches.sort(key=lambda n: n['ident'])
-    results = (ident_matches + name_matches)[:limit]
-    return JSONResponse(results)
+    try:
+        cli = ros_node._search_navaids_cli
+        if not cli.service_is_ready():
+            return JSONResponse([])
+        req = SearchNavaids.Request()
+        req.query = query
+        req.max_results = min(limit, 50)
+        req.types = types
+        future = cli.call_async(req)
+        deadline = time.time() + 3.0
+        while not future.done() and time.time() < deadline:
+            await asyncio.sleep(0.05)
+        if not future.done():
+            return JSONResponse([])
+        result = future.result()
+        navaids = []
+        for i in range(len(result.idents)):
+            navaids.append({
+                'ident': result.idents[i],
+                'name': result.names[i],
+                'type': result.types[i],
+                'lat': result.latitudes[i],
+                'lon': result.longitudes[i],
+                'freq_mhz': result.frequencies_mhz[i],
+                'range_nm': result.ranges_nm[i],
+            })
+        return JSONResponse(navaids)
+    except Exception as e:
+        if ros_node:
+            ros_node.get_logger().warn(f'[search_navaids] error: {e}')
+        return JSONResponse([])
 
 
 def _airport_msg_to_dict(apt):
@@ -1159,7 +1092,6 @@ async def _handle_get_runways(ws, icao):
 @app.on_event('startup')
 async def startup_event():
     global ros_node
-    _load_navaid_database()
     rclpy.init()
     ros_node = IosBackendNode()
 

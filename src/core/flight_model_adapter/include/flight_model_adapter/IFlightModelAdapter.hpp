@@ -64,11 +64,15 @@ public:
   virtual ~IFlightModelAdapter() = default;
 
   /// Load the flight model aircraft model.
-  /// @param aircraft_id  Aircraft type key (e.g. "c172")
-  /// @param aircraft_path  Root path containing flight model aircraft data directories
+  /// @param aircraft_id   Aircraft type key (e.g. "c172")
+  /// @param aircraft_path Root path containing flight model aircraft data directories
+  /// @param model_name    FDM-specific model name (e.g. "c172p" for JSBSim). Empty = use aircraft_id.
+  /// @param default_ic    Default initial conditions from aircraft config.yaml
   /// @return true on success
   virtual bool initialize(const std::string & aircraft_id,
-                           const std::string & aircraft_path) = 0;
+                           const std::string & aircraft_path,
+                           const std::string & model_name,
+                           const sim_msgs::msg::InitialConditions & default_ic) = 0;
 
   /// Apply initial conditions (position, config, etc.)
   virtual void apply_initial_conditions(

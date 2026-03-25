@@ -13,6 +13,8 @@ aircraft:
     - sim_air_data
     - sim_navigation
 
+jsbsim_model_name: "c172p"
+
 initial_conditions:
   latitude_deg: 50.9014       # EBBR
   longitude_deg: 4.4844

@@ -114,7 +114,9 @@ JSBSimAdapter::JSBSimAdapter() = default;
 JSBSimAdapter::~JSBSimAdapter() = default;
 
 bool JSBSimAdapter::initialize(const std::string & aircraft_id,
-                                const std::string & aircraft_path)
+                                const std::string & aircraft_path,
+                                const std::string & model_name_arg,
+                                const sim_msgs::msg::InitialConditions & default_ic)
 {
   aircraft_id_ = aircraft_id;
 
@@ -128,17 +130,11 @@ bool JSBSimAdapter::initialize(const std::string & aircraft_id,
     exec_->SetEnginePath(SGPath("engine"));
     exec_->SetSystemsPath(SGPath("systems"));
 
-    // Load the aircraft model
-    // JSBSim C172P model dir is "c172p" under aircraft/
-    std::string model_name;
-    if (aircraft_id == "c172") {
-      model_name = "c172p";
-    } else {
-      model_name = aircraft_id;
-    }
+    // Load the aircraft model — name from aircraft config.yaml
+    std::string resolved_model = model_name_arg.empty() ? aircraft_id : model_name_arg;
 
-    if (!exec_->LoadModel(model_name)) {
-      std::cerr << "[JSBSimAdapter] Failed to load model: " << model_name << std::endl;
+    if (!exec_->LoadModel(resolved_model)) {
+      std::cerr << "[JSBSimAdapter] Failed to load model: " << resolved_model << std::endl;
       return false;
     }
 
@@ -150,14 +146,14 @@ bool JSBSimAdapter::initialize(const std::string & aircraft_id,
     // Disable JSBSim console output
     exec_->SetDebugLevel(0);
 
-    // Apply default initial conditions: on ground at EBBR, ready for takeoff.
+    // Apply default IC from aircraft config.yaml.
     // sim_manager will override via apply_initial_conditions() once INIT→READY.
     auto fgic = exec_->GetIC();
-    fgic->SetGeodLatitudeDegIC(50.9014);   // EBBR
-    fgic->SetLongitudeDegIC(4.4844);
-    fgic->SetAltitudeASLFtIC(100.0 / FT_TO_M);  // approximate — on-ground overrides
-    fgic->SetPsiDegIC(254.0);          // Rwy 25L
-    fgic->SetVcalibratedKtsIC(0.0);
+    fgic->SetGeodLatitudeDegIC(default_ic.latitude_deg);
+    fgic->SetLongitudeDegIC(default_ic.longitude_deg);
+    fgic->SetAltitudeASLFtIC(default_ic.altitude_msl_m / FT_TO_M);
+    fgic->SetPsiDegIC(default_ic.heading_rad * 180.0 / M_PI);
+    fgic->SetVcalibratedKtsIC(default_ic.airspeed_ms * 1.94384);
     fgic->SetClimbRateFpsIC(0.0);
     exec_->SetPropertyValue("simulation/force-on-ground", 1.0);
 
@@ -174,7 +170,7 @@ bool JSBSimAdapter::initialize(const std::string & aircraft_id,
     exec_->SetPropertyValue("propulsion/set-running", 0);  // engine index 0
 
     initialized_ = true;
-    std::cout << "[JSBSimAdapter] Loaded model '" << model_name
+    std::cout << "[JSBSimAdapter] Loaded model '" << resolved_model
               << "' (dt=" << internal_dt_ << "s)" << std::endl;
     return true;
 

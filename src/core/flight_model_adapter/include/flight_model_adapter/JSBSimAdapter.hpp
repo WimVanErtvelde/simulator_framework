@@ -19,7 +19,9 @@ public:
   ~JSBSimAdapter() override;
 
   bool initialize(const std::string & aircraft_id,
-                  const std::string & aircraft_path) override;
+                  const std::string & aircraft_path,
+                  const std::string & model_name,
+                  const sim_msgs::msg::InitialConditions & default_ic) override;
 
   void apply_initial_conditions(
     const sim_msgs::msg::InitialConditions & ic) override;

@@ -2052,3 +2052,15 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - FIXED: F1.1 — Added EngineSwitchConfig to IEnginesModel interface. C172 and EC135 plugins return switch IDs from engine.yaml config. engines_node reads switch IDs from plugin, no hardcoded strings in framework code.
 - ALSO: Added COLCON_IGNORE to x-plane_plugins/ (requires cross-compilation, not part of workspace build).
 - AFFECTS: electrical_node, fuel_node, engines_node, gear_node, air_data_node, failures_node, JSBSimAdapter, ios_backend, IEnginesModel interface, C172/EC135 engine plugins, engine.yaml configs.
+
+## 2026-03-25 — Claude Code
+
+### Architecture audit Batch 2 fixes
+
+- FIXED: F3.6/F3.13 — Added reset() to IFuelModel interface. C172 + EC135 plugins restore tank quantities on reset. fuel_node calls model_->reset() on RESETTING.
+- FIXED: F3.7 — navigation_node subscribes to /sim/state, clears DME HOLD state on RESETTING.
+- FIXED: F1.3/F1.4 — Added jsbsim_model_name to config.yaml. JSBSimAdapter reads model name + default IC from config. No hardcoded aircraft-specific values in framework code.
+- FIXED: F6.5 — useSimStore.js handles air_data_state WS messages, stores pitot-static data.
+- FIXED: F1.14 — Created SearchNavaids.srv. navaid_sim provides search service (works with any data source). ios_backend calls service instead of maintaining its own XP-only parser.
+- FALSE POSITIVE: F2.13 — navaid_sim already subscribes to /sim/failure/navaid_commands.
+- AFFECTS: IFuelModel interface, fuel_node, C172/EC135 fuel plugins, navigation_node, JSBSimAdapter, config.yaml (both aircraft), navaid_sim, ios_backend, useSimStore.js, sim_msgs (new SearchNavaids.srv)

@@ -99,6 +99,11 @@ namespace AS
 			return false;
 		}
 
+		const std::multimap<int, VOR> & allVORs() const { return mVORs; }
+		const std::multimap<int, NDB> & allNDBs() const { return mNDBs; }
+		const std::multimap<int, ILS_LOC> & allLOCs() const { return mILS_LOCs; }
+		const std::multimap<int, DME> & allDMEs() const { return mDMEs; }
+
 		size_t numVORs()     const { return mVORs.size();     }
 		size_t numNDBs()     const { return mNDBs.size();     }
 		size_t numLOCs()     const { return mILS_LOCs.size(); }

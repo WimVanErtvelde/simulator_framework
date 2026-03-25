@@ -9,6 +9,7 @@
 #include <sim_msgs/srv/get_terrain_elevation.hpp>
 #include <sim_msgs/srv/search_airports.hpp>
 #include <sim_msgs/srv/get_runways.hpp>
+#include <sim_msgs/srv/search_navaids.hpp>
 #include <sim_msgs/msg/airport.hpp>
 #include <sim_msgs/msg/runway.hpp>
 
@@ -232,6 +233,69 @@ public:
         }
       });
 
+    // Search navaids service
+    search_navaids_srv_ = this->create_service<sim_msgs::srv::SearchNavaids>(
+      "/navaid_sim/search_navaids",
+      [this](const sim_msgs::srv::SearchNavaids::Request::SharedPtr req,
+             sim_msgs::srv::SearchNavaids::Response::SharedPtr resp) {
+        if (!world_) return;
+        std::string query = req->query;
+        for (auto & c : query) c = static_cast<char>(std::toupper(c));
+        if (query.size() < 2) return;
+
+        size_t max_r = req->max_results > 0 ? req->max_results : 20;
+        std::set<std::string> type_filter;
+        if (!req->types.empty()) {
+          std::istringstream ss(req->types);
+          std::string t;
+          while (std::getline(ss, t, ',')) {
+            for (auto & c : t) c = static_cast<char>(std::toupper(c));
+            auto trimmed = t.substr(t.find_first_not_of(' ') == std::string::npos ? 0 : t.find_first_not_of(' '));
+            if (!trimmed.empty()) type_filter.insert(trimmed);
+          }
+        }
+
+        auto push = [&](const std::string & ident, const std::string & name,
+                        const std::string & type, double lat, double lon,
+                        float freq_mhz, float range) {
+          if (!type_filter.empty() && type_filter.find(type) == type_filter.end()) return;
+          std::string uident = ident;
+          for (auto & c : uident) c = static_cast<char>(std::toupper(c));
+          std::string uname = name;
+          for (auto & c : uname) c = static_cast<char>(std::toupper(c));
+          bool is_match = (uident.find(query) == 0) ||
+                          (uname.find(query) != std::string::npos);
+          if (!is_match) return;
+          if (resp->idents.size() >= max_r) return;
+          resp->idents.push_back(ident);
+          resp->names.push_back(name);
+          resp->types.push_back(type);
+          resp->latitudes.push_back(lat);
+          resp->longitudes.push_back(lon);
+          resp->frequencies_mhz.push_back(freq_mhz);
+          resp->ranges_nm.push_back(range);
+        };
+
+        for (auto & [f, v] : world_->allVORs()) {
+          if (resp->idents.size() >= max_r) break;
+          push(v.mIdent, v.mName, "VOR",
+               v.mLatLon.get_lat_deg(), v.mLatLon.get_lon_deg(),
+               static_cast<float>(v.mFrequency) / 100.0f, v.mRange);
+        }
+        for (auto & [f, n] : world_->allNDBs()) {
+          if (resp->idents.size() >= max_r) break;
+          push(n.mIdent, n.mName, "NDB",
+               n.mLatLon.get_lat_deg(), n.mLatLon.get_lon_deg(),
+               static_cast<float>(n.mFrequency), n.mRange);
+        }
+        for (auto & [f, l] : world_->allLOCs()) {
+          if (resp->idents.size() >= max_r) break;
+          push(l.mIdent, l.mName, "ILS",
+               l.mLatLon.get_lat_deg(), l.mLatLon.get_lon_deg(),
+               static_cast<float>(l.mFrequency) / 100.0f, l.mRange);
+        }
+      });
+
     // ── Startup summary ─────────────────────────────────────────────
     RCLCPP_INFO(this->get_logger(), "========== navaid_sim configured ==========");
     RCLCPP_INFO(this->get_logger(), "  NavDB:   %s (%s)",
@@ -306,6 +370,7 @@ public:
     terrain_srv_.reset();
     search_airports_srv_.reset();
     get_runways_srv_.reset();
+    search_navaids_srv_.reset();
     airport_db_.reset();
     failed_stations_.clear();
     task_.reset();
@@ -636,6 +701,7 @@ private:
   rclcpp::Service<sim_msgs::srv::GetTerrainElevation>::SharedPtr terrain_srv_;
   rclcpp::Service<sim_msgs::srv::SearchAirports>::SharedPtr search_airports_srv_;
   rclcpp::Service<sim_msgs::srv::GetRunways>::SharedPtr get_runways_srv_;
+  rclcpp::Service<sim_msgs::srv::SearchNavaids>::SharedPtr search_navaids_srv_;
 
   // Timers
   rclcpp::TimerBase::SharedPtr heartbeat_timer_;

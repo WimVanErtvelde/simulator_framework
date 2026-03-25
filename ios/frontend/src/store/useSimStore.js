@@ -109,6 +109,15 @@ export const useSimStore = create((set, get) => ({
     masterBusVoltage: 0, avionicsBusPowered: false, essentialBusPowered: false,
   },
 
+  // Air data (from sim_air_data pitot-static model)
+  airData: {
+    iasKt: 0, casKt: 0, mach: 0,
+    altIndicatedFt: 0, altPressureFt: 0, vsFpm: 0,
+    satC: 0, tatC: 0,
+    pitotHealthy: true, staticHealthy: true,
+    pitotHeatOn: false, pitotIcePct: 0,
+  },
+
   // Avionics config (from aircraft YAML — drives dynamic A/C page layout)
   avionicsConfig: { radios: [], displays: [] },
 
@@ -623,6 +632,25 @@ export const useSimStore = create((set, get) => ({
           case 'failures_config':
             set({
               failuresCatalog: msg.catalog ?? s.failuresCatalog,
+            })
+            break
+
+          case 'air_data_state':
+            set({
+              airData: {
+                iasKt: msg.ias_kt ?? s.airData.iasKt,
+                casKt: msg.cas_kt ?? s.airData.casKt,
+                mach: msg.mach ?? s.airData.mach,
+                altIndicatedFt: msg.alt_indicated_ft ?? s.airData.altIndicatedFt,
+                altPressureFt: msg.alt_pressure_ft ?? s.airData.altPressureFt,
+                vsFpm: msg.vs_fpm ?? s.airData.vsFpm,
+                satC: msg.sat_c ?? s.airData.satC,
+                tatC: msg.tat_c ?? s.airData.tatC,
+                pitotHealthy: msg.pitot_healthy ?? s.airData.pitotHealthy,
+                staticHealthy: msg.static_healthy ?? s.airData.staticHealthy,
+                pitotHeatOn: msg.pitot_heat_on ?? s.airData.pitotHeatOn,
+                pitotIcePct: msg.pitot_ice_pct ?? s.airData.pitotIcePct,
+              },
             })
             break
 
