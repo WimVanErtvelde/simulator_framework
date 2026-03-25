@@ -42,7 +42,9 @@ def generate_launch_description():
         Node(package='atmosphere_node', executable='atmosphere_node',
              name='atmosphere_node', parameters=[sim_time]),
         Node(package='sim_cigi_bridge', executable='cigi_bridge_node',
-             name='cigi_bridge', parameters=[sim_time, {'aircraft_id': aircraft_id}]),
+             name='cigi_bridge', parameters=[
+                 'src/core/cigi_bridge/config/cigi_bridge.yaml',
+                 sim_time, {'aircraft_id': aircraft_id}]),
 
         # Systems with pluginlib (lifecycle nodes — load aircraft-specific plugins)
         Node(package='sim_electrical', executable='electrical_node',

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSimStore } from '../../store/useSimStore'
 import { SectionHeader, FullWidthBtn } from './PanelUtils'
+import KeyboardPopup from '../ui/KeyboardPopup'
 
 const ATA_CHAPTERS = [
   { code: 21, name: 'AIR COND & PRESS' },
@@ -17,6 +18,43 @@ const ATA_CHAPTERS = [
   { code: 71, name: 'POWER PLANT' },
 ]
 
+// ── Navaid results list (shared between inline and popup views) ──────────────
+
+function NavaidResultsList({ results, selected, onSelect }) {
+  return (
+    <div style={{
+      maxHeight: 180, overflowY: 'auto', border: '1px solid #1e293b',
+      borderRadius: 3, background: '#111827', marginBottom: 6,
+    }}>
+      {results.map((nav, i) => {
+        const isSelected = selected?.ident === nav.ident && selected?.type === nav.type
+          && selected?.freq_mhz === nav.freq_mhz
+        return (
+          <button
+            key={`${nav.ident}-${nav.type}-${nav.freq_mhz}-${i}`}
+            onClick={() => onSelect(nav)}
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+              padding: '6px 10px', border: 'none', borderBottom: '1px solid #1e293b',
+              background: isSelected ? 'rgba(0, 255, 136, 0.1)' : 'transparent',
+              color: '#e2e8f0', fontSize: 11, fontFamily: 'monospace',
+              cursor: 'pointer', textAlign: 'left',
+            }}
+          >
+            <span style={{ color: '#00ff88', minWidth: 42, fontWeight: 700 }}>{nav.ident}</span>
+            <span style={{ color: '#64748b', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nav.name}</span>
+            <span style={{ color: '#39d0d8', minWidth: 30 }}>{nav.type}</span>
+            <span style={{ color: '#94a3b8', minWidth: 50, textAlign: 'right' }}>
+              {nav.type === 'NDB' ? `${(nav.freq_mhz * 1000).toFixed(0)} kHz` : `${nav.freq_mhz.toFixed(2)}`}
+            </span>
+            <span style={{ color: '#475569', minWidth: 40, textAlign: 'right' }}>{nav.range_nm}nm</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 // ── Navaid search sub-component for world_navaid failures ────────────────────
 
 function NavaidSearch({ onInject }) {
@@ -24,6 +62,7 @@ function NavaidSearch({ onInject }) {
   const [typeFilter, setTypeFilter] = useState('ALL')
   const [results, setResults] = useState([])
   const [selected, setSelected] = useState(null)
+  const [kbOpen, setKbOpen] = useState(false)
   const debounceRef = useRef(null)
 
   const doSearch = useCallback(async (q, types) => {
@@ -59,13 +98,39 @@ function NavaidSearch({ onInject }) {
   return (
     <div style={{ padding: '8px 0' }}>
       <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
-        <input
-          type="text"
-          placeholder="Search navaids..."
-          value={query}
-          onChange={(e) => { setQuery(e.target.value); setSelected(null) }}
-          style={{ ...inputStyle, flex: 1 }}
-        />
+        <div
+          style={{
+            ...inputStyle, flex: 1, cursor: 'pointer',
+            display: 'flex', alignItems: 'center',
+            color: query ? '#e2e8f0' : '#475569',
+          }}
+          onClick={() => setKbOpen(true)}
+        >
+          {query || 'Search navaids...'}
+        </div>
+        {kbOpen && (
+          <KeyboardPopup
+            label="Navaid search"
+            value={query}
+            onChange={(val) => {
+              setQuery(val)
+              setSelected(null)
+            }}
+            onSubmit={(val) => {
+              setQuery(val)
+              setSelected(null)
+              setKbOpen(false)
+            }}
+            onCancel={() => setKbOpen(false)}
+          >
+            {results.length > 0 && (
+              <NavaidResultsList results={results} selected={selected} onSelect={(nav) => {
+                setSelected(nav)
+                setKbOpen(false)
+              }} />
+            )}
+          </KeyboardPopup>
+        )}
         <select
           value={typeFilter}
           onChange={(e) => setTypeFilter(e.target.value)}
@@ -78,37 +143,8 @@ function NavaidSearch({ onInject }) {
         </select>
       </div>
 
-      {results.length > 0 && (
-        <div style={{
-          maxHeight: 220, overflowY: 'auto', border: '1px solid #1e293b',
-          borderRadius: 3, background: '#111827',
-        }}>
-          {results.map((nav, i) => {
-            const isSelected = selected?.ident === nav.ident && selected?.type === nav.type
-              && selected?.freq_mhz === nav.freq_mhz
-            return (
-              <button
-                key={`${nav.ident}-${nav.type}-${nav.freq_mhz}-${i}`}
-                onClick={() => setSelected(nav)}
-                style={{
-                  width: '100%', display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '6px 10px', border: 'none', borderBottom: '1px solid #1e293b',
-                  background: isSelected ? 'rgba(0, 255, 136, 0.1)' : 'transparent',
-                  color: '#e2e8f0', fontSize: 11, fontFamily: 'monospace',
-                  cursor: 'pointer', textAlign: 'left',
-                }}
-              >
-                <span style={{ color: '#00ff88', minWidth: 42, fontWeight: 700 }}>{nav.ident}</span>
-                <span style={{ color: '#64748b', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nav.name}</span>
-                <span style={{ color: '#39d0d8', minWidth: 30 }}>{nav.type}</span>
-                <span style={{ color: '#94a3b8', minWidth: 50, textAlign: 'right' }}>
-                  {nav.type === 'NDB' ? `${(nav.freq_mhz * 1000).toFixed(0)} kHz` : `${nav.freq_mhz.toFixed(2)}`}
-                </span>
-                <span style={{ color: '#475569', minWidth: 40, textAlign: 'right' }}>{nav.range_nm}nm</span>
-              </button>
-            )
-          })}
-        </div>
+      {!kbOpen && results.length > 0 && (
+        <NavaidResultsList results={results} selected={selected} onSelect={setSelected} />
       )}
 
       <button

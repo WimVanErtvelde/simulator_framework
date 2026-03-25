@@ -1,12 +1,40 @@
 import { useState } from 'react'
 import { useSimStore } from '../../store/useSimStore'
 import { PanelRow, SectionHeader, FullWidthBtn } from './PanelUtils'
+import KeyboardPopup from '../ui/KeyboardPopup'
 
 const inputBase = {
   width: '100%', height: 44, padding: '8px 12px',
   background: '#1c2333', border: '1px solid #1e293b', borderRadius: 3,
   color: '#e2e8f0', fontFamily: 'monospace', fontSize: 13,
   WebkitAppearance: 'none', outline: 'none',
+}
+
+function SessionField({ label, value, onChange }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <label style={{ fontSize: 12, color: '#64748b', fontFamily: 'monospace', display: 'block', marginBottom: 12 }}>
+      {label}
+      <div
+        style={{
+          ...inputBase, cursor: 'pointer',
+          display: 'flex', alignItems: 'center',
+          color: value ? '#e2e8f0' : '#475569',
+        }}
+        onClick={() => setOpen(true)}
+      >
+        {value || `Enter ${label.toLowerCase()}...`}
+      </div>
+      {open && (
+        <KeyboardPopup
+          label={label}
+          value={value}
+          onSubmit={(v) => { onChange(v); setOpen(false) }}
+          onCancel={() => setOpen(false)}
+        />
+      )}
+    </label>
+  )
 }
 
 export default function SessionPanel() {
@@ -30,21 +58,12 @@ export default function SessionPanel() {
   return (
     <div>
       <SectionHeader title="SESSION INFO" />
-      <label style={{ fontSize: 12, color: '#64748b', fontFamily: 'monospace', display: 'block', marginBottom: 12 }}>
-        Instructor Name
-        <input style={inputBase} value={form.instructorName}
-          onChange={(e) => setForm(p => ({ ...p, instructorName: e.target.value }))} />
-      </label>
-      <label style={{ fontSize: 12, color: '#64748b', fontFamily: 'monospace', display: 'block', marginBottom: 12 }}>
-        Pilot Name
-        <input style={inputBase} value={form.pilotName}
-          onChange={(e) => setForm(p => ({ ...p, pilotName: e.target.value }))} />
-      </label>
-      <label style={{ fontSize: 12, color: '#64748b', fontFamily: 'monospace', display: 'block', marginBottom: 12 }}>
-        Session Name
-        <input style={inputBase} value={form.sessionName}
-          onChange={(e) => setForm(p => ({ ...p, sessionName: e.target.value }))} />
-      </label>
+      <SessionField label="Instructor Name" value={form.instructorName}
+        onChange={(v) => setForm(p => ({ ...p, instructorName: v }))} />
+      <SessionField label="Pilot Name" value={form.pilotName}
+        onChange={(v) => setForm(p => ({ ...p, pilotName: v }))} />
+      <SessionField label="Session Name" value={form.sessionName}
+        onChange={(v) => setForm(p => ({ ...p, sessionName: v }))} />
       <FullWidthBtn
         label="SAVE"
         style={{ marginBottom: 16 }}

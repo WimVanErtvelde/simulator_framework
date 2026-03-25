@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useSimStore } from '../../store/useSimStore'
 import { PanelRow, SectionHeader, FullWidthBtn } from './PanelUtils'
+import NumpadPopup from '../ui/NumpadPopup'
 
 const PRESETS = {
   VMC:      { vis: 10000, qnh: 1013 },
@@ -21,6 +22,34 @@ const neutralBtn = {
   color: '#64748b', fontSize: 12, fontFamily: 'monospace', fontWeight: 700,
   letterSpacing: 1, textTransform: 'uppercase',
   cursor: 'pointer', touchAction: 'manipulation', transition: 'opacity 0.15s',
+}
+
+function WeatherField({ label, field, form, update, placeholder, inputStyle, allowDecimal = false, hint = '' }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <label style={{ fontSize: 12, color: '#64748b', fontFamily: 'monospace', display: 'block', marginBottom: 4 }}>{label}
+      <div
+        style={{
+          ...inputStyle(field), cursor: 'pointer',
+          display: 'flex', alignItems: 'center',
+          color: form[field] !== '' ? '#e2e8f0' : '#475569',
+        }}
+        onClick={() => setOpen(true)}
+      >
+        {form[field] !== '' ? form[field] : placeholder}
+      </div>
+      {open && (
+        <NumpadPopup
+          label={label}
+          hint={hint}
+          value={form[field]}
+          allowDecimal={allowDecimal}
+          onSubmit={(v) => { update(field, v); setOpen(false) }}
+          onCancel={() => setOpen(false)}
+        />
+      )}
+    </label>
+  )
 }
 
 export default function WeatherPanel() {
@@ -68,21 +97,16 @@ export default function WeatherPanel() {
 
       <SectionHeader title="SET CONDITIONS" />
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <label style={{ fontSize: 12, color: '#64748b', fontFamily: 'monospace', display: 'block', marginBottom: 4 }}>Visibility (m)
-          <input type="number" style={inputStyle('vis')} value={form.vis} placeholder={atmosphere.visibilityM} onChange={e => update('vis', e.target.value)} />
-        </label>
-        <label style={{ fontSize: 12, color: '#64748b', fontFamily: 'monospace', display: 'block', marginBottom: 4 }}>QNH (hPa)
-          <input type="number" style={inputStyle('qnh')} value={form.qnh} placeholder={atmosphere.qnhHpa} onChange={e => update('qnh', e.target.value)} />
-        </label>
-        <label style={{ fontSize: 12, color: '#64748b', fontFamily: 'monospace', display: 'block', marginBottom: 4 }}>OAT (°C)
-          <input type="number" style={inputStyle('oat')} value={form.oat} placeholder={atmosphere.oatCelsius} onChange={e => update('oat', e.target.value)} />
-        </label>
-        <label style={{ fontSize: 12, color: '#64748b', fontFamily: 'monospace', display: 'block', marginBottom: 4 }}>Wind Dir (°)
-          <input type="number" style={inputStyle('windDir')} value={form.windDir} placeholder={atmosphere.windDirDeg} onChange={e => update('windDir', e.target.value)} />
-        </label>
-        <label style={{ fontSize: 12, color: '#64748b', fontFamily: 'monospace', display: 'block', marginBottom: 4 }}>Wind Spd (kt)
-          <input type="number" style={inputStyle('windSpd')} value={form.windSpd} placeholder={atmosphere.windSpeedKt} onChange={e => update('windSpd', e.target.value)} />
-        </label>
+        <WeatherField label="Visibility (m)" field="vis" form={form} update={update}
+          placeholder={atmosphere.visibilityM} inputStyle={inputStyle} hint="metres" />
+        <WeatherField label="QNH (hPa)" field="qnh" form={form} update={update}
+          placeholder={atmosphere.qnhHpa} inputStyle={inputStyle} allowDecimal hint="hPa" />
+        <WeatherField label="OAT (\u00B0C)" field="oat" form={form} update={update}
+          placeholder={atmosphere.oatCelsius} inputStyle={inputStyle} allowDecimal hint="\u00B0C" />
+        <WeatherField label="Wind Dir (\u00B0)" field="windDir" form={form} update={update}
+          placeholder={atmosphere.windDirDeg} inputStyle={inputStyle} hint="0\u2013360" />
+        <WeatherField label="Wind Spd (kt)" field="windSpd" form={form} update={update}
+          placeholder={atmosphere.windSpeedKt} inputStyle={inputStyle} hint="knots" />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, margin: '12px 0' }}>

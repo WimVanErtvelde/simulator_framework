@@ -42,6 +42,16 @@ node_modules/
 # OS
 .DS_Store
 Thumbs.db
+*.Zone.Identifier
+
+# Stale migration scripts / archives
+patch_*.py
+patchios2.py
+reposition_refactor.tar.gz*
+
+# X-Plane plugin build artifacts and nested git
+x-plane_plugins/.git/
+x-plane_plugins/xplanecigi/build/
 
 # Docker
 .docker/

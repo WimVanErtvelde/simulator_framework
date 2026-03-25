@@ -1,4 +1,6 @@
+import { useState, useCallback } from 'react'
 import { useSimStore } from '../store/useSimStore'
+import NumpadPopup from './ui/NumpadPopup'
 
 const STATE_BADGES = {
   RUNNING:       { bg: '#1a4731', text: '#3fb950', border: '#2d6a4f' },
@@ -61,10 +63,47 @@ const TERRAIN_INDICATORS = {
   UNKNOWN: { dot: '#8b949e', label: 'NO TERR' },
 }
 
+// Radio config for numpad popups (type → validation + display)
+const RADIO_TUNING = {
+  com1: { storeKey: 'com1Mhz', wireKey: 'com1_mhz', type: 'com' },
+  com2: { storeKey: 'com2Mhz', wireKey: 'com2_mhz', type: 'com' },
+  com3: { storeKey: 'com3Mhz', wireKey: 'com3_mhz', type: 'com' },
+  nav1: { storeKey: 'nav1Mhz', wireKey: 'nav1_mhz', type: 'nav' },
+  nav2: { storeKey: 'nav2Mhz', wireKey: 'nav2_mhz', type: 'nav' },
+  adf:  { storeKey: 'adf1Khz', wireKey: 'adf1_khz', type: 'adf' },
+  adf2: { storeKey: 'adf2Khz', wireKey: 'adf2_khz', type: 'adf' },
+}
+
+const RADIO_VALIDATE = {
+  com: { min: 118.0, max: 136.975, decimal: true, digits: '0123456789', hint: '118.00\u2013136.97' },
+  nav: { min: 108.0, max: 117.95, decimal: true, digits: '0123456789', hint: '108.00\u2013117.95' },
+  adf: { min: 190, max: 1750, decimal: false, digits: '0123456789', hint: '190\u20131750 kHz' },
+}
+
+// Build a full avionics wire payload from current state with one field updated
+const WIRE_KEYS = {
+  com1Mhz: 'com1_mhz', com2Mhz: 'com2_mhz', com3Mhz: 'com3_mhz',
+  nav1Mhz: 'nav1_mhz', nav2Mhz: 'nav2_mhz',
+  adf1Khz: 'adf1_khz', adf2Khz: 'adf2_khz',
+  xpdrCode: 'xpdr_code', obs1: 'obs1', obs2: 'obs2',
+}
+
+function buildAvionicsPayload(avionics, storeKey, newVal) {
+  const updated = { ...avionics, [storeKey]: newVal }
+  const wire = {}
+  for (const [sk, wk] of Object.entries(WIRE_KEYS)) {
+    if (updated[sk] !== undefined) wire[wk] = updated[sk]
+  }
+  wire.xpdr_mode = 0
+  return wire
+}
+
 export default function StatusStrip() {
   const { simState, simTimeSec, aircraftId, fdm, atmosphere,
           armedFailures, activeFailures, avionics, avionicsConfig,
-          terrainSource } = useSimStore()
+          terrainSource, sendAvionics } = useSimStore()
+  const [numpad, setNumpad] = useState(null)   // { id, label, anchor }
+  const [numpadError, setNumpadError] = useState(false)
   const dim = simState === 'UNKNOWN' || simState === 'INIT'
   const v = (val, decimals = 0) => {
     if (dim) return '--'
@@ -73,6 +112,38 @@ export default function StatusStrip() {
     return (Object.is(rounded, -0) ? 0 : rounded).toFixed(decimals)
   }
   const badge = STATE_BADGES[simState] ?? DEFAULT_BADGE
+
+  const openNumpad = useCallback((id, label, e) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    setNumpadError(false)
+    setNumpad({ id, label, anchor: { x: rect.left, y: rect.bottom } })
+  }, [])
+
+  const handleNumpadSubmit = useCallback((val) => {
+    if (!numpad) return
+    const tuning = RADIO_TUNING[numpad.id]
+    const isXpdr = numpad.id === 'xpdr'
+
+    if (isXpdr) {
+      // Validate XPDR: 4 digits, octal (0-7 each)
+      if (!/^[0-7]{4}$/.test(val)) {
+        setNumpadError(true)
+        return
+      }
+      const wire = buildAvionicsPayload(avionics, 'xpdrCode', parseInt(val, 10))
+      sendAvionics(wire)
+    } else if (tuning) {
+      const rv = RADIO_VALIDATE[tuning.type]
+      const num = parseFloat(val)
+      if (isNaN(num) || num < rv.min || num > rv.max) {
+        setNumpadError(true)
+        return
+      }
+      const wire = buildAvionicsPayload(avionics, tuning.storeKey, num)
+      sendAvionics(wire)
+    }
+    setNumpad(null)
+  }, [numpad, avionics, sendAvionics])
 
   let xpdrBadge = XPDR_BADGES[avionics.xpdrMode] ?? XPDR_BADGES.STBY
   if (String(avionics.xpdrCode) === '7700') xpdrBadge = XPDR_BADGES.EMER
@@ -119,16 +190,56 @@ export default function StatusStrip() {
           if (type === 'obs' || type === 'xpdr') return null
           const info = RADIO_HEADER[id]
           if (!info) return null
+          const tappable = !!RADIO_TUNING[id]
           return (
             <span key={id}>
               {i > 0 && <Sep />}
-              <span style={{ color: '#64748b' }}>{label}</span>&nbsp;{v(avionics[info.storeKey], info.decimals)}
+              <span
+                style={{
+                  cursor: tappable ? 'pointer' : 'default',
+                  borderBottom: tappable ? '1px dashed #334155' : 'none',
+                  padding: '2px 0',
+                }}
+                onClick={tappable ? (e) => openNumpad(id, label, e) : undefined}
+              >
+                <span style={{ color: '#64748b' }}>{label}</span>&nbsp;{v(avionics[info.storeKey], info.decimals)}
+              </span>
             </span>
           )
         })}
-        <Sep /><span style={{ color: '#64748b' }}>XPDR</span>&nbsp;{v(avionics.xpdrCode)}&nbsp;
+        <Sep />
+        <span
+          style={{ cursor: 'pointer', borderBottom: '1px dashed #334155', padding: '2px 0' }}
+          onClick={(e) => openNumpad('xpdr', 'XPDR', e)}
+        >
+          <span style={{ color: '#64748b' }}>XPDR</span>&nbsp;{v(avionics.xpdrCode)}
+        </span>&nbsp;
         <Badge label={avionics.xpdrMode} colors={xpdrBadge} />
       </div>
+
+      {/* Numpad popup for radio tuning */}
+      {numpad && (() => {
+        const tuning = RADIO_TUNING[numpad.id]
+        const isXpdr = numpad.id === 'xpdr'
+        const rv = tuning ? RADIO_VALIDATE[tuning.type] : null
+        const currentVal = isXpdr
+          ? String(avionics.xpdrCode).padStart(4, '0')
+          : tuning ? Number(avionics[tuning.storeKey]).toFixed(rv?.decimal ? 2 : 0) : ''
+        return (
+          <NumpadPopup
+            label={numpad.label}
+            hint={isXpdr ? '0000\u20137777' : rv?.hint ?? ''}
+            value={currentVal}
+            allowDecimal={isXpdr ? false : rv?.decimal ?? true}
+            allowedDigits={isXpdr ? '01234567' : rv?.digits ?? '0123456789'}
+            autoDecimalAfter={rv?.decimal ? 3 : 0}
+            anchor={numpad.anchor}
+            error={numpadError}
+            onSubmit={handleNumpadSubmit}
+            onCancel={() => setNumpad(null)}
+          />
+        )
+      })()}
     </div>
   )
 }

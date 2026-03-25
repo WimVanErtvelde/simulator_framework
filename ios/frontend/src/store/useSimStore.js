@@ -2,6 +2,17 @@ import { create } from 'zustand'
 
 const WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`
 
+// Round float32 values to avoid display artefacts (e.g. 114.5999984741211 → 114.60)
+const r2 = (v) => v != null ? Math.round(v * 100) / 100 : v   // 2 decimal (MHz)
+const r3 = (v) => v != null ? Math.round(v * 1000) / 1000 : v // 3 decimal (MHz fine)
+const r0 = (v) => v != null ? Math.round(v) : v                // integer (kHz, deg)
+
+// Clamp untuned frequencies (0 from input_arbitrator) to minimum valid value per type
+const comMin = (v) => { const r = r3(v); return (r != null && r > 0) ? r : 118.0 }
+const navMin = (v) => { const r = r2(v); return (r != null && r > 0) ? r : 108.0 }
+const adfMin = (v) => { const r = r0(v); return (r != null && r > 0) ? r : 190 }
+const xpdrDef = (v) => { const r = r0(v); return (r != null && r > 0) ? r : 7000 }
+
 // SimCommand enum values — must match backend SimCommand.msg
 const CMD = {
   RUN: 1,
@@ -60,10 +71,10 @@ export const useSimStore = create((set, get) => ({
 
   // Avionics (what pilot has dialled in — from /sim/controls/avionics)
   avionics: {
-    com1Mhz: 118.10, com2Mhz: 121.50, com3Mhz: 0,
-    nav1Mhz: 109.10, nav2Mhz: 110.30,
-    adf1Khz: 350, adf2Khz: 0,
-    xpdrCode: 2000, xpdrMode: 'ALT',
+    com1Mhz: 118.0, com2Mhz: 118.0, com3Mhz: 118.0,
+    nav1Mhz: 108.0, nav2Mhz: 108.0,
+    adf1Khz: 190, adf2Khz: 190,
+    xpdrCode: 7000, xpdrMode: 'ALT',
     obs1: 0, obs2: 0, dmeSource: 0,
     tacanChannel: 0, tacanBand: 0, gpsSource: 0,
   },
@@ -395,17 +406,17 @@ export const useSimStore = create((set, get) => ({
           case 'avionics':
             set({
               avionics: {
-                com1Mhz: msg.com1_mhz ?? s.avionics.com1Mhz,
-                com2Mhz: msg.com2_mhz ?? s.avionics.com2Mhz,
-                com3Mhz: msg.com3_mhz ?? s.avionics.com3Mhz,
-                nav1Mhz: msg.nav1_mhz ?? s.avionics.nav1Mhz,
-                nav2Mhz: msg.nav2_mhz ?? s.avionics.nav2Mhz,
-                adf1Khz: msg.adf1_khz ?? s.avionics.adf1Khz,
-                adf2Khz: msg.adf2_khz ?? s.avionics.adf2Khz,
-                xpdrCode: msg.xpdr_code ?? s.avionics.xpdrCode,
+                com1Mhz: comMin(msg.com1_mhz) ?? s.avionics.com1Mhz,
+                com2Mhz: comMin(msg.com2_mhz) ?? s.avionics.com2Mhz,
+                com3Mhz: comMin(msg.com3_mhz) ?? s.avionics.com3Mhz,
+                nav1Mhz: navMin(msg.nav1_mhz) ?? s.avionics.nav1Mhz,
+                nav2Mhz: navMin(msg.nav2_mhz) ?? s.avionics.nav2Mhz,
+                adf1Khz: adfMin(msg.adf1_khz) ?? s.avionics.adf1Khz,
+                adf2Khz: adfMin(msg.adf2_khz) ?? s.avionics.adf2Khz,
+                xpdrCode: xpdrDef(msg.xpdr_code) ?? s.avionics.xpdrCode,
                 xpdrMode: msg.xpdr_mode ?? s.avionics.xpdrMode,
-                obs1: msg.obs1 ?? s.avionics.obs1,
-                obs2: msg.obs2 ?? s.avionics.obs2,
+                obs1: r0(msg.obs1) ?? s.avionics.obs1,
+                obs2: r0(msg.obs2) ?? s.avionics.obs2,
                 dmeSource: msg.dme_source ?? s.avionics.dmeSource,
                 tacanChannel: msg.tacan_channel ?? s.avionics.tacanChannel,
                 tacanBand: msg.tacan_band ?? s.avionics.tacanBand,
@@ -473,14 +484,14 @@ export const useSimStore = create((set, get) => ({
                 markerOuter: msg.marker_outer ?? s.nav.markerOuter,
                 markerMiddle: msg.marker_middle ?? s.nav.markerMiddle,
                 markerInner: msg.marker_inner ?? s.nav.markerInner,
-                xpdrCode: msg.xpdr_code ?? s.nav.xpdrCode,
+                xpdrCode: xpdrDef(msg.xpdr_code) ?? s.nav.xpdrCode,
                 xpdrMode: msg.xpdr_mode ?? s.nav.xpdrMode,
                 xpdrIdentActive: msg.xpdr_ident_active ?? s.nav.xpdrIdentActive,
-                com1Mhz: msg.com1_mhz ?? s.nav.com1Mhz,
-                com2Mhz: msg.com2_mhz ?? s.nav.com2Mhz,
-                com3Mhz: msg.com3_mhz ?? s.nav.com3Mhz,
-                adf1Khz: msg.adf1_khz ?? s.nav.adf1Khz,
-                adf2Khz: msg.adf2_khz ?? s.nav.adf2Khz,
+                com1Mhz: comMin(msg.com1_mhz) ?? s.nav.com1Mhz,
+                com2Mhz: comMin(msg.com2_mhz) ?? s.nav.com2Mhz,
+                com3Mhz: comMin(msg.com3_mhz) ?? s.nav.com3Mhz,
+                adf1Khz: adfMin(msg.adf1_khz) ?? s.nav.adf1Khz,
+                adf2Khz: adfMin(msg.adf2_khz) ?? s.nav.adf2Khz,
               }
             })
             break

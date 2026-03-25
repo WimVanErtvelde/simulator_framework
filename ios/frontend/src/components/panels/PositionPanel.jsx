@@ -1,6 +1,8 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSimStore } from '../../store/useSimStore'
 import { PanelRow, SectionHeader, FullWidthBtn } from './PanelUtils'
+import KeyboardPopup from '../ui/KeyboardPopup'
+import NumpadPopup from '../ui/NumpadPopup'
 
 const DEG2RAD = Math.PI / 180
 const NM_TO_DEG_LAT = 1 / 60
@@ -28,79 +30,87 @@ function AircraftIcon({ rotation = 0, size = 24, color = '#64748b' }) {
 function AirportSearch({ value, onSelect, placeholder = 'ICAO or name' }) {
   const { searchAirports, airportSearchResults } = useSimStore()
   const [query, setQuery] = useState('')
-  const [open, setOpen] = useState(false)
+  const [kbOpen, setKbOpen] = useState(false)
   const debounceRef = useRef(null)
-  const wrapperRef = useRef(null)
 
-  const handleInput = (e) => {
-    const v = e.target.value.toUpperCase()
+  const doSearch = useCallback((v) => {
     setQuery(v)
-    setOpen(true)
     clearTimeout(debounceRef.current)
     if (v.length >= 2) {
       debounceRef.current = setTimeout(() => searchAirports(v), 200)
     }
-  }
+  }, [searchAirports])
 
   const handleSelect = (apt) => {
     setQuery('')
-    setOpen(false)
+    setKbOpen(false)
     onSelect(apt)
   }
-
-  useEffect(() => {
-    const handler = (e) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
 
   const displayValue = value
     ? `${value.icao} — ${value.name}`
     : query
 
   return (
-    <div ref={wrapperRef} style={{ position: 'relative' }}>
-      <input
-        style={inputBase}
-        placeholder={placeholder}
-        value={displayValue}
-        onChange={(e) => {
-          if (value) onSelect(null)
-          handleInput(e)
+    <div style={{ position: 'relative' }}>
+      <div
+        style={{
+          ...inputBase, cursor: 'pointer',
+          display: 'flex', alignItems: 'center',
+          color: displayValue ? '#e2e8f0' : '#475569',
         }}
-        onFocus={() => { if (query.length >= 2) setOpen(true) }}
-      />
-      {open && airportSearchResults.length > 0 && (
-        <div style={{
-          position: 'absolute', top: 48, left: 0, right: 0, zIndex: 100,
-          background: '#111827', border: '1px solid #1e293b', borderRadius: 3,
-          maxHeight: 320, overflowY: 'auto',
-        }}>
-          {airportSearchResults.map((apt) => (
-            <div
-              key={apt.icao}
-              onClick={() => handleSelect(apt)}
-              style={{
-                padding: '10px 12px', cursor: 'pointer', fontSize: 13,
-                fontFamily: 'monospace', color: '#e2e8f0',
-                borderBottom: '1px solid #1e293b',
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(0,255,136,0.06)'}
-              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-            >
-              <span style={{ color: '#00ff88', fontWeight: 700 }}>{apt.icao}</span>
-              <span style={{ color: '#64748b' }}> — </span>
-              {apt.name}
-              {apt.elevation_m > 0 && (
-                <span style={{ color: '#64748b', fontSize: 11 }}>
-                  {' '}{Math.round(apt.elevation_m / FT2M)}ft
-                </span>
-              )}
+        onClick={(e) => {
+          if (value) { onSelect(null); setQuery('') }
+          setKbOpen(true)
+        }}
+      >
+        {displayValue || placeholder}
+      </div>
+      {kbOpen && (
+        <KeyboardPopup
+          label="Airport search"
+          value={query}
+          onChange={(val) => {
+            const v = val.toUpperCase()
+            doSearch(v)
+          }}
+          onSubmit={(val) => {
+            const v = val.toUpperCase()
+            doSearch(v)
+            setKbOpen(false)
+          }}
+          onCancel={() => setKbOpen(false)}
+        >
+          {airportSearchResults.length > 0 && (
+            <div style={{
+              maxHeight: 180, overflowY: 'auto', marginBottom: 8,
+              border: '1px solid #1e293b', borderRadius: 3, background: '#111827',
+            }}>
+              {airportSearchResults.map((apt) => (
+                <div
+                  key={apt.icao}
+                  onClick={() => handleSelect(apt)}
+                  style={{
+                    padding: '10px 12px', cursor: 'pointer', fontSize: 13,
+                    fontFamily: 'monospace', color: '#e2e8f0',
+                    borderBottom: '1px solid #1e293b',
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(0,255,136,0.06)'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                >
+                  <span style={{ color: '#00ff88', fontWeight: 700 }}>{apt.icao}</span>
+                  <span style={{ color: '#64748b' }}> — </span>
+                  {apt.name}
+                  {apt.elevation_m > 0 && (
+                    <span style={{ color: '#64748b', fontSize: 11 }}>
+                      {' '}{Math.round(apt.elevation_m / FT2M)}ft
+                    </span>
+                  )}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+        </KeyboardPopup>
       )}
     </div>
   )
@@ -258,6 +268,35 @@ function PositionIcons({ rwyEnd, airport, selected, onSelect }) {
   )
 }
 
+// ─── Numpad-backed field for manual reposition inputs ────────────────────────
+function NumpadField({ label, value, placeholder, allowDecimal = true, hint = '', onChange }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <label style={{ fontSize: 12, color: '#64748b', fontFamily: 'monospace' }}>{label}
+      <div
+        style={{
+          ...inputBase, cursor: 'pointer',
+          display: 'flex', alignItems: 'center',
+          color: value ? '#e2e8f0' : '#475569',
+        }}
+        onClick={() => setOpen(true)}
+      >
+        {value || placeholder}
+      </div>
+      {open && (
+        <NumpadPopup
+          label={label}
+          hint={hint}
+          value={value || ''}
+          allowDecimal={allowDecimal}
+          onSubmit={(v) => { onChange(v); setOpen(false) }}
+          onCancel={() => setOpen(false)}
+        />
+      )}
+    </label>
+  )
+}
+
 // ─── Main panel ──────────────────────────────────────────────────────────────
 export default function PositionPanel() {
   const { fdm, sendCommand, requestAction, pendingAction,
@@ -368,22 +407,18 @@ export default function PositionPanel() {
 
       <SectionHeader title="MANUAL REPOSITION" />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
-        <label style={{ fontSize: 12, color: '#64748b', fontFamily: 'monospace' }}>LAT
-          <input type="number" style={inputBase} value={pos.lat} placeholder={fdm.lat.toFixed(4)}
-            onChange={(e) => setPos(p => ({ ...p, lat: e.target.value }))} />
-        </label>
-        <label style={{ fontSize: 12, color: '#64748b', fontFamily: 'monospace' }}>LON
-          <input type="number" style={inputBase} value={pos.lon} placeholder={fdm.lon.toFixed(4)}
-            onChange={(e) => setPos(p => ({ ...p, lon: e.target.value }))} />
-        </label>
-        <label style={{ fontSize: 12, color: '#64748b', fontFamily: 'monospace' }}>ALT (ft)
-          <input type="number" style={inputBase} value={pos.alt} placeholder={fdm.altFtMsl.toFixed(0)}
-            onChange={(e) => setPos(p => ({ ...p, alt: e.target.value }))} />
-        </label>
-        <label style={{ fontSize: 12, color: '#64748b', fontFamily: 'monospace' }}>HDG (°)
-          <input type="number" style={inputBase} value={pos.hdg} placeholder={fdm.hdgMagDeg.toFixed(0)}
-            onChange={(e) => setPos(p => ({ ...p, hdg: e.target.value }))} />
-        </label>
+        <NumpadField label="LAT" value={pos.lat} placeholder={fdm.lat.toFixed(4)}
+          allowDecimal hint="degrees"
+          onChange={(v) => setPos(p => ({ ...p, lat: v }))} />
+        <NumpadField label="LON" value={pos.lon} placeholder={fdm.lon.toFixed(4)}
+          allowDecimal hint="degrees"
+          onChange={(v) => setPos(p => ({ ...p, lon: v }))} />
+        <NumpadField label="ALT (ft)" value={pos.alt} placeholder={fdm.altFtMsl.toFixed(0)}
+          allowDecimal={false} hint="feet"
+          onChange={(v) => setPos(p => ({ ...p, alt: v }))} />
+        <NumpadField label="HDG (\u00B0)" value={pos.hdg} placeholder={fdm.hdgMagDeg.toFixed(0)}
+          allowDecimal={false} hint="0\u2013360"
+          onChange={(v) => setPos(p => ({ ...p, hdg: v }))} />
       </div>
       <FullWidthBtn
         label={pendingAction?.type === 'reposition' ? 'CONFIRM? (tap again)' : 'SET POSITION'}

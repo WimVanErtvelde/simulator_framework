@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useSimStore } from '../../store/useSimStore'
 import { PanelRow, SectionHeader } from './PanelUtils'
+import NumpadPopup from '../ui/NumpadPopup'
 
 // ── Shared UI components ────────────────────────────────────────────────────
 
@@ -75,14 +76,36 @@ const inputStyle = {
   borderRadius: 2, textAlign: 'right',
 }
 
-function FreqInput({ label, value, unit, step = 0.05, min, max, onChange }) {
-  const [local, setLocal] = useState(null)
-  const display = local !== null ? local : value
-  const commit = useCallback((val) => {
-    setLocal(null)
-    const num = parseFloat(val)
-    if (!isNaN(num)) onChange(num)
-  }, [onChange])
+function FreqInput({ label, value, unit, step = 0.05, min, max, onChange, radioType }) {
+  const [open, setOpen] = useState(false)
+  const [error, setError] = useState(false)
+  const decimals = (unit === 'kHz' || unit === '\u00B0' || unit === '') ? 0 : 2
+  const isXpdr = radioType === 'xpdr'
+  const isObs = radioType === 'obs'
+
+  const handleSubmit = useCallback((val) => {
+    if (isXpdr) {
+      if (!/^[0-7]{4}$/.test(val)) { setError(true); return }
+      onChange(parseInt(val, 10))
+    } else {
+      const num = parseFloat(val)
+      if (isNaN(num) || (min !== undefined && num < min) || (max !== undefined && num > max)) {
+        setError(true)
+        return
+      }
+      onChange(num)
+    }
+    setOpen(false)
+  }, [min, max, onChange, isXpdr])
+
+  const displayVal = isXpdr
+    ? String(value).padStart(4, '0')
+    : typeof value === 'number' ? value.toFixed(decimals) : String(value)
+
+  const hint = isXpdr ? '0000\u20137777'
+    : isObs ? '0\u2013360'
+    : (min != null && max != null) ? `${min}\u2013${max}` : ''
+
   return (
     <div style={{
       display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -95,17 +118,32 @@ function FreqInput({ label, value, unit, step = 0.05, min, max, onChange }) {
           letterSpacing: 1,
         }}>FORCE</span>
       </span>
-      <span>
-        <input
-          type="number"
-          style={{ ...inputStyle, borderColor: '#f59e0b44' }}
-          step={step} min={min} max={max} value={display}
-          onChange={e => setLocal(e.target.value)}
-          onBlur={e => commit(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') commit(e.target.value) }}
-        />
+      <span
+        onClick={(e) => {
+          setError(false)
+          setOpen(true)
+        }}
+        style={{
+          ...inputStyle, borderColor: '#f59e0b44',
+          cursor: 'pointer', display: 'inline-flex', alignItems: 'center',
+        }}
+      >
+        {displayVal}
         {unit && <span style={{ color: '#64748b', marginLeft: 4 }}>{unit}</span>}
       </span>
+      {open && (
+        <NumpadPopup
+          label={label}
+          hint={hint}
+          value={displayVal}
+          allowDecimal={!isXpdr && !isObs && decimals > 0}
+          allowedDigits={isXpdr ? '01234567' : '0123456789'}
+          autoDecimalAfter={(!isXpdr && !isObs && decimals > 0) ? 3 : 0}
+          error={error}
+          onSubmit={handleSubmit}
+          onCancel={() => setOpen(false)}
+        />
+      )}
     </div>
   )
 }
@@ -676,6 +714,7 @@ export default function AircraftPanel() {
             step={typeInfo.step}
             min={typeInfo.min}
             max={typeInfo.max}
+            radioType={type}
             onChange={v => tune(fieldInfo.storeKey, v)}
           />
         )
