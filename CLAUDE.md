@@ -334,19 +334,35 @@ All topics use `snake_case`. No abbreviations unless universally understood (e.g
 | `/sim/controls/engine` | EngineControls | input_arbitrator | Authoritative engine controls output |
 | `/sim/controls/avionics` | AvionicsControls | input_arbitrator | Authoritative avionics controls output |
 | `/sim/controls/panel` | PanelControls | input_arbitrator | Authoritative panel switch/CB output |
-| `/sim/controls/arbitration/state` | ArbitrationState | input_arbitrator | Per-channel source (HARDWARE/VIRTUAL/INSTRUCTOR/FROZEN) |
+| `/sim/controls/arbitration` | ArbitrationState | input_arbitrator | Per-channel source (HARDWARE/VIRTUAL/INSTRUCTOR/FROZEN) |
 | `/sim/electrical/state` | ElectricalState | sim_electrical | DC/AC buses, sources, loads, SOC |
 | `/sim/fuel/state` | FuelState | sim_fuel | Quantities, flow, CG |
 | `/sim/engines/state` | EngineState | sim_engine_systems | N1/N2, EGT, torque |
+| `/sim/engines/commands` | EngineCommands | sim_engine_systems | Turboprop/FADEC writeback (zeros for piston) |
 | `/sim/gear/state` | GearState | sim_gear | WoW per leg, position, brakes, nosewheel |
 | `/sim/air_data/state` | AirDataState | sim_air_data | Instrument IAS, altitude, VSI (pitot-static) |
 | `/sim/navigation/state` | NavigationState | sim_navigation | Onboard receiver outputs: VOR, ILS, GPS, ADF, DME, TACAN |
-| `/sim/failures/active` | FailureList | sim_failures | Broadcast to all nodes |
+| `/sim/failure_state` | FailureState | sim_failures | Active failure IDs (status tracking + IOS) |
+| `/sim/failure/flight_model_commands` | FailureInjection | sim_failures | Routed to flight_model_adapter |
+| `/sim/failure/electrical_commands` | FailureInjection | sim_failures | Routed to sim_electrical |
+| `/sim/failure/navaid_commands` | FailureInjection | sim_failures | Routed to navaid_sim |
+| `/sim/failure/air_data_commands` | FailureInjection | sim_failures | Routed to sim_air_data |
+| `/sim/failure/gear_commands` | FailureInjection | sim_failures | Routed to sim_gear |
 | `/sim/alerts` | SimAlert | any node | SEVERITY_INFO/WARN/CRITICAL alerts to IOS |
+| `/sim/terrain/ready` | std_msgs/Bool | flight_model_adapter | Signals terrain loaded after reposition |
+| `/sim/terrain/source` | TerrainSource | flight_model_adapter | CIGI/SRTM/MSL indicator |
+| `/sim/writeback/electrical` | ElectricalState | sim_electrical | Coupled writeback to FDM |
+| `/sim/writeback/fuel` | FuelState | sim_fuel | Coupled writeback to FDM |
 | `/sim/cigi/hat_responses` | HatHotResponse | cigi_bridge | HOT terrain elevation per gear point |
 | `/sim/cigi/ig_status` | std_msgs/UInt8 | cigi_bridge | SOF IG Status (0=Standby, 2=Operate) |
 | `/sim/cigi/host_to_ig` | CigiPacket | cigi_bridge | Host → IG packets (planned — recording/debug) |
 | `/sim/cigi/ig_to_host` | CigiPacket | cigi_bridge | IG → Host packets (planned — recording/debug) |
+| `/ios/failure_command` | FailureCommand | ios_backend | IOS failure inject/clear (naming exception) |
+
+**Acknowledged naming exceptions:**
+- `/sim/command` — IOS publishes SimCommand directly (no arbitration layer for sim commands)
+- `/ios/failure_command` — IOS failure commands (should be `/devices/instructor/` but kept for now)
+- sim_engine_systems and sim_air_data subscribe to `/sim/electrical/state` and `/sim/fuel/state` respectively (physical coupling: engines need bus power, pitot heat needs electrical state)
 
 ### Diagnostics topics
 
@@ -380,7 +396,7 @@ FROZEN      → hold last value
 
 Channels: `flight`, `engine`, `avionics`, `panel` (4 channels total).
 
-Hardware timeout > 500ms → auto-fallback to VIRTUAL + alert on `/sim/controls/arbitration/state`.
+Hardware timeout > 500ms → auto-fallback to VIRTUAL + alert on `/sim/controls/arbitration`.
 
 Instructor takeover is **sticky** — once instructor publishes on a channel, source stays INSTRUCTOR
 until node reconfigure. No auto-release, no timeout.

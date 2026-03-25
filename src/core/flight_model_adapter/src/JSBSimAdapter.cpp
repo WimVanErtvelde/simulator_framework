@@ -113,6 +113,20 @@ JSBSimAdapter::JSBSimAdapter() = default;
 
 JSBSimAdapter::~JSBSimAdapter() = default;
 
+void JSBSimAdapter::set_error_logger(std::function<void(const std::string &)> logger)
+{
+  error_logger_ = std::move(logger);
+}
+
+void JSBSimAdapter::log_error(const std::string & msg) const
+{
+  if (error_logger_) {
+    error_logger_(msg);
+  } else {
+    std::cerr << msg << std::endl;
+  }
+}
+
 bool JSBSimAdapter::initialize(const std::string & aircraft_id,
                                 const std::string & aircraft_path,
                                 const std::string & model_name_arg,
@@ -134,7 +148,7 @@ bool JSBSimAdapter::initialize(const std::string & aircraft_id,
     std::string resolved_model = model_name_arg.empty() ? aircraft_id : model_name_arg;
 
     if (!exec_->LoadModel(resolved_model)) {
-      std::cerr << "[JSBSimAdapter] Failed to load model: " << resolved_model << std::endl;
+      log_error("[JSBSimAdapter] Failed to load model: " + resolved_model);
       return false;
     }
 
@@ -175,13 +189,13 @@ bool JSBSimAdapter::initialize(const std::string & aircraft_id,
     return true;
 
   } catch (const std::exception & e) {
-    std::cerr << "[JSBSimAdapter] Exception during initialize: " << e.what() << std::endl;
+    log_error(std::string("[JSBSimAdapter] Exception during initialize: ") + e.what());
     return false;
   } catch (const std::string & s) {
-    std::cerr << "[JSBSimAdapter] JSBSim threw string during initialize: " << s << std::endl;
+    log_error("[JSBSimAdapter] JSBSim threw string during initialize: " + s);
     return false;
   } catch (...) {
-    std::cerr << "[JSBSimAdapter] Unknown exception during initialize" << std::endl;
+    log_error("[JSBSimAdapter] Unknown exception during initialize");
     return false;
   }
 }
@@ -249,13 +263,11 @@ void JSBSimAdapter::apply_initial_conditions(
     }
 
   } catch (const std::exception & e) {
-    std::cerr << "[JSBSimAdapter] Exception in apply_initial_conditions: "
-              << e.what() << std::endl;
+    log_error(std::string("[JSBSimAdapter] Exception in apply_initial_conditions: ") + e.what());
   } catch (const std::string & s) {
-    std::cerr << "[JSBSimAdapter] JSBSim threw string in apply_initial_conditions: "
-              << s << std::endl;
+    log_error("[JSBSimAdapter] JSBSim threw string in apply_initial_conditions: " + s);
   } catch (...) {
-    std::cerr << "[JSBSimAdapter] Unknown exception in apply_initial_conditions" << std::endl;
+    log_error("[JSBSimAdapter] Unknown exception in apply_initial_conditions");
   }
 }
 
@@ -288,13 +300,13 @@ bool JSBSimAdapter::step(double dt_sec)
     return true;
 
   } catch (const std::exception & e) {
-    std::cerr << "[JSBSimAdapter] Exception in step(): " << e.what() << std::endl;
+    log_error(std::string("[JSBSimAdapter] Exception in step(): ") + e.what());
     return false;
   } catch (const std::string & s) {
-    std::cerr << "[JSBSimAdapter] JSBSim threw string in step(): " << s << std::endl;
+    log_error("[JSBSimAdapter] JSBSim threw string in step(): " + s);
     return false;
   } catch (...) {
-    std::cerr << "[JSBSimAdapter] Unknown exception in step()" << std::endl;
+    log_error("[JSBSimAdapter] Unknown exception in step()");
     return false;
   }
 }
@@ -354,18 +366,15 @@ void JSBSimAdapter::apply_failure(const std::string & method,
   } else if (method == "set_tail_rotor_failed") {
     exec_->SetPropertyValue("systems/tail-rotor/serviceable", active ? 0.0 : 1.0);
   } else {
-    std::cerr << "[JSBSimAdapter] Unknown failure method: " << method << std::endl;
+    log_error("[JSBSimAdapter] Unknown failure method: " + method);
   }
 
   } catch (const std::exception & e) {
-    std::cerr << "[JSBSimAdapter] Exception in apply_failure(" << method << "): "
-              << e.what() << std::endl;
+    log_error("[JSBSimAdapter] Exception in apply_failure(" + method + "): " + e.what());
   } catch (const std::string & s) {
-    std::cerr << "[JSBSimAdapter] JSBSim threw string in apply_failure(" << method << "): "
-              << s << std::endl;
+    log_error("[JSBSimAdapter] JSBSim threw string in apply_failure(" + method + "): " + s);
   } catch (...) {
-    std::cerr << "[JSBSimAdapter] Unknown exception in apply_failure(" << method << ")"
-              << std::endl;
+    log_error("[JSBSimAdapter] Unknown exception in apply_failure(" + method + ")");
   }
 }
 
@@ -671,11 +680,11 @@ sim_msgs::msg::FlightModelState JSBSimAdapter::get_state() const
   state.sim_clock = state.sim_time_sec;
 
   } catch (const std::exception & e) {
-    std::cerr << "[JSBSimAdapter] Exception in get_state(): " << e.what() << std::endl;
+    log_error(std::string("[JSBSimAdapter] Exception in get_state(): ") + e.what());
   } catch (const std::string & s) {
-    std::cerr << "[JSBSimAdapter] JSBSim threw string in get_state(): " << s << std::endl;
+    log_error("[JSBSimAdapter] JSBSim threw string in get_state(): " + s);
   } catch (...) {
-    std::cerr << "[JSBSimAdapter] Unknown exception in get_state()" << std::endl;
+    log_error("[JSBSimAdapter] Unknown exception in get_state()");
   }
 
   return state;
@@ -716,7 +725,7 @@ void JSBSimAdapter::set_property(const std::string & name, double value)
   try {
     exec_->SetPropertyValue(name, value);
   } catch (const std::string & s) {
-    std::cerr << "[JSBSimAdapter] set_property(" << name << "): " << s << std::endl;
+    log_error("[JSBSimAdapter] set_property(" + name + "): " + s);
   } catch (...) {}
 }
 
@@ -735,11 +744,11 @@ void JSBSimAdapter::write_back_electrical(const sim_msgs::msg::ElectricalState &
   try {
     jsbsim_writeback::write_electrical(exec_.get(), state);
   } catch (const std::exception & e) {
-    std::cerr << "[JSBSimAdapter] Exception in write_back_electrical: " << e.what() << std::endl;
+    log_error(std::string("[JSBSimAdapter] Exception in write_back_electrical: ") + e.what());
   } catch (const std::string & s) {
-    std::cerr << "[JSBSimAdapter] JSBSim error in write_back_electrical: " << s << std::endl;
+    log_error("[JSBSimAdapter] JSBSim error in write_back_electrical: " + s);
   } catch (...) {
-    std::cerr << "[JSBSimAdapter] Unknown exception in write_back_electrical" << std::endl;
+    log_error("[JSBSimAdapter] Unknown exception in write_back_electrical");
   }
 }
 
@@ -748,11 +757,11 @@ void JSBSimAdapter::write_back_fuel(const sim_msgs::msg::FuelState & state)
   try {
     jsbsim_writeback::write_fuel(exec_.get(), state);
   } catch (const std::exception & e) {
-    std::cerr << "[JSBSimAdapter] Exception in write_back_fuel: " << e.what() << std::endl;
+    log_error(std::string("[JSBSimAdapter] Exception in write_back_fuel: ") + e.what());
   } catch (const std::string & s) {
-    std::cerr << "[JSBSimAdapter] JSBSim error in write_back_fuel: " << s << std::endl;
+    log_error("[JSBSimAdapter] JSBSim error in write_back_fuel: " + s);
   } catch (...) {
-    std::cerr << "[JSBSimAdapter] Unknown exception in write_back_fuel" << std::endl;
+    log_error("[JSBSimAdapter] Unknown exception in write_back_fuel");
   }
 }
 

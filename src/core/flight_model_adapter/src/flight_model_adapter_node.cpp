@@ -210,6 +210,8 @@ public:
 
     if (fdm_type == "jsbsim") {
       adapter_ = std::make_unique<flight_model_adapter::JSBSimAdapter>();
+      static_cast<flight_model_adapter::JSBSimAdapter*>(adapter_.get())->set_error_logger(
+        [this](const std::string & msg) { RCLCPP_ERROR(this->get_logger(), "%s", msg.c_str()); });
       if (jsbsim_root.empty()) {
         jsbsim_root = JSBSIM_ROOT_DIR;
       }

@@ -3,6 +3,7 @@
 
 #include "flight_model_adapter/IFlightModelAdapter.hpp"
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -46,7 +47,12 @@ public:
 
   void refine_terrain_altitude(double alt_msl_m, double terrain_elev_m) override;
 
+  /// Set an optional error logger. If not set, errors go to stderr.
+  void set_error_logger(std::function<void(const std::string &)> logger);
+
 private:
+  void log_error(const std::string & msg) const;
+  std::function<void(const std::string &)> error_logger_;
   std::unique_ptr<JSBSim::FGFDMExec> exec_;
   std::string aircraft_id_;
   double internal_dt_{1.0 / 120.0};   // JSBSim default timestep
