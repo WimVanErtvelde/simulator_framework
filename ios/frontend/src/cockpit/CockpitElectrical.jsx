@@ -105,7 +105,7 @@ export default function CockpitElectrical() {
             marginBottom: 12, textTransform: 'uppercase',
           }}>Bus Voltages</div>
           {electrical.busNames.map((name, i) => {
-            const v = electrical.busVoltages[i] ?? 0
+            const v = electrical.busVoltagesV[i] ?? 0
             const color = v > 13 ? '#00ff88' : v > 11 ? '#f59e0b' : '#ef4444'
             return (
               <div key={name} style={{

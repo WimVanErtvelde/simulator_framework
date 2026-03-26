@@ -85,7 +85,7 @@ const WIRE_KEYS = {
   com1Mhz: 'com1_mhz', com2Mhz: 'com2_mhz', com3Mhz: 'com3_mhz',
   nav1Mhz: 'nav1_mhz', nav2Mhz: 'nav2_mhz',
   adf1Khz: 'adf1_khz', adf2Khz: 'adf2_khz',
-  xpdrCode: 'xpdr_code', obs1: 'obs1', obs2: 'obs2',
+  xpdrCode: 'xpdr_code', obs1Deg: 'obs1_deg', obs2Deg: 'obs2_deg',
 }
 
 function buildAvionicsPayload(avionics, storeKey, newVal) {

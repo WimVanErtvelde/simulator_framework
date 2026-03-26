@@ -235,8 +235,8 @@ const RADIO_FIELD_MAP = {
   nav2: { storeKey: 'nav2Mhz', wireKey: 'nav2_mhz' },
   adf:  { storeKey: 'adf1Khz', wireKey: 'adf1_khz' },
   adf2: { storeKey: 'adf2Khz', wireKey: 'adf2_khz' },
-  obs1: { storeKey: 'obs1', wireKey: 'obs1' },
-  obs2: { storeKey: 'obs2', wireKey: 'obs2' },
+  obs1: { storeKey: 'obs1Deg', wireKey: 'obs1_deg' },
+  obs2: { storeKey: 'obs2Deg', wireKey: 'obs2_deg' },
   xpdr: { storeKey: 'xpdrCode', wireKey: 'xpdr_code' },
 }
 
@@ -665,9 +665,9 @@ export default function AircraftPanel() {
           </div>
           {electrical.busNames.map((name, i) => (
             <PanelRow key={name} label={name}
-              value={electrical.busVoltages[i]?.toFixed(1) ?? '--'}
+              value={electrical.busVoltagesV[i]?.toFixed(1) ?? '--'}
               unit="V"
-              valueStyle={{ color: voltageColor(electrical.busVoltages[i] ?? 0) }}
+              valueStyle={{ color: voltageColor(electrical.busVoltagesV[i] ?? 0) }}
             />
           ))}
         </>
@@ -685,12 +685,12 @@ export default function AircraftPanel() {
           ))}
         </>
       )}
-      <PanelRow label="Total Load" value={electrical.totalLoadAmps?.toFixed(1) ?? '--'} unit="A" />
+      <PanelRow label="Total Load" value={electrical.totalLoadA?.toFixed(1) ?? '--'} unit="A" />
       <PanelRow label="Battery SOC" value={electrical.batterySocPct?.toFixed(0) ?? '--'} unit="%" />
       <PanelRow label="Master Bus"
-        value={electrical.masterBusVoltage?.toFixed(1) ?? '--'}
+        value={electrical.masterBusVoltageV?.toFixed(1) ?? '--'}
         unit="V"
-        valueStyle={{ color: voltageColor(electrical.masterBusVoltage ?? 0) }}
+        valueStyle={{ color: voltageColor(electrical.masterBusVoltageV ?? 0) }}
       />
 
       {/* ── NAV DISPLAYS (dynamic from config) ─────────── */}

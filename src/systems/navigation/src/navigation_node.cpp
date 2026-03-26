@@ -194,8 +194,8 @@ private:
     // ── Nav receivers (from navaid_sim signals + avionics OBS) ──────────────
     if (nav_signals_received_) {
       const auto & ns = last_nav_signals_;
-      float obs1 = last_avionics_.obs1;
-      float obs2 = last_avionics_.obs2;
+      float obs1 = last_avionics_.obs1_deg;
+      float obs2 = last_avionics_.obs2_deg;
       double hdg_deg = flight_model_received_ ? last_flight_model_state_.magnetic_heading_rad * RAD_TO_DEG : 0.0;
 
       // NAV1

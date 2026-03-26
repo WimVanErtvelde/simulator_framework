@@ -243,19 +243,19 @@ public:
 
         for (const auto & b : snap.buses) {
           msg.bus_names.push_back(b.name);
-          msg.bus_voltages.push_back(b.voltage);
+          msg.bus_voltages_v.push_back(b.voltage);
           msg.bus_powered.push_back(b.powered);
         }
         for (const auto & s : snap.sources) {
           msg.source_names.push_back(s.name);
           msg.source_active.push_back(s.active);
-          msg.source_voltages.push_back(s.voltage);
-          msg.source_currents.push_back(s.current);
+          msg.source_voltages_v.push_back(s.voltage);
+          msg.source_currents_a.push_back(s.current);
         }
         for (const auto & l : snap.loads) {
           msg.load_names.push_back(l.name);
           msg.load_powered.push_back(l.powered);
-          msg.load_currents.push_back(l.current);
+          msg.load_currents_a.push_back(l.current);
         }
         for (const auto & sw : snap.switches) {
           msg.switch_ids.push_back(sw.id);
@@ -267,9 +267,9 @@ public:
           msg.cb_closed.push_back(c.closed);
           msg.cb_tripped.push_back(c.tripped);
         }
-        msg.total_load_amps = snap.total_load_amps;
+        msg.total_load_a = snap.total_load_amps;
         msg.battery_soc_pct = snap.battery_soc_pct;
-        msg.master_bus_voltage = snap.master_bus_voltage;
+        msg.master_bus_voltage_v = snap.master_bus_voltage;
         msg.avionics_bus_powered = snap.avionics_bus_powered;
         msg.essential_bus_powered = snap.essential_bus_powered;
 

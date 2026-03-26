@@ -541,8 +541,8 @@ private:
     out.com3_freq_mhz    = raw.com3_freq_mhz;
     out.nav1_freq_mhz    = raw.nav1_freq_mhz;
     out.nav2_freq_mhz    = raw.nav2_freq_mhz;
-    out.obs1              = raw.obs1;
-    out.obs2              = raw.obs2;
+    out.obs1_deg          = raw.obs1_deg;
+    out.obs2_deg          = raw.obs2_deg;
     out.adf1_freq_khz    = raw.adf1_freq_khz;
     out.adf2_freq_khz    = raw.adf2_freq_khz;
     out.transponder_code  = raw.transponder_code;

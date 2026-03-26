@@ -103,7 +103,7 @@ public:
     electrical_sub_ = this->create_subscription<sim_msgs::msg::ElectricalState>(
       "/sim/electrical/state", 10,
       [this](const sim_msgs::msg::ElectricalState::SharedPtr msg) {
-        latest_bus_voltage_ = msg->master_bus_voltage;
+        latest_bus_voltage_ = msg->master_bus_voltage_v;
       });
 
     // Fuel state for fuel_available coupling

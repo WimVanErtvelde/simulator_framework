@@ -354,8 +354,8 @@ class IosBackendNode(Node):
             'adf2_khz': float(msg.adf2_freq_khz),
             'xpdr_code': int(msg.transponder_code),
             'xpdr_mode': xpdr_modes.get(msg.transponder_mode, 'OFF'),
-            'obs1': float(msg.obs1),
-            'obs2': float(msg.obs2),
+            'obs1_deg': float(msg.obs1_deg),
+            'obs2_deg': float(msg.obs2_deg),
             'dme_source': int(msg.dme_source),
             'tacan_channel': int(msg.tacan_channel),
             'tacan_band': int(msg.tacan_band),
@@ -369,21 +369,21 @@ class IosBackendNode(Node):
         data = {
             'type': 'electrical_state',
             'bus_names': list(msg.bus_names),
-            'bus_voltages': [float(v) for v in msg.bus_voltages],
+            'bus_voltages_v': [float(v) for v in msg.bus_voltages_v],
             'bus_powered': [bool(p) for p in msg.bus_powered],
             'source_names': list(msg.source_names),
             'source_active': [bool(a) for a in msg.source_active],
-            'source_voltages': [float(v) for v in msg.source_voltages],
-            'source_currents': [float(c) for c in msg.source_currents],
+            'source_voltages_v': [float(v) for v in msg.source_voltages_v],
+            'source_currents_a': [float(c) for c in msg.source_currents_a],
             'load_names': list(msg.load_names),
             'load_powered': [bool(p) for p in msg.load_powered],
-            'load_currents': [float(c) for c in msg.load_currents],
+            'load_currents_a': [float(c) for c in msg.load_currents_a],
             'switch_ids': list(msg.switch_ids),
             'switch_labels': list(msg.switch_labels),
             'switch_closed': [bool(c) for c in msg.switch_closed],
-            'total_load_amps': float(msg.total_load_amps),
+            'total_load_a': float(msg.total_load_a),
             'battery_soc_pct': float(msg.battery_soc_pct),
-            'master_bus_voltage': float(msg.master_bus_voltage),
+            'master_bus_voltage_v': float(msg.master_bus_voltage_v),
             'avionics_bus_powered': bool(msg.avionics_bus_powered),
             'essential_bus_powered': bool(msg.essential_bus_powered),
         }
@@ -650,8 +650,8 @@ class IosBackendNode(Node):
         msg.com3_freq_mhz = float(data.get('com3_mhz', 0.0))
         msg.nav1_freq_mhz = float(data.get('nav1_mhz', 109.10))
         msg.nav2_freq_mhz = float(data.get('nav2_mhz', 110.30))
-        msg.obs1 = float(data.get('obs1', 0.0))
-        msg.obs2 = float(data.get('obs2', 0.0))
+        msg.obs1_deg = float(data.get('obs1_deg', 0.0))
+        msg.obs2_deg = float(data.get('obs2_deg', 0.0))
         msg.adf1_freq_khz = float(data.get('adf1_khz', 0.0))
         msg.adf2_freq_khz = float(data.get('adf2_khz', 0.0))
         msg.transponder_code = int(data.get('xpdr_code', 2000))
@@ -921,8 +921,8 @@ async def send_stub_data():
                 'adf2_khz': 0,
                 'xpdr_code': 2000,
                 'xpdr_mode': 'ALT',
-                'obs1': 0.0,
-                'obs2': 0.0,
+                'obs1_deg': 0.0,
+                'obs2_deg': 0.0,
                 'dme_source': 0,
             })
 

@@ -18,8 +18,8 @@ float32 nav1_freq_mhz
 float32 nav2_freq_mhz
 
 # ── OBS selectors ──────────────────────────────────────────────────────────
-float32 obs1
-float32 obs2
+float32 obs1_deg
+float32 obs2_deg
 
 # ── ADF receivers ──────────────────────────────────────────────────────────
 float32 adf1_freq_khz

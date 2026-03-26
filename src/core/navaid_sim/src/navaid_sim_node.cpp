@@ -491,12 +491,12 @@ private:
     if (last_avionics_.nav1_freq_mhz > 0.0f) {
       nav1_int = static_cast<int>(last_avionics_.nav1_freq_mhz * 100.0f + 0.5f);
       model_->setFrequency(1, nav1_int);
-      model_->setOBS(1, static_cast<int>(last_avionics_.obs1 + 0.5f));
+      model_->setOBS(1, static_cast<int>(last_avionics_.obs1_deg + 0.5f));
     }
     if (last_avionics_.nav2_freq_mhz > 0.0f) {
       nav2_int = static_cast<int>(last_avionics_.nav2_freq_mhz * 100.0f + 0.5f);
       model_->setFrequency(2, nav2_int);
-      model_->setOBS(2, static_cast<int>(last_avionics_.obs2 + 0.5f));
+      model_->setOBS(2, static_cast<int>(last_avionics_.obs2_deg + 0.5f));
     }
     // ADF frequency from avionics
     if (last_avionics_.adf1_freq_khz > 0.0f) {

@@ -75,7 +75,7 @@ export const useSimStore = create((set, get) => ({
     nav1Mhz: 108.0, nav2Mhz: 108.0,
     adf1Khz: 190, adf2Khz: 190,
     xpdrCode: 7000, xpdrMode: 'ALT',
-    obs1: 0, obs2: 0, dmeSource: 0,
+    obs1Deg: 0, obs2Deg: 0, dmeSource: 0,
     tacanChannel: 0, tacanBand: 0, gpsSource: 0,
   },
 
@@ -101,12 +101,12 @@ export const useSimStore = create((set, get) => ({
 
   // Electrical state
   electrical: {
-    busNames: [], busVoltages: [], busPowered: [],
-    sourceNames: [], sourceActive: [], sourceVoltages: [], sourceCurrents: [],
-    loadNames: [], loadPowered: [], loadCurrents: [],
+    busNames: [], busVoltagesV: [], busPowered: [],
+    sourceNames: [], sourceActive: [], sourceVoltagesV: [], sourceCurrentsA: [],
+    loadNames: [], loadPowered: [], loadCurrentsA: [],
     switchIds: [], switchLabels: [], switchClosed: [],
-    totalLoadAmps: 0, batterySocPct: 0,
-    masterBusVoltage: 0, avionicsBusPowered: false, essentialBusPowered: false,
+    totalLoadA: 0, batterySocPct: 0,
+    masterBusVoltageV: 0, avionicsBusPowered: false, essentialBusPowered: false,
   },
 
   // Air data (from sim_air_data pitot-static model)
@@ -424,8 +424,8 @@ export const useSimStore = create((set, get) => ({
                 adf2Khz: adfMin(msg.adf2_khz) ?? s.avionics.adf2Khz,
                 xpdrCode: xpdrDef(msg.xpdr_code) ?? s.avionics.xpdrCode,
                 xpdrMode: msg.xpdr_mode ?? s.avionics.xpdrMode,
-                obs1: r0(msg.obs1) ?? s.avionics.obs1,
-                obs2: r0(msg.obs2) ?? s.avionics.obs2,
+                obs1Deg: r0(msg.obs1_deg) ?? s.avionics.obs1Deg,
+                obs2Deg: r0(msg.obs2_deg) ?? s.avionics.obs2Deg,
                 dmeSource: msg.dme_source ?? s.avionics.dmeSource,
                 tacanChannel: msg.tacan_channel ?? s.avionics.tacanChannel,
                 tacanBand: msg.tacan_band ?? s.avionics.tacanBand,
@@ -509,21 +509,21 @@ export const useSimStore = create((set, get) => ({
             set({
               electrical: {
                 busNames: msg.bus_names ?? s.electrical.busNames,
-                busVoltages: msg.bus_voltages ?? s.electrical.busVoltages,
+                busVoltagesV: msg.bus_voltages_v ?? s.electrical.busVoltagesV,
                 busPowered: msg.bus_powered ?? s.electrical.busPowered,
                 sourceNames: msg.source_names ?? s.electrical.sourceNames,
                 sourceActive: msg.source_active ?? s.electrical.sourceActive,
-                sourceVoltages: msg.source_voltages ?? s.electrical.sourceVoltages,
-                sourceCurrents: msg.source_currents ?? s.electrical.sourceCurrents,
+                sourceVoltagesV: msg.source_voltages_v ?? s.electrical.sourceVoltagesV,
+                sourceCurrentsA: msg.source_currents_a ?? s.electrical.sourceCurrentsA,
                 loadNames: msg.load_names ?? s.electrical.loadNames,
                 loadPowered: msg.load_powered ?? s.electrical.loadPowered,
-                loadCurrents: msg.load_currents ?? s.electrical.loadCurrents,
+                loadCurrentsA: msg.load_currents_a ?? s.electrical.loadCurrentsA,
                 switchIds: msg.switch_ids ?? s.electrical.switchIds,
                 switchLabels: msg.switch_labels ?? s.electrical.switchLabels,
                 switchClosed: msg.switch_closed ?? s.electrical.switchClosed,
-                totalLoadAmps: msg.total_load_amps ?? s.electrical.totalLoadAmps,
+                totalLoadA: msg.total_load_a ?? s.electrical.totalLoadA,
                 batterySocPct: msg.battery_soc_pct ?? s.electrical.batterySocPct,
-                masterBusVoltage: msg.master_bus_voltage ?? s.electrical.masterBusVoltage,
+                masterBusVoltageV: msg.master_bus_voltage_v ?? s.electrical.masterBusVoltageV,
                 avionicsBusPowered: msg.avionics_bus_powered ?? s.electrical.avionicsBusPowered,
                 essentialBusPowered: msg.essential_bus_powered ?? s.electrical.essentialBusPowered,
               }
