@@ -12,5 +12,5 @@ float64 pitch_rad          # initial pitch angle (positive = nose up)
 float64 airspeed_ms
 float64 oat_deviation_k
 float64 qnh_pa
-float32 fuel_total_pct
+float32 fuel_total_norm              # 0.0-1.0 ratio
 string configuration     # "cold_and_dark", "ready_for_takeoff", "airborne_clean"

@@ -292,7 +292,7 @@ public:
           msg.static_healthy[i]          = s.static_healthy;
           msg.pitot_heat_on[i]           = s.pitot_heat_on;
           msg.alternate_static_active[i] = s.alternate_static_active;
-          msg.pitot_ice_pct[i]           = s.pitot_ice_pct;
+          msg.pitot_ice_norm[i]           = s.pitot_ice_norm;
         }
 
         air_data_state_pub_->publish(msg);

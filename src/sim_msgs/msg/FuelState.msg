@@ -9,7 +9,7 @@ string fuel_type                      # "AVGAS_100LL", "JET_A1", etc.
 
 # Per-tank quantities (slots 0..tank_count-1 valid, rest zeroed)
 float32[8] tank_quantity_kg
-float32[8] tank_quantity_pct
+float32[8] tank_quantity_norm       # 0.0-1.0 ratio (mass / capacity)
 float32[8] tank_usable_kg
 float32[8] tank_quantity_liters       # = tank_quantity_kg / density_kg_per_liter
 float32[8] tank_flow_out_lph          # Flow out of each tank outlet (L/h). Zeroed by
@@ -18,7 +18,7 @@ float32[8] tank_flow_out_lph          # Flow out of each tank outlet (L/h). Zero
 
 # Totals
 float32    total_fuel_kg
-float32    total_fuel_pct
+float32    total_fuel_norm          # 0.0-1.0 ratio (total mass / total capacity)
 float32    total_fuel_liters          # = total_fuel_kg / density_kg_per_liter
 
 # Per-engine fuel flow (single source of truth for all consumers)

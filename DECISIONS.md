@@ -2078,3 +2078,14 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - FIXED: F3.9 — All 13 lifecycle nodes check configure state before calling activate.
 - FIXED: F3.12 — sim_navigation now has alert_pub_ for error reporting to IOS.
 - AFFECTS: atmosphere_node, cigi_bridge, flight_model_adapter, ios_backend, sim_electrical, sim_engine_systems, sim_gear, sim_air_data, sim_navigation, all lifecycle nodes (configure guard), ec135 config.
+
+## 2026-03-27 — Claude Code
+
+### V3 unit suffix cleanup — _pct/_norm split
+
+- DECIDED: All 0-1 ratio fields renamed from _pct to _norm. Convention locked: _pct = 0-100 (gauge %), _norm = 0-1 (internal ratio). No value changes — renames only.
+- REASON: _pct suffix on 0-1 fields was misleading. Split convention eliminates ambiguity.
+- RENAMED: FlightModelState (fuel_total_norm, gear_position_norm), FuelState (tank_quantity_norm, total_fuel_norm), GearState (position_norm), AirDataState (pitot_ice_norm), InitialConditions (fuel_total_norm)
+- KEPT _pct: throttle_pct, flap_pct, speed_brake_pct (0-100), battery_soc_pct (0-100), n1_pct, n2_pct, torque_pct (0-100)
+- ALSO: V3 batch 1-4 renames (FlightControls/EngineControls _norm, ElectricalState _v/_a, AvionicsControls obs_deg)
+- AFFECTS: FlightModelState, FuelState, GearState, AirDataState, InitialConditions, config.yaml (both aircraft), all consumers (C++, Python, JS field name updates)

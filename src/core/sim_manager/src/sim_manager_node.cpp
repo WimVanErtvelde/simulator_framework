@@ -38,7 +38,7 @@ struct InitialConditions {
   double airspeed_ms       = 0.0;
   double oat_deviation_k   = 0.0;
   double qnh_pa            = 101325.0;
-  double fuel_total_pct    = 1.0;
+  double fuel_total_norm    = 1.0;
   std::string configuration = "cold_and_dark";
 };
 
@@ -252,7 +252,7 @@ private:
         if (ic["airspeed_ms"])      current_ic_.airspeed_ms      = ic["airspeed_ms"].as<double>();
         if (ic["oat_deviation_k"]) current_ic_.oat_deviation_k  = ic["oat_deviation_k"].as<double>();
         if (ic["qnh_pa"])           current_ic_.qnh_pa           = ic["qnh_pa"].as<double>();
-        if (ic["fuel_total_pct"])   current_ic_.fuel_total_pct   = ic["fuel_total_pct"].as<double>();
+        if (ic["fuel_total_norm"])   current_ic_.fuel_total_norm   = ic["fuel_total_norm"].as<double>();
         if (ic["configuration"])    current_ic_.configuration    = ic["configuration"].as<std::string>();
       }
 
@@ -572,7 +572,7 @@ private:
       if (j.contains("airspeed_ms"))      current_ic_.airspeed_ms      = j["airspeed_ms"].get<double>();
       if (j.contains("oat_deviation_k"))  current_ic_.oat_deviation_k  = j["oat_deviation_k"].get<double>();
       if (j.contains("qnh_pa"))           current_ic_.qnh_pa           = j["qnh_pa"].get<double>();
-      if (j.contains("fuel_total_pct"))   current_ic_.fuel_total_pct   = j["fuel_total_pct"].get<double>();
+      if (j.contains("fuel_total_norm"))   current_ic_.fuel_total_norm   = j["fuel_total_norm"].get<double>();
       if (j.contains("configuration"))    current_ic_.configuration    = j["configuration"].get<std::string>();
       RCLCPP_INFO(this->get_logger(), "Initial conditions updated from JSON");
     } catch (const json::exception & e) {
@@ -593,7 +593,7 @@ private:
     msg.airspeed_ms      = current_ic_.airspeed_ms;
     msg.oat_deviation_k  = current_ic_.oat_deviation_k;
     msg.qnh_pa           = current_ic_.qnh_pa;
-    msg.fuel_total_pct   = static_cast<float>(current_ic_.fuel_total_pct);
+    msg.fuel_total_norm   = static_cast<float>(current_ic_.fuel_total_norm);
     msg.configuration    = current_ic_.configuration;
     ic_pub_->publish(msg);
     RCLCPP_INFO(this->get_logger(),
@@ -658,7 +658,7 @@ private:
         if (ic["airspeed_ms"])      current_ic_.airspeed_ms      = ic["airspeed_ms"].as<double>();
         if (ic["oat_deviation_k"]) current_ic_.oat_deviation_k  = ic["oat_deviation_k"].as<double>();
         if (ic["qnh_pa"])           current_ic_.qnh_pa           = ic["qnh_pa"].as<double>();
-        if (ic["fuel_total_pct"])   current_ic_.fuel_total_pct   = ic["fuel_total_pct"].as<double>();
+        if (ic["fuel_total_norm"])   current_ic_.fuel_total_norm   = ic["fuel_total_norm"].as<double>();
         if (ic["configuration"])    current_ic_.configuration    = ic["configuration"].as<std::string>();
       }
 

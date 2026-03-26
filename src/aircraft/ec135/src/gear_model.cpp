@@ -13,7 +13,7 @@ public:
 
   void update(double /*dt_sec*/,
               const std::vector<bool> & /*gear_on_ground*/,
-              const std::vector<float> & /*gear_position_pct*/,
+              const std::vector<float> & /*gear_position_norm*/,
               const std::vector<float> & /*gear_steering_deg*/,
               bool /*gear_handle_down*/,
               bool /*on_ground*/) override {}

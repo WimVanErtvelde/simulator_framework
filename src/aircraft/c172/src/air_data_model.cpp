@@ -99,7 +99,7 @@ public:
       pitot_pressure = trapped_pitot_pressure_;
     } else {
       // Update trapped pressure continuously (captured at moment of blockage)
-      if (pitot_ice_pct_ < 1.0f) {
+      if (pitot_ice_norm_ < 1.0f) {
         trapped_pitot_pressure_ = pitot_pressure;
       }
 
@@ -110,21 +110,21 @@ public:
         !heat_on;
 
       if (icing_conditions) {
-        pitot_ice_pct_ += static_cast<float>(dt_sec / ice_delay_s_);
-        pitot_ice_pct_ = std::min(pitot_ice_pct_, 1.0f);
+        pitot_ice_norm_ += static_cast<float>(dt_sec / ice_delay_s_);
+        pitot_ice_norm_ = std::min(pitot_ice_norm_, 1.0f);
       }
 
       // Clear ice: heat on
-      if (heat_on && pitot_ice_pct_ > 0.0f) {
-        pitot_ice_pct_ -= static_cast<float>(dt_sec * ice_clear_rate_ / ice_delay_s_);
-        pitot_ice_pct_ = std::max(pitot_ice_pct_, 0.0f);
+      if (heat_on && pitot_ice_norm_ > 0.0f) {
+        pitot_ice_norm_ -= static_cast<float>(dt_sec * ice_clear_rate_ / ice_delay_s_);
+        pitot_ice_norm_ = std::max(pitot_ice_norm_, 0.0f);
       }
 
       // Partial blockage: blend between live and trapped pressures
-      if (pitot_ice_pct_ > 0.0f) {
+      if (pitot_ice_norm_ > 0.0f) {
         pitot_pressure =
-          (1.0 - pitot_ice_pct_) * pitot_pressure +
-          pitot_ice_pct_ * trapped_pitot_pressure_;
+          (1.0 - pitot_ice_norm_) * pitot_pressure +
+          pitot_ice_norm_ * trapped_pitot_pressure_;
       }
     }
 
@@ -208,11 +208,11 @@ public:
     system_.vertical_speed_ms       = static_cast<float>(vsi_filtered_);
     system_.sat_k                   = static_cast<float>(sat);
     system_.tat_k                   = static_cast<float>(tat);
-    system_.pitot_healthy           = !pitot_blocked_failure_ && pitot_ice_pct_ < 1.0f;
+    system_.pitot_healthy           = !pitot_blocked_failure_ && pitot_ice_norm_ < 1.0f;
     system_.static_healthy          = !static_blocked_failure_;
     system_.pitot_heat_on           = heat_on;
     system_.alternate_static_active = alt_static_on;
-    system_.pitot_ice_pct           = pitot_ice_pct_;
+    system_.pitot_ice_norm           = pitot_ice_norm_;
   }
 
   sim_interfaces::AirDataSnapshot get_snapshot() const override
@@ -227,7 +227,7 @@ public:
     pitot_blocked_failure_   = false;
     drain_blocked_           = false;
     static_blocked_failure_  = false;
-    pitot_ice_pct_           = 0.0f;
+    pitot_ice_norm_           = 0.0f;
     trapped_pitot_pressure_  = 101325.0;
     trapped_static_pressure_ = 101325.0;
     prev_indicated_alt_      = 0.0;
@@ -298,7 +298,7 @@ private:
 
   // Runtime state
   sim_interfaces::AirDataSystemState system_;
-  float pitot_ice_pct_          = 0.0f;
+  float pitot_ice_norm_          = 0.0f;
   double trapped_pitot_pressure_ = 101325.0;
   double trapped_static_pressure_ = 101325.0;
   bool pitot_blocked_failure_   = false;

@@ -10,7 +10,7 @@ bool retractable                    # true if gear can retract
 
 # Per-leg state (up to 5 legs)
 string[5] leg_names                 # e.g. ["nose", "left_main", "right_main", "", ""]
-float32[5] position_pct             # 0.0=retracted, 1.0=extended (always 1.0 for fixed gear)
+float32[5] position_norm            # 0.0=retracted, 1.0=extended (always 1.0 for fixed gear)
 bool[5] weight_on_wheels            # ground contact per leg (from FlightModelState)
 uint8[5] status                     # 0=UP, 1=DOWN_LOCKED, 2=IN_TRANSIT, 3=FAULT
 

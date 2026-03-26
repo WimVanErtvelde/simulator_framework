@@ -187,9 +187,9 @@ public:
     }
   }
 
-  void apply_initial_conditions(float fuel_total_pct) override
+  void apply_initial_conditions(float fuel_total_norm) override
   {
-    float pct = std::clamp(fuel_total_pct, 0.0f, 1.0f);
+    float pct = std::clamp(fuel_total_norm, 0.0f, 1.0f);
     for (size_t i = 0; i < tanks_.size(); ++i) {
       tank_qty_kg_[i] = tanks_[i].capacity_kg * pct;
     }
@@ -205,7 +205,7 @@ public:
 
     for (size_t i = 0; i < tanks_.size() && i < 4; ++i) {
       state.tank_quantity_kg[i] = tank_qty_kg_[i];
-      state.tank_quantity_pct[i] =
+      state.tank_quantity_norm[i] =
         (tanks_[i].capacity_kg > 0.0f) ? tank_qty_kg_[i] / tanks_[i].capacity_kg : 0.0f;
       float usable = std::max(0.0f, tank_qty_kg_[i] - tanks_[i].unusable_kg);
       state.tank_usable_kg[i] = usable;
@@ -243,7 +243,7 @@ public:
     }
 
     state.total_fuel_kg = total_kg;
-    state.total_fuel_pct = (total_capacity > 0.0f) ? total_kg / total_capacity : 0.0f;
+    state.total_fuel_norm = (total_capacity > 0.0f) ? total_kg / total_capacity : 0.0f;
     state.cg_contribution_m = (total_kg > 0.0f) ? cg_moment / total_kg : 0.0f;
 
     state.low_fuel_warning = (total_capacity > 0.0f) &&

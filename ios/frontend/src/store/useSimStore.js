@@ -393,7 +393,7 @@ export const useSimStore = create((set, get) => ({
               id: i,
               massKg: kg,
               liters: msg.tank_quantity_liters?.[i] ?? 0,
-              pct: msg.tank_quantity_pct?.[i] ?? 0,
+              pct: msg.tank_quantity_norm?.[i] ?? 0,
               usableKg: msg.tank_usable_kg?.[i] ?? 0,
               selected: msg.tank_selected?.[i] ?? false,
               boostPumpOn: msg.boost_pump_on?.[i] ?? false,
@@ -403,7 +403,7 @@ export const useSimStore = create((set, get) => ({
                 tanks,
                 totalFuelKg: msg.total_fuel_kg ?? 0,
                 totalFuelLiters: msg.total_fuel_liters ?? 0,
-                totalFuelPct: msg.total_fuel_pct ?? 0,
+                totalFuelPct: msg.total_fuel_norm ?? 0,
                 engineFuelFlowKgs: msg.engine_fuel_flow_kgs ?? [],
                 engineFuelFlowLph: msg.engine_fuel_flow_lph ?? [],
                 lowFuelWarning: msg.low_fuel_warning ?? false,
@@ -649,7 +649,7 @@ export const useSimStore = create((set, get) => ({
                 pitotHealthy: msg.pitot_healthy ?? s.airData.pitotHealthy,
                 staticHealthy: msg.static_healthy ?? s.airData.staticHealthy,
                 pitotHeatOn: msg.pitot_heat_on ?? s.airData.pitotHeatOn,
-                pitotIcePct: msg.pitot_ice_pct ?? s.airData.pitotIcePct,
+                pitotIcePct: msg.pitot_ice_norm ?? s.airData.pitotIcePct,
               },
             })
             break

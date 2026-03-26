@@ -29,7 +29,7 @@ public:
     for (const auto & leg_node : legs_node) {
       sim_interfaces::GearLegState leg;
       leg.name           = leg_node["name"] ? leg_node["name"].as<std::string>() : "unknown";
-      leg.position_pct   = 1.0f;   // fixed gear: always extended
+      leg.position_norm   = 1.0f;   // fixed gear: always extended
       leg.weight_on_wheels = true; // start on ground
       leg.status         = 1;      // DOWN_LOCKED
       legs_.push_back(leg);
@@ -44,7 +44,7 @@ public:
 
   void update(double /*dt_sec*/,
               const std::vector<bool> & gear_on_ground,
-              const std::vector<float> & /*gear_position_pct*/,
+              const std::vector<float> & /*gear_position_norm*/,
               const std::vector<float> & gear_steering_deg,
               bool /*gear_handle_down*/,
               bool on_ground) override
@@ -52,7 +52,7 @@ public:
     // Fixed gear: position is always 1.0 (fully extended), status always DOWN_LOCKED.
     // We only track WoW per leg and nosewheel angle.
     for (size_t i = 0; i < legs_.size(); ++i) {
-      legs_[i].position_pct = 1.0f;
+      legs_[i].position_norm = 1.0f;
       legs_[i].status       = 1;  // DOWN_LOCKED
       if (i < gear_on_ground.size()) {
         legs_[i].weight_on_wheels = gear_on_ground[i];
@@ -88,7 +88,7 @@ public:
   {
     // Restore all legs to down/locked and on ground
     for (auto & leg : legs_) {
-      leg.position_pct     = 1.0f;
+      leg.position_norm     = 1.0f;
       leg.weight_on_wheels = true;
       leg.status           = 1;  // DOWN_LOCKED
     }

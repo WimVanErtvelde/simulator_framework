@@ -22,5 +22,5 @@ initial_conditions:
   airspeed_ms: 0.0
   oat_deviation_k: 0.0
   qnh_pa: 101325.0
-  fuel_total_pct: 0.80
+  fuel_total_norm: 0.80
   configuration: cold_and_dark

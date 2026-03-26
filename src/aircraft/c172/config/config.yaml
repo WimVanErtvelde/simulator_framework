@@ -25,7 +25,7 @@ initial_conditions:
   airspeed_ms: 0.0          # 90 kt
   oat_deviation_k: 0.0
   qnh_pa: 101325.0
-  fuel_total_pct: 0.75
+  fuel_total_norm: 0.75
   configuration: ready_for_takeoff
 
 gear_ground_height_m: 1.48      # CG height above ground when static on gear (for IC placement only)

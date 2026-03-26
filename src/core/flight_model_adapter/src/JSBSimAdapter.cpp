@@ -618,7 +618,7 @@ sim_msgs::msg::FlightModelState JSBSimAdapter::get_state() const
   }
 
   state.fuel_total_kg = static_cast<float>(total_contents_lbs * LBS_TO_KG);
-  state.fuel_total_pct = (total_capacity_lbs > 0.0)
+  state.fuel_total_norm = (total_capacity_lbs > 0.0)
     ? static_cast<float>(total_contents_lbs / total_capacity_lbs)
     : 0.0f;
 
@@ -629,14 +629,14 @@ sim_msgs::msg::FlightModelState JSBSimAdapter::get_state() const
   // C172 has 3 fixed gear: [0]=nose, [1]=left main, [2]=right main
   state.gear_count = 3;
   for (int i = 0; i < 3; ++i) {
-    state.gear_position_pct[i] = 1.0f;  // always extended
+    state.gear_position_norm[i] = 1.0f;  // always extended
     std::string wow_prop = "gear/unit[" + std::to_string(i) + "]/WOW";
     state.gear_on_ground[i] = exec_->GetPropertyValue(wow_prop) > 0.5;
     state.gear_status[i] = 1;  // always down
     state.wheel_angle_deg[i] = 0.0f;
   }
   for (int i = 3; i < 5; ++i) {
-    state.gear_position_pct[i] = 0.0f;
+    state.gear_position_norm[i] = 0.0f;
     state.gear_on_ground[i] = false;
     state.gear_status[i] = 0;
     state.wheel_angle_deg[i] = 0.0f;

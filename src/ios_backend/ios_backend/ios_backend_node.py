@@ -213,11 +213,11 @@ class IosBackendNode(Node):
             'density_kg_per_liter': float(msg.density_kg_per_liter),
             'fuel_type': msg.fuel_type,
             'tank_quantity_kg': [float(msg.tank_quantity_kg[i]) for i in range(n)],
-            'tank_quantity_pct': [float(msg.tank_quantity_pct[i]) for i in range(n)],
+            'tank_quantity_norm': [float(msg.tank_quantity_norm[i]) for i in range(n)],
             'tank_usable_kg': [float(msg.tank_usable_kg[i]) for i in range(n)],
             'tank_quantity_liters': [float(msg.tank_quantity_liters[i]) for i in range(n)],
             'total_fuel_kg': float(msg.total_fuel_kg),
-            'total_fuel_pct': float(msg.total_fuel_pct),
+            'total_fuel_norm': float(msg.total_fuel_norm),
             'total_fuel_liters': float(msg.total_fuel_liters),
             'engine_fuel_flow_kgs': [float(x) for x in msg.engine_fuel_flow_kgs],
             'engine_fuel_flow_lph': [float(x) for x in msg.engine_fuel_flow_lph],
@@ -574,7 +574,7 @@ class IosBackendNode(Node):
             'pitot_healthy': bool(msg.pitot_healthy[0]),
             'static_healthy': bool(msg.static_healthy[0]),
             'pitot_heat_on': bool(msg.pitot_heat_on[0]),
-            'pitot_ice_pct': float(msg.pitot_ice_pct[0]),
+            'pitot_ice_norm': float(msg.pitot_ice_norm[0]),
         }
         with self._lock:
             self._latest['air_data_state'] = data

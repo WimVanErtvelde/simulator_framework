@@ -199,7 +199,7 @@ public:
           on_ground  = latest_fms_->on_ground;
           for (uint8_t i = 0; i < gear_count && i < 5; ++i) {
             wow_vec.push_back(latest_fms_->gear_on_ground[i]);
-            pos_vec.push_back(latest_fms_->gear_position_pct[i]);
+            pos_vec.push_back(latest_fms_->gear_position_norm[i]);
             steer_vec.push_back(latest_fms_->wheel_angle_deg[i]);
           }
         }
@@ -228,7 +228,7 @@ public:
         // Per-leg state
         for (size_t i = 0; i < snap.legs.size() && i < 5; ++i) {
           msg.leg_names[i]        = snap.legs[i].name;
-          msg.position_pct[i]     = snap.legs[i].position_pct;
+          msg.position_norm[i]     = snap.legs[i].position_norm;
           msg.weight_on_wheels[i] = snap.legs[i].weight_on_wheels;
           msg.status[i]           = snap.legs[i].status;
         }

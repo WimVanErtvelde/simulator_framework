@@ -93,8 +93,8 @@ public:
       "/sim/initial_conditions", 10,
       [this](sim_msgs::msg::InitialConditions::SharedPtr msg) {
         if (model_) {
-          model_->apply_initial_conditions(msg->fuel_total_pct);
-          RCLCPP_INFO(this->get_logger(), "Applied IC: fuel_total_pct=%.2f", msg->fuel_total_pct);
+          model_->apply_initial_conditions(msg->fuel_total_norm);
+          RCLCPP_INFO(this->get_logger(), "Applied IC: fuel_total_norm=%.2f", msg->fuel_total_norm);
         }
       });
 
@@ -274,7 +274,7 @@ private:
         state.tank_quantity_liters[i] = state.tank_quantity_kg[i] * inv_density;
         if (fdm_models_fuel) {
           float cap_kg = latest_flight_model_state_.fuel_tank_capacity_kg[i];
-          state.tank_quantity_pct[i] = (cap_kg > 0.0f)
+          state.tank_quantity_norm[i] = (cap_kg > 0.0f)
             ? state.tank_quantity_kg[i] / cap_kg : 0.0f;
         }
       } else {

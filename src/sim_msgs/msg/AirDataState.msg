@@ -26,4 +26,4 @@ bool[3] pitot_heat_on                 # true = heater powered (from electrical l
 bool[3] alternate_static_active       # true = alternate static source selected
 
 # Icing state per system
-float32[3] pitot_ice_pct              # 0.0 = clear, 1.0 = fully blocked
+float32[3] pitot_ice_norm             # 0.0 = clear, 1.0 = fully blocked

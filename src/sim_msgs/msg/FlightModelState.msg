@@ -279,7 +279,7 @@ uint8[4] engine_status_flags
 # ─────────────────────────────────────────────────────────────────────────────
 
 float32 fuel_total_kg           # total fuel mass on board [HLSIM word 135]
-float32 fuel_total_pct          # fuel mass ratio 0-1 [HLSIM word 136]
+float32 fuel_total_norm         # fuel mass ratio 0.0-1.0 [HLSIM word 136]
 float32[8] fuel_tank_kg         # per-tank fuel mass [HLSIM words 137-138 + extended]
 float32[8] fuel_tank_capacity_kg  # per-tank capacity from flight model
 uint8 fuel_tank_count               # number of tanks reported by flight model
@@ -296,7 +296,7 @@ float32 total_mass_kg           # total aircraft mass (airframe + fuel + payload
 uint8 gear_count                # number of gear assemblies
 
 # Gear position 0.0 = fully retracted, 1.0 = fully extended [HLSIM words 141-145]
-float32[5] gear_position_pct
+float32[5] gear_position_norm
 # Wheel steering/caster angle [HLSIM words 146-150]
 float32[5] wheel_angle_deg
 # Ground contact flags [HLSIM word 151, bits per gear]

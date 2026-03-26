@@ -46,7 +46,7 @@ struct AirDataSystemState {
   bool static_healthy = true;
   bool pitot_heat_on = false;
   bool alternate_static_active = false;
-  float pitot_ice_pct = 0.0f;
+  float pitot_ice_norm = 0.0f;
 };
 
 struct AirDataSnapshot {

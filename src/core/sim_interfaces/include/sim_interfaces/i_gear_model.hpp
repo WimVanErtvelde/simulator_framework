@@ -10,7 +10,7 @@ namespace sim_interfaces
 
 struct GearLegState {
   std::string name;
-  float position_pct = 1.0f;   // 0=retracted, 1=extended
+  float position_norm = 1.0f;   // 0=retracted, 1=extended
   bool weight_on_wheels = false;
   uint8_t status = 1;          // 0=UP, 1=DOWN_LOCKED, 2=IN_TRANSIT, 3=FAULT
 };
@@ -33,13 +33,13 @@ public:
 
   // Update with flight model data. Called at 50 Hz.
   // gear_on_ground: per-leg ground contact from FlightModelState
-  // gear_position_pct: per-leg position from FlightModelState
+  // gear_position_norm: per-leg position from FlightModelState
   // gear_steering_deg: nosewheel steering angle from FlightModelState
   // gear_handle_down: gear lever commanded position
   // on_ground: aggregate on_ground from FlightModelState
   virtual void update(double dt_sec,
                       const std::vector<bool> & gear_on_ground,
-                      const std::vector<float> & gear_position_pct,
+                      const std::vector<float> & gear_position_norm,
                       const std::vector<float> & gear_steering_deg,
                       bool gear_handle_down,
                       bool on_ground) = 0;
