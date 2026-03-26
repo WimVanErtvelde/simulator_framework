@@ -41,6 +41,7 @@ struct ArmedEntry {
   float condition_value;
   float condition_duration_s;
   float condition_met_duration_s;  // accumulator
+  std::string params_override_json; // preserved from arm command for inject on fire
 };
 
 // ─── Helper: build params_json from map (no external JSON library) ──────────
@@ -380,6 +381,7 @@ private:
     entry.condition_value = cmd->condition_value;
     entry.condition_duration_s = cmd->condition_duration_s;
     entry.condition_met_duration_s = 0.0f;
+    entry.params_override_json = cmd->params_override_json;
 
     armed_queue_.push_back(entry);
     RCLCPP_INFO(this->get_logger(),
@@ -517,7 +519,12 @@ private:
 
     // Inject triggered entries and remove from armed queue
     for (const auto & fid : to_inject) {
-      inject_failure(fid);
+      // Find the armed entry to retrieve its params_override_json
+      std::string override_json;
+      for (const auto & e : armed_queue_) {
+        if (e.failure_id == fid) { override_json = e.params_override_json; break; }
+      }
+      inject_failure(fid, override_json);
       armed_queue_.erase(
         std::remove_if(armed_queue_.begin(), armed_queue_.end(),
           [&](const ArmedEntry & e) { return e.failure_id == fid; }),

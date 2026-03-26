@@ -348,22 +348,25 @@ private:
 
     } else if (msg->method == "set_circuit_breaker_state") {
       std::string cb_id = extract_json_value(msg->params_json, "component_id");
-      std::string state = extract_json_value(msg->params_json, "state");
       if (cb_id.empty()) return;
 
-      if (state == "popped") {
-        cb_overrides_[cb_id] = CBOverride::POPPED;
-        model_->command_switch(cb_id, 0);  // open the CB
-      } else if (state == "locked") {
-        cb_overrides_[cb_id] = CBOverride::LOCKED;
-        model_->command_switch(cb_id, 0);  // open and lock
-      } else {
-        // normal — remove override, allow solver to control
+      if (!msg->active) {
+        // Clear — remove override, close the CB
         cb_overrides_.erase(cb_id);
+        model_->command_switch(cb_id, 1);  // close the CB
+        RCLCPP_INFO(this->get_logger(), "CB %s override CLEARED", cb_id.c_str());
+      } else {
+        std::string state = extract_json_value(msg->params_json, "state");
+        if (state == "popped") {
+          cb_overrides_[cb_id] = CBOverride::POPPED;
+          model_->command_switch(cb_id, 0);  // open the CB
+        } else if (state == "locked") {
+          cb_overrides_[cb_id] = CBOverride::LOCKED;
+          model_->command_switch(cb_id, 0);  // open and lock
+        }
+        RCLCPP_INFO(this->get_logger(), "CB %s override: %s", cb_id.c_str(), state.c_str());
       }
       solver_dirty_ = true;
-      RCLCPP_INFO(this->get_logger(), "CB %s override: %s",
-        cb_id.c_str(), state.c_str());
 
     } else {
       RCLCPP_WARN(this->get_logger(), "Unknown electrical failure method: %s",

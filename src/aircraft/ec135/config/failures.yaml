@@ -72,7 +72,7 @@ failures:
     category: gear
     injection:
       handler: flight_model
-      method: set_gear_unsafe_indication
+      method: set_gear_unable_to_extend
       params: {gear_index: 0}
 
   - id: ata32_gear_unable_to_extend_main
@@ -81,7 +81,7 @@ failures:
     category: gear
     injection:
       handler: flight_model
-      method: set_gear_unsafe_indication
+      method: set_gear_unable_to_extend
       params: {gear_index: 1}
 
   # --- ATA 34: Navigation & Instruments ---

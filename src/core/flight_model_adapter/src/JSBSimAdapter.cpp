@@ -337,7 +337,20 @@ void JSBSimAdapter::apply_failure(const std::string & method,
     int idx = json_int(params_json, "engine_index");
     double psi = json_double(params_json, "value_psi", 60.0);
     std::string prop = "propulsion/engine[" + std::to_string(idx) + "]/oil-pressure-psi";
-    exec_->SetPropertyValue(prop, active ? psi : 60.0);
+    if (active) {
+      // Save current value before applying failure
+      if (saved_oil_pressure_.find(idx) == saved_oil_pressure_.end()) {
+        saved_oil_pressure_[idx] = exec_->GetPropertyValue(prop);
+      }
+      exec_->SetPropertyValue(prop, psi);
+    } else {
+      // Restore saved pre-failure value
+      auto it = saved_oil_pressure_.find(idx);
+      if (it != saved_oil_pressure_.end()) {
+        exec_->SetPropertyValue(prop, it->second);
+        saved_oil_pressure_.erase(it);
+      }
+    }
   } else if (method == "set_engine_fire") {
     int idx = json_int(params_json, "engine_index");
     bool val = json_bool(params_json, "value");
@@ -356,6 +369,10 @@ void JSBSimAdapter::apply_failure(const std::string & method,
     std::string prop = "systems/pitot[" + std::to_string(idx) + "]/serviceable";
     exec_->SetPropertyValue(prop, active ? 0.0 : 1.0);
   } else if (method == "set_gear_unsafe_indication") {
+    // Note: gear/unit[N]/wow is recomputed by JSBSim's contact model each frame.
+    // Writing it once here only affects the current frame — JSBSim overwrites it
+    // on the next step(). The -1.0 clear value is harmless for the same reason.
+    // For a persistent WoW override, a per-step property write would be needed.
     int idx = json_int(params_json, "gear_index");
     std::string prop = "gear/unit[" + std::to_string(idx) + "]/wow";
     exec_->SetPropertyValue(prop, active ? 0.0 : -1.0);

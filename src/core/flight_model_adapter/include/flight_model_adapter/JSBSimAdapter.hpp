@@ -58,6 +58,9 @@ private:
   double internal_dt_{1.0 / 120.0};   // JSBSim default timestep
   bool initialized_{false};
 
+  // Saved pre-failure values for clean restore on clear
+  std::map<int, double> saved_oil_pressure_;  // engine_index → pre-failure PSI
+
   // Active fuel drain failures: tank_index → rate_lph
   std::map<int, float> active_drains_;
 };
