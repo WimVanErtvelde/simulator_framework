@@ -335,26 +335,26 @@ public:
         // Apply arbitrated controls
         if (latest_flight_controls_) {
           auto & fc = *latest_flight_controls_;
-          adapter_->set_property("fcs/aileron-cmd-norm",       fc.aileron);
-          adapter_->set_property("fcs/elevator-cmd-norm",      fc.elevator);
-          adapter_->set_property("fcs/rudder-cmd-norm",        fc.rudder);
-          adapter_->set_property("fcs/aileron-trim-cmd-norm",  fc.trim_aileron);
-          adapter_->set_property("fcs/pitch-trim-cmd-norm",    fc.trim_elevator);
-          adapter_->set_property("fcs/yaw-trim-cmd-norm",      fc.trim_rudder);
-          adapter_->set_property("fcs/left-brake-cmd-norm",    fc.brake_left);
-          adapter_->set_property("fcs/right-brake-cmd-norm",   fc.brake_right);
-          adapter_->set_property("fcs/flap-cmd-norm",          fc.flaps);
+          adapter_->set_property("fcs/aileron-cmd-norm",       fc.aileron_norm);
+          adapter_->set_property("fcs/elevator-cmd-norm",      fc.elevator_norm);
+          adapter_->set_property("fcs/rudder-cmd-norm",        fc.rudder_norm);
+          adapter_->set_property("fcs/aileron-trim-cmd-norm",  fc.trim_aileron_norm);
+          adapter_->set_property("fcs/pitch-trim-cmd-norm",    fc.trim_elevator_norm);
+          adapter_->set_property("fcs/yaw-trim-cmd-norm",      fc.trim_rudder_norm);
+          adapter_->set_property("fcs/left-brake-cmd-norm",    fc.brake_left_norm);
+          adapter_->set_property("fcs/right-brake-cmd-norm",   fc.brake_right_norm);
+          adapter_->set_property("fcs/flap-cmd-norm",          fc.flaps_norm);
           adapter_->set_property("gear/gear-cmd-norm",         fc.gear_down ? 1.0 : 0.0);
         }
         if (latest_engine_controls_) {
           auto & ec = *latest_engine_controls_;
-          for (size_t i = 0; i < ec.throttle.size() && i < 4; ++i) {
+          for (size_t i = 0; i < ec.throttle_norm.size() && i < 4; ++i) {
             adapter_->set_property("fcs/throttle-cmd-norm[" + std::to_string(i) + "]",
-                                   ec.throttle[i]);
+                                   ec.throttle_norm[i]);
           }
-          for (size_t i = 0; i < ec.mixture.size() && i < 4; ++i) {
+          for (size_t i = 0; i < ec.mixture_norm.size() && i < 4; ++i) {
             adapter_->set_property("fcs/mixture-cmd-norm[" + std::to_string(i) + "]",
-                                   ec.mixture[i]);
+                                   ec.mixture_norm[i]);
           }
         }
 

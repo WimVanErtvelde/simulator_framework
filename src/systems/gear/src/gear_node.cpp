@@ -206,8 +206,8 @@ public:
 
         if (latest_controls_) {
           gear_handle_down = latest_controls_->gear_down;
-          brake_left       = latest_controls_->brake_left;
-          brake_right      = latest_controls_->brake_right;
+          brake_left       = latest_controls_->brake_left_norm;
+          brake_right      = latest_controls_->brake_right_norm;
           parking_brake    = latest_controls_->parking_brake;
         }
 

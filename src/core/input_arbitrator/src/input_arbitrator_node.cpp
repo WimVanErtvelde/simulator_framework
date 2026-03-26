@@ -504,15 +504,15 @@ private:
   {
     sim_msgs::msg::FlightControls out;
     out.header.stamp = stamp;
-    out.aileron      = raw.aileron;
-    out.elevator     = raw.elevator;
-    out.rudder       = raw.rudder;
-    out.collective   = raw.collective;
-    out.trim_aileron = raw.trim_aileron;
-    out.trim_elevator = raw.trim_elevator;
-    out.trim_rudder  = raw.trim_rudder;
-    out.brake_left   = raw.brake_left;
-    out.brake_right  = raw.brake_right;
+    out.aileron_norm      = raw.aileron_norm;
+    out.elevator_norm     = raw.elevator_norm;
+    out.rudder_norm       = raw.rudder_norm;
+    out.collective_norm   = raw.collective_norm;
+    out.trim_aileron_norm = raw.trim_aileron_norm;
+    out.trim_elevator_norm = raw.trim_elevator_norm;
+    out.trim_rudder_norm  = raw.trim_rudder_norm;
+    out.brake_left_norm   = raw.brake_left_norm;
+    out.brake_right_norm  = raw.brake_right_norm;
     return out;
   }
 
@@ -521,10 +521,10 @@ private:
   {
     sim_msgs::msg::EngineControls out;
     out.header.stamp  = stamp;
-    out.throttle      = raw.throttle;
-    out.mixture       = raw.mixture;
-    out.condition     = raw.condition;
-    out.prop_rpm      = raw.prop_rpm;
+    out.throttle_norm     = raw.throttle_norm;
+    out.mixture_norm      = raw.mixture_norm;
+    out.condition_norm    = raw.condition_norm;
+    out.prop_lever_norm   = raw.prop_lever_norm;
     out.magneto_left  = raw.magneto_left;
     out.magneto_right = raw.magneto_right;
     out.starter       = raw.starter;

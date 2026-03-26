@@ -275,11 +275,11 @@ private:
 
     // Throttle/mixture from arbitrated engine controls
     auto & ec = latest_engine_controls_;
-    for (size_t i = 0; i < ec.throttle.size() && i < 4; ++i) {
-      inputs.throttle[i] = ec.throttle[i];
+    for (size_t i = 0; i < ec.throttle_norm.size() && i < 4; ++i) {
+      inputs.throttle[i] = ec.throttle_norm[i];
     }
-    for (size_t i = 0; i < ec.mixture.size() && i < 4; ++i) {
-      inputs.mixture[i] = ec.mixture[i];
+    for (size_t i = 0; i < ec.mixture_norm.size() && i < 4; ++i) {
+      inputs.mixture[i] = ec.mixture_norm[i];
     }
 
     // Panel switches → discrete inputs (IDs from aircraft YAML via plugin)

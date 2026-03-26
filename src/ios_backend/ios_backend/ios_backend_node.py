@@ -668,25 +668,25 @@ class IosBackendNode(Node):
         """Publish RawFlightControls to /devices/instructor/controls/flight."""
         msg = RawFlightControls()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.aileron       = float(data.get('aileron', 0.0))
-        msg.elevator      = float(data.get('elevator', 0.0))
-        msg.rudder        = float(data.get('rudder', 0.0))
-        msg.collective    = float(data.get('collective', 0.0))
-        msg.trim_aileron  = float(data.get('trim_aileron', 0.0))
-        msg.trim_elevator = float(data.get('trim_elevator', 0.0))
-        msg.trim_rudder   = float(data.get('trim_rudder', 0.0))
-        msg.brake_left    = float(data.get('brake_left', 0.0))
-        msg.brake_right   = float(data.get('brake_right', 0.0))
+        msg.aileron_norm       = float(data.get('aileron_norm', 0.0))
+        msg.elevator_norm      = float(data.get('elevator_norm', 0.0))
+        msg.rudder_norm        = float(data.get('rudder_norm', 0.0))
+        msg.collective_norm    = float(data.get('collective_norm', 0.0))
+        msg.trim_aileron_norm  = float(data.get('trim_aileron_norm', 0.0))
+        msg.trim_elevator_norm = float(data.get('trim_elevator_norm', 0.0))
+        msg.trim_rudder_norm   = float(data.get('trim_rudder_norm', 0.0))
+        msg.brake_left_norm    = float(data.get('brake_left_norm', 0.0))
+        msg.brake_right_norm   = float(data.get('brake_right_norm', 0.0))
         self._raw_flight_pub.publish(msg)
 
     def publish_engine_controls(self, data: dict):
         """Publish RawEngineControls to /devices/instructor/controls/engine."""
         msg = RawEngineControls()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.throttle = [float(t) for t in data.get('throttle', [0.0])]
-        msg.mixture  = [float(m) for m in data.get('mixture', [1.0])]
-        msg.condition = [float(c) for c in data.get('condition', [])]
-        msg.prop_rpm  = [float(r) for r in data.get('prop_rpm', [])]
+        msg.throttle_norm  = [float(t) for t in data.get('throttle_norm', [0.0])]
+        msg.mixture_norm   = [float(m) for m in data.get('mixture_norm', [1.0])]
+        msg.condition_norm = [float(c) for c in data.get('condition_norm', [])]
+        msg.prop_lever_norm = [float(r) for r in data.get('prop_lever_norm', [])]
         msg.magneto_left  = [bool(m) for m in data.get('magneto_left', [])]
         msg.magneto_right = [bool(m) for m in data.get('magneto_right', [])]
         msg.starter = bool(data.get('starter', False))
