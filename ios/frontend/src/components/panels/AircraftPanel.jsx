@@ -665,9 +665,9 @@ export default function AircraftPanel() {
           </div>
           {electrical.busNames.map((name, i) => (
             <PanelRow key={name} label={name}
-              value={electrical.busVoltagesV[i]?.toFixed(1) ?? '--'}
+              value={electrical.busVoltages[i]?.toFixed(1) ?? '--'}
               unit="V"
-              valueStyle={{ color: voltageColor(electrical.busVoltagesV[i] ?? 0) }}
+              valueStyle={{ color: voltageColor(electrical.busVoltages[i] ?? 0) }}
             />
           ))}
         </>
@@ -685,12 +685,12 @@ export default function AircraftPanel() {
           ))}
         </>
       )}
-      <PanelRow label="Total Load" value={electrical.totalLoadA?.toFixed(1) ?? '--'} unit="A" />
+      <PanelRow label="Total Load" value={electrical.totalLoadAmps?.toFixed(1) ?? '--'} unit="A" />
       <PanelRow label="Battery SOC" value={electrical.batterySocPct?.toFixed(0) ?? '--'} unit="%" />
       <PanelRow label="Master Bus"
-        value={electrical.masterBusVoltageV?.toFixed(1) ?? '--'}
+        value={electrical.masterBusVoltage?.toFixed(1) ?? '--'}
         unit="V"
-        valueStyle={{ color: voltageColor(electrical.masterBusVoltageV ?? 0) }}
+        valueStyle={{ color: voltageColor(electrical.masterBusVoltage ?? 0) }}
       />
 
       {/* ── NAV DISPLAYS (dynamic from config) ─────────── */}

@@ -101,12 +101,12 @@ export const useSimStore = create((set, get) => ({
 
   // Electrical state
   electrical: {
-    busNames: [], busVoltagesV: [], busPowered: [],
-    sourceNames: [], sourceActive: [], sourceVoltagesV: [], sourceCurrentsA: [],
-    loadNames: [], loadPowered: [], loadCurrentsA: [],
+    busNames: [], busVoltages: [], busPowered: [],
+    sourceNames: [], sourceActive: [], sourceVoltages: [], sourceCurrents: [],
+    loadNames: [], loadPowered: [], loadCurrents: [],
     switchIds: [], switchLabels: [], switchClosed: [],
-    totalLoadA: 0, batterySocPct: 0,
-    masterBusVoltageV: 0, avionicsBusPowered: false, essentialBusPowered: false,
+    totalLoadAmps: 0, batterySocPct: 0,
+    masterBusVoltage: 0, avionicsBusPowered: false, essentialBusPowered: false,
   },
 
   // Air data (from sim_air_data pitot-static model)
@@ -509,21 +509,21 @@ export const useSimStore = create((set, get) => ({
             set({
               electrical: {
                 busNames: msg.bus_names ?? s.electrical.busNames,
-                busVoltagesV: msg.bus_voltages_v ?? s.electrical.busVoltagesV,
+                busVoltages: msg.bus_voltages_v ?? s.electrical.busVoltages,
                 busPowered: msg.bus_powered ?? s.electrical.busPowered,
                 sourceNames: msg.source_names ?? s.electrical.sourceNames,
                 sourceActive: msg.source_active ?? s.electrical.sourceActive,
-                sourceVoltagesV: msg.source_voltages_v ?? s.electrical.sourceVoltagesV,
-                sourceCurrentsA: msg.source_currents_a ?? s.electrical.sourceCurrentsA,
+                sourceVoltages: msg.source_voltages_v ?? s.electrical.sourceVoltages,
+                sourceCurrents: msg.source_currents_a ?? s.electrical.sourceCurrents,
                 loadNames: msg.load_names ?? s.electrical.loadNames,
                 loadPowered: msg.load_powered ?? s.electrical.loadPowered,
-                loadCurrentsA: msg.load_currents_a ?? s.electrical.loadCurrentsA,
+                loadCurrents: msg.load_currents_a ?? s.electrical.loadCurrents,
                 switchIds: msg.switch_ids ?? s.electrical.switchIds,
                 switchLabels: msg.switch_labels ?? s.electrical.switchLabels,
                 switchClosed: msg.switch_closed ?? s.electrical.switchClosed,
-                totalLoadA: msg.total_load_a ?? s.electrical.totalLoadA,
+                totalLoadAmps: msg.total_load_a ?? s.electrical.totalLoadAmps,
                 batterySocPct: msg.battery_soc_pct ?? s.electrical.batterySocPct,
-                masterBusVoltageV: msg.master_bus_voltage_v ?? s.electrical.masterBusVoltageV,
+                masterBusVoltage: msg.master_bus_voltage_v ?? s.electrical.masterBusVoltage,
                 avionicsBusPowered: msg.avionics_bus_powered ?? s.electrical.avionicsBusPowered,
                 essentialBusPowered: msg.essential_bus_powered ?? s.electrical.essentialBusPowered,
               }
