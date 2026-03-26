@@ -139,12 +139,22 @@ No direct cross-node topic subscriptions between systems nodes.
 
 ### 5. Topic namespace convention
 
-Two roots, no exceptions:
-- `/devices/` — external sources (hardware, virtual panels, instructor). Only `input_arbitrator` reads these.
+Two roots:
+- `/devices/` — external inputs (hardware, virtual panels, instructor). Only input_arbitrator
+  reads these, except `/devices/instructor/failure_command` (read by sim_failures).
 - `/sim/` — everything internal to the simulator
 
-IOS backend publishes to `/devices/instructor/` — never to `/sim/`.
-No sim node subscribes to `/devices/` — only input_arbitrator.
+Three categories of `/sim/` topics:
+- State (saveable):  `/sim/<system>/state`, `/sim/controls/*`, `/sim/world/*`
+- Commands (transient): `/sim/command`, `/sim/failure/*_commands`, `/sim/engines/commands`
+- Infrastructure (transient): `/sim/diagnostics/*`, `/sim/alerts`, `/sim/cigi/*`, `/sim/terrain/*`, `/clock`
+
+IOS backend publishes inputs to `/devices/instructor/` and operational commands to `/sim/command`.
+IOS backend NEVER publishes to `/sim/*/state` topics.
+
+Acknowledged exceptions:
+- `/sim/command` — IOS publishes SimCommand directly to /sim/ (no arbitration for operational commands)
+- sim_engine_systems subscribes to /sim/electrical/state and /sim/fuel/state (physical coupling)
 
 ### 6. Plugin authority model
 

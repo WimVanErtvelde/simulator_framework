@@ -117,7 +117,7 @@ class IosBackendNode(Node):
 
         # Failure command publisher → sim_failures
         self._failure_cmd_pub = self.create_publisher(
-            FailureCommand, '/ios/failure_command', 10)
+            FailureCommand, '/devices/instructor/failure_command', 10)
 
         # IOS instructor panel — highest priority in arbitrator
         self._panel_pub = self.create_publisher(
@@ -626,7 +626,7 @@ class IosBackendNode(Node):
             self.get_logger().error(f'Failed to load failures config: {e}')
 
     def publish_failure_command(self, data: dict):
-        """Publish a FailureCommand to /ios/failure_command."""
+        """Publish a FailureCommand to /devices/instructor/failure_command."""
         msg = FailureCommand()
         msg.action = data.get('action', 'inject')
         msg.failure_id = data.get('failure_id', '')

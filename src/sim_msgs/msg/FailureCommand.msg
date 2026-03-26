@@ -1,5 +1,5 @@
 # FailureCommand.msg
-# Published by: ios_backend -> /ios/failure_command
+# Published by: ios_backend -> /devices/instructor/failure_command
 # Consumed by: sim_failures
 #
 # Actions: "inject", "arm", "clear", "clear_all"

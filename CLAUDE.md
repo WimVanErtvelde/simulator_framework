@@ -299,9 +299,21 @@ remain in radians.
 
 ### Naming rule
 
-Two roots, no exceptions:
-- `/devices/` — anything produced by an external source (hardware, virtual panels, instructor)
-- `/sim/` — anything produced or consumed internally by the simulator
+Two roots:
+- `/devices/` — external inputs (hardware, virtual panels, instructor). Only input_arbitrator
+  reads these, except `/devices/instructor/failure_command` (read by sim_failures).
+- `/sim/` — everything internal to the simulator
+
+Three categories of `/sim/` topics:
+- State (saveable):  `/sim/<system>/state`, `/sim/controls/*`, `/sim/world/*`
+- Commands (transient): `/sim/command`, `/sim/failure/*_commands`, `/sim/engines/commands`
+- Infrastructure (transient): `/sim/diagnostics/*`, `/sim/alerts`, `/sim/cigi/*`, `/sim/terrain/*`, `/clock`
+
+SimSnapshot rule: save topics matching `*/state` or `*_state`, plus `/sim/controls/*` and `/sim/world/*`.
+
+Acknowledged exceptions:
+- `/sim/command` — IOS publishes SimCommand directly to /sim/ (no arbitration for operational commands)
+- sim_engine_systems subscribes to /sim/electrical/state and /sim/fuel/state (physical coupling)
 
 All topics use `snake_case`. No abbreviations unless universally understood (e.g. `flight_model`, `cigi`).
 
@@ -357,12 +369,7 @@ All topics use `snake_case`. No abbreviations unless universally understood (e.g
 | `/sim/cigi/ig_status` | std_msgs/UInt8 | cigi_bridge | SOF IG Status (0=Standby, 2=Operate) |
 | `/sim/cigi/host_to_ig` | CigiPacket | cigi_bridge | Host → IG packets (planned — recording/debug) |
 | `/sim/cigi/ig_to_host` | CigiPacket | cigi_bridge | IG → Host packets (planned — recording/debug) |
-| `/ios/failure_command` | FailureCommand | ios_backend | IOS failure inject/clear (naming exception) |
-
-**Acknowledged naming exceptions:**
-- `/sim/command` — IOS publishes SimCommand directly (no arbitration layer for sim commands)
-- `/ios/failure_command` — IOS failure commands (should be `/devices/instructor/` but kept for now)
-- sim_engine_systems and sim_air_data subscribe to `/sim/electrical/state` and `/sim/fuel/state` respectively (physical coupling: engines need bus power, pitot heat needs electrical state)
+| `/devices/instructor/failure_command` | FailureCommand | ios_backend | IOS failure inject/clear → sim_failures |
 
 ### Diagnostics topics
 
@@ -727,7 +734,7 @@ source install/setup.bash
 - Never let system nodes subscribe to each other — all coupling via `/sim/flight_model/state`, `/sim/failure/<handler>_commands`, or `/sim/world/`
 - Never subscribe to `/sim/failures/active` (FailureList) — this topic does not exist. Failure broadcast uses `/sim/failure_state` (FailureState). Failure injection uses `/sim/failure/<handler>_commands` (FailureInjection).
 - Never let any sim node subscribe to `/devices/` topics — only input_arbitrator reads device topics
-- Never let ios_backend publish to `/sim/` topics directly — it publishes to `/devices/instructor/` only
+- IOS backend publishes inputs to `/devices/instructor/` and operational commands to `/sim/command`. IOS backend NEVER publishes to `/sim/*/state` topics.
 - Never put IOS logic in Sim Manager — IOS sends commands, Sim Manager executes them
 - Never store sim state in the IOS backend — it is stateless, ROS2 is the source of truth
 - Never put a ROS2 package outside `src/` — if it has a `package.xml` it belongs under `src/`

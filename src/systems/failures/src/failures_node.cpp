@@ -225,7 +225,7 @@ public:
 
     // Subscriptions
     cmd_sub_ = this->create_subscription<sim_msgs::msg::FailureCommand>(
-      "/ios/failure_command", 10,
+      "/devices/instructor/failure_command", 10,
       std::bind(&FailuresNode::on_failure_command, this, std::placeholders::_1));
 
     fdm_sub_ = this->create_subscription<sim_msgs::msg::FlightModelState>(
