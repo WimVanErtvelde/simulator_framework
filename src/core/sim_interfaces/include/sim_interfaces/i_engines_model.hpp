@@ -25,12 +25,12 @@ enum class EngineRunState : uint8_t {
 struct EngineInputs
 {
   // Power management (normalised 0–1)
-  std::array<float, 4> throttle        = {};
-  std::array<float, 4> power_lever     = {};
-  std::array<float, 4> prop_lever      = {};
-  std::array<float, 4> condition_lever = {};
-  std::array<float, 4> mixture         = {};
-  std::array<float, 4> emergency_power = {};
+  std::array<float, 4> throttle_norm        = {};
+  std::array<float, 4> power_lever_norm     = {};
+  std::array<float, 4> prop_lever_norm      = {};
+  std::array<float, 4> condition_lever_norm = {};
+  std::array<float, 4> mixture_norm         = {};
+  std::array<float, 4> emergency_power_norm = {};
 
   // Discrete switches
   std::array<bool, 4> starter   = {};

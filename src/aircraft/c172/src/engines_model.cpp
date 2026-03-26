@@ -54,7 +54,7 @@ public:
   {
     // ── Read structured inputs ──────────────────────────────────────
     starter_engaged_ = inputs.starter[0];
-    float mixture = inputs.mixture[0];
+    float mixture = inputs.mixture_norm[0];
 
     // Ignition maps to magneto: inputs.ignition[0] = magneto switch on
     // (node wrapper sets ignition from panel sel_magnetos > 0)

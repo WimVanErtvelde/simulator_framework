@@ -27,8 +27,8 @@ bool gear_unsafe                    # any leg not matching commanded position
 bool gear_warning                   # warning horn active (gear unsafe + conditions met)
 
 # Brakes (echoed from FlightControls for single-source display)
-float32 brake_left                  # 0.0-1.0
-float32 brake_right                 # 0.0-1.0
+float32 brake_left_norm             # 0 to +1
+float32 brake_right_norm            # 0 to +1
 bool parking_brake                  # parking brake set
 
 # Nosewheel

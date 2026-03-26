@@ -59,13 +59,13 @@ public:
       }
 
       // ── Cockpit logic: condition lever OFF kills engine ──────────
-      if (inputs.condition_lever[e] < 0.01f) {
+      if (inputs.condition_lever_norm[e] < 0.01f) {
         engine_running_[e] = false;
       }
 
       // ── Engine state machine ────────────────────────────────────
       if (!engine_running_[e]) {
-        if (inputs.starter[e] && inputs.condition_lever[e] > 0.01f &&
+        if (inputs.starter[e] && inputs.condition_lever_norm[e] > 0.01f &&
             inputs.fuel_available[e] && inputs.bus_voltage > 18.0f) {
           state_.state[e] = sim_interfaces::EngineRunState::CRANKING;
         } else {

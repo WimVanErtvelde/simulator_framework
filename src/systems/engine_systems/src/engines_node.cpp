@@ -276,10 +276,10 @@ private:
     // Throttle/mixture from arbitrated engine controls
     auto & ec = latest_engine_controls_;
     for (size_t i = 0; i < ec.throttle_norm.size() && i < 4; ++i) {
-      inputs.throttle[i] = ec.throttle_norm[i];
+      inputs.throttle_norm[i] = ec.throttle_norm[i];
     }
     for (size_t i = 0; i < ec.mixture_norm.size() && i < 4; ++i) {
-      inputs.mixture[i] = ec.mixture_norm[i];
+      inputs.mixture_norm[i] = ec.mixture_norm[i];
     }
 
     // Panel switches → discrete inputs (IDs from aircraft YAML via plugin)
@@ -311,15 +311,15 @@ private:
 
       for (size_t e = 0; e < sw_cfg_.prop_lever_ids.size() && e < 4; ++e) {
         if (!sw_cfg_.prop_lever_ids[e].empty() && id == sw_cfg_.prop_lever_ids[e])
-          inputs.prop_lever[e] = norm;
+          inputs.prop_lever_norm[e] = norm;
       }
       for (size_t e = 0; e < sw_cfg_.condition_lever_ids.size() && e < 4; ++e) {
         if (!sw_cfg_.condition_lever_ids[e].empty() && id == sw_cfg_.condition_lever_ids[e])
-          inputs.condition_lever[e] = norm;
+          inputs.condition_lever_norm[e] = norm;
       }
       for (size_t e = 0; e < sw_cfg_.power_lever_ids.size() && e < 4; ++e) {
         if (!sw_cfg_.power_lever_ids[e].empty() && id == sw_cfg_.power_lever_ids[e])
-          inputs.power_lever[e] = norm;
+          inputs.power_lever_norm[e] = norm;
       }
     }
 

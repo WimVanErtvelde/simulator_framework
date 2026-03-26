@@ -240,8 +240,8 @@ public:
         msg.gear_warning     = snap.gear_warning;
 
         // Brakes (echoed from FlightControls for single-source display)
-        msg.brake_left   = brake_left;
-        msg.brake_right  = brake_right;
+        msg.brake_left_norm   = brake_left;
+        msg.brake_right_norm  = brake_right;
         msg.parking_brake = parking_brake;
 
         // Nosewheel
