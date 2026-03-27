@@ -27,7 +27,3 @@ bool[3] alternate_static_active       # true = alternate static source selected
 
 # Icing state per system
 float32[3] pitot_ice_norm             # 0.0 = clear, 1.0 = fully blocked
-
-# Compass instrument output (aircraft-level, not per pitot-static system)
-float32 magnetic_heading_rad          # Derived: true_heading - magnetic_variation
-float32 magnetic_variation_deg        # East positive, from WMM via navaid_sim

@@ -12,6 +12,10 @@
 
 std_msgs/Header header
 
+# ── Compass / heading reference ────────────────────────────────────────────
+float32 magnetic_heading_rad          # true_heading - magnetic_variation (DG/HSI datum)
+float32 magnetic_variation_deg        # East positive, from WMM via navaid_sim
+
 # ── GPS1 (primary) ─────────────────────────────────────────────────────────
 bool gps1_valid
 float64 gps1_lat_deg

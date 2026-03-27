@@ -336,6 +336,9 @@ class IosBackendNode(Node):
             'com3_mhz': float(msg.com3_freq_mhz),
             'adf1_khz': float(msg.adf1_freq_khz),
             'adf2_khz': float(msg.adf2_freq_khz),
+            # Compass heading
+            'hdg_mag_deg': float(msg.magnetic_heading_rad) * 180.0 / _m.pi,
+            'mag_variation_deg': float(msg.magnetic_variation_deg),
         }
         with self._lock:
             self._latest['nav_state'] = data
@@ -575,8 +578,6 @@ class IosBackendNode(Node):
             'static_healthy': bool(msg.static_healthy[0]),
             'pitot_heat_on': bool(msg.pitot_heat_on[0]),
             'pitot_ice_norm': float(msg.pitot_ice_norm[0]),
-            'hdg_mag_deg': float(msg.magnetic_heading_rad) * 180.0 / _m.pi,
-            'mag_variation_deg': float(msg.magnetic_variation_deg),
         }
         with self._lock:
             self._latest['air_data_state'] = data

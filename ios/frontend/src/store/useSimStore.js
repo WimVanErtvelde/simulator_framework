@@ -97,6 +97,7 @@ export const useSimStore = create((set, get) => ({
     markerOuter: false, markerMiddle: false, markerInner: false,
     xpdrCode: 2000, xpdrMode: 'OFF', xpdrIdentActive: false,
     com1Mhz: 0, com2Mhz: 0, com3Mhz: 0, adf1Khz: 0, adf2Khz: 0,
+    hdgMagDeg: 0, magVariationDeg: 0,
   },
 
   // Electrical state
@@ -116,7 +117,6 @@ export const useSimStore = create((set, get) => ({
     satC: 0, tatC: 0,
     pitotHealthy: true, staticHealthy: true,
     pitotHeatOn: false, pitotIcePct: 0,
-    hdgMagDeg: 0, magVariationDeg: 0,
   },
 
   // Avionics config (from aircraft YAML — drives dynamic A/C page layout)
@@ -502,6 +502,8 @@ export const useSimStore = create((set, get) => ({
                 com3Mhz: comMin(msg.com3_mhz) ?? s.nav.com3Mhz,
                 adf1Khz: adfMin(msg.adf1_khz) ?? s.nav.adf1Khz,
                 adf2Khz: adfMin(msg.adf2_khz) ?? s.nav.adf2Khz,
+                hdgMagDeg: msg.hdg_mag_deg ?? s.nav.hdgMagDeg,
+                magVariationDeg: msg.mag_variation_deg ?? s.nav.magVariationDeg,
               }
             })
             break
@@ -651,8 +653,6 @@ export const useSimStore = create((set, get) => ({
                 staticHealthy: msg.static_healthy ?? s.airData.staticHealthy,
                 pitotHeatOn: msg.pitot_heat_on ?? s.airData.pitotHeatOn,
                 pitotIcePct: msg.pitot_ice_norm ?? s.airData.pitotIcePct,
-                hdgMagDeg: msg.hdg_mag_deg ?? s.airData.hdgMagDeg,
-                magVariationDeg: msg.mag_variation_deg ?? s.airData.magVariationDeg,
               },
             })
             break

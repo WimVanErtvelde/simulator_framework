@@ -10,6 +10,7 @@
 #include <sim_msgs/msg/failure_state.hpp>
 #include <sim_msgs/msg/sim_state.hpp>
 #include <sim_msgs/msg/sim_alert.hpp>
+#include <std_msgs/msg/float32.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -97,6 +98,13 @@ public:
         }
       });
 
+    // Magnetic variation from navaid_sim (WMM, 1 Hz)
+    mag_var_sub_ = this->create_subscription<std_msgs::msg::Float32>(
+      "/sim/world/magnetic_variation_deg", 10,
+      [this](const std_msgs::msg::Float32::SharedPtr msg) {
+        mag_variation_deg_ = msg->data;
+      });
+
     failure_state_sub_ = this->create_subscription<sim_msgs::msg::FailureState>(
       "/sim/failure_state",
       rclcpp::QoS(10).reliable(),
@@ -153,6 +161,7 @@ public:
     nav_signals_sub_.reset();
     avionics_sub_.reset();
     sim_state_sub_.reset();
+    mag_var_sub_.reset();
     failure_state_sub_.reset();
     latest_failure_state_.reset();
     RCLCPP_INFO(this->get_logger(), "sim_navigation cleaned up");
@@ -344,6 +353,17 @@ private:
       out.dme_gs_kt = 0.0f;
     }
 
+    // Compass heading: true heading - WMM declination
+    if (flight_model_received_) {
+      float true_hdg = static_cast<float>(last_flight_model_state_.true_heading_rad);
+      float var_rad = mag_variation_deg_ * static_cast<float>(M_PI / 180.0);
+      float mag_hdg = true_hdg - var_rad;
+      while (mag_hdg < 0.0f) mag_hdg += static_cast<float>(2.0 * M_PI);
+      while (mag_hdg >= static_cast<float>(2.0 * M_PI)) mag_hdg -= static_cast<float>(2.0 * M_PI);
+      out.magnetic_heading_rad = mag_hdg;
+      out.magnetic_variation_deg = mag_variation_deg_;
+    }
+
     nav_state_pub_->publish(out);
   }
 
@@ -448,6 +468,7 @@ private:
   rclcpp::Subscription<sim_msgs::msg::NavSignalTable>::SharedPtr nav_signals_sub_;
   rclcpp::Subscription<sim_msgs::msg::AvionicsControls>::SharedPtr avionics_sub_;
   rclcpp::Subscription<sim_msgs::msg::SimState>::SharedPtr sim_state_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr mag_var_sub_;
   rclcpp::Subscription<sim_msgs::msg::FailureState>::SharedPtr failure_state_sub_;
   // Timers
   rclcpp::TimerBase::SharedPtr heartbeat_timer_;
@@ -462,6 +483,7 @@ private:
   bool nav_signals_received_{false};
 
   uint8_t sim_state_{0};
+  float mag_variation_deg_{0.0f};  // from navaid_sim WMM (east positive)
 
   // Latest failure state from sim_failures
   sim_msgs::msg::FailureState::SharedPtr latest_failure_state_;

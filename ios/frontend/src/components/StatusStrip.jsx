@@ -99,7 +99,7 @@ function buildAvionicsPayload(avionics, storeKey, newVal) {
 }
 
 export default function StatusStrip() {
-  const { simState, simTimeSec, aircraftId, fdm, airData, atmosphere,
+  const { simState, simTimeSec, aircraftId, fdm, nav, atmosphere,
           armedFailures, activeFailures, avionics, avionicsConfig,
           terrainSource, sendAvionics } = useSimStore()
   const [numpad, setNumpad] = useState(null)   // { id, label, anchor }
@@ -159,7 +159,7 @@ export default function StatusStrip() {
         &nbsp;{v(fdm.altFtMsl)}ft
         <Sep /><span style={{ color: '#64748b' }}>IAS</span>&nbsp;{v(fdm.iasKt)}kt
         <Sep /><span style={{ color: '#64748b' }}>VS</span>&nbsp;{v(fdm.vsFpm)}fpm
-        <Sep /><span style={{ color: '#64748b' }}>HDG</span>&nbsp;{v(airData.hdgMagDeg)}°
+        <Sep /><span style={{ color: '#64748b' }}>HDG</span>&nbsp;{v(nav.hdgMagDeg)}°
         <Sep /><span style={{ color: '#64748b' }}>GS</span>&nbsp;{v(fdm.gndSpeedKt)}kt
       </div>
       {/* Row 2 — Environment */}
