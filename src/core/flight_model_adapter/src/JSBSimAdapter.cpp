@@ -520,9 +520,14 @@ sim_msgs::msg::FlightModelState JSBSimAdapter::get_state() const
   double temp_r = exec_->GetPropertyValue("atmosphere/T-R");
   state.temperature_k = temp_r * R_TO_K;  // Rankine to Kelvin: K = R * 5/9
 
-  state.wind_speed_ms = exec_->GetPropertyValue("atmosphere/total-wind-north-fps") * FT_TO_M;
-  state.wind_direction_rad = 0.0;  // TODO: compute from wind components
-  state.wind_vertical_ms = 0.0;
+  double wn = exec_->GetPropertyValue("atmosphere/total-wind-north-fps") * FT_TO_M;
+  double we = exec_->GetPropertyValue("atmosphere/total-wind-east-fps") * FT_TO_M;
+  double wd = exec_->GetPropertyValue("atmosphere/total-wind-down-fps") * FT_TO_M;
+  state.wind_speed_ms = std::sqrt(wn * wn + we * we);
+  // Meteorological convention: direction wind is FROM (add pi to vector direction)
+  state.wind_direction_rad = std::atan2(-we, -wn);
+  if (state.wind_direction_rad < 0.0) state.wind_direction_rad += 2.0 * M_PI;
+  state.wind_vertical_ms = -wd;  // down-positive to up-positive
 
   // --- 8. ENGINES ---
   state.engine_count = 1;
