@@ -1,6 +1,7 @@
 # Unit Conversion Audit
 
 Generated: 2026-03-24
+Updated: 2026-03-27 (V3 unit suffix cleanup complete)
 Scope: All C++/Python/JS source files under src/ and ios/frontend/
 
 ---
@@ -11,7 +12,7 @@ All SI units unless noted. Field name suffix indicates unit.
 
 | Field | Unit | Suffix |
 |---|---|---|
-| latitude_rad / longitude_rad | radians | _rad |
+| latitude_deg / longitude_deg | degrees | _deg |
 | altitude_msl_m / altitude_agl_m | metres | _m |
 | ecef_x/y/z_m | metres | _m |
 | roll_rad / pitch_rad / true_heading_rad | radians | _rad |
@@ -23,6 +24,7 @@ All SI units unless noted. Field name suffix indicates unit.
 | air_density_kgm3 | kg/m^3 | _kgm3 |
 | temperature_k | K | _k |
 | fuel_total_kg / fuel_tank_kg[] / total_mass_kg | kg | _kg |
+| fuel_total_norm | 0-1 ratio | _norm |
 | fuel_flow_kgs[] | kg/s | _kgs |
 | oil_pressure_pa[] | Pa | _pa |
 | oil_temperature_k[] / iat_k[] / itt_k[] | K | _k |
@@ -31,230 +33,128 @@ All SI units unless noted. Field name suffix indicates unit.
 | engine_manifold_pressure_inhg[] | inHg | _inhg |
 | torque_nm[] | N*m | _nm |
 | wheel_angle_deg[] | degrees | _deg |
+| gear_position_norm[] | 0-1 ratio | _norm |
+| throttle_pct[] | 0-100% | _pct |
+| flap_pct | 0-100% | _pct |
+| speed_brake_pct | 0-100% | _pct |
 
 **Mixed units in same message (by design):**
 SI fields (_pa, _k, _ms) coexist with instrument fields (_psi, _degc, _inhg) for engine gauges. The SI fields are backfills for interop; instrument fields are what cockpit displays read directly.
 
 ---
 
-## 2. Conversion constants found
+## 2. Unit suffix conventions (LOCKED)
+
+| Suffix | Meaning | Range |
+|--------|---------|-------|
+| `_norm` | Normalized unitless | 0.0-1.0 or -1.0 to +1.0 |
+| `_pct` | Percentage | 0.0-100.0 |
+| `_v` | Volts | any |
+| `_a` | Amps | any |
+| `_deg` | Degrees (angle) | any |
+| `_rpm` | RPM | >= 0 |
+| `_m` | Metres | any |
+| No suffix | Dimensionless, bool, enum, string, count | -- |
+
+**Rule:** If a field stores 0-1, it MUST use `_norm`. If it stores 0-100, it uses `_pct`.
+
+---
+
+## 3. Conversion constants found
 
 ### JSBSimAdapter.cpp (lines 19-38)
 
 | Constant | Value | Direction | Context |
 |---|---|---|---|
-| FT_TO_M | 0.3048 | ft→m | All length: altitude, velocity, acceleration |
-| LBS_TO_KG | 0.453592 | lbs→kg | Fuel tank, total mass |
-| KG_TO_LBS | 1/0.453592 | kg→lbs | Fuel writeback to JSBSim |
-| LBF_TO_N | 4.44822 | lbf→N | Force |
-| KTS_TO_MS | 0.514444 | kts→m/s | Airspeeds |
-| PSF_TO_PA | 47.880258 | psf→Pa | Dynamic/static pressure |
-| SLUG_TO_KG | 14.5939 | slug→kg | Mass |
-| SLUGFT3_TO_KGM3 | 515.379 | slug/ft^3→kg/m^3 | Air density |
-| PSI_TO_PA | 6894.76 | psi→Pa | Oil pressure (SI backfill) |
-| INHG_TO_PA | 3386.39 | inHg→Pa | Unused (atmospheric) |
-| R_TO_K | 5/9 | Rankine→K factor | Temperature |
-| DEGF_TO_DEGC_SCALE | 5/9 | degF→degC factor | Engine temps (EGT, CHT, oil) |
-| DEGF_TO_DEGC_OFFSET | 32 | degF→degC offset | Engine temps |
-| K_TO_DEGC_OFFSET | 273.15 | K→degC offset | SI backfill |
-| DEG_TO_RAD | pi/180 | deg→rad | IC angles, heading |
+| FT_TO_M | 0.3048 | ft->m | All length: altitude, velocity, acceleration |
+| LBS_TO_KG | 0.453592 | lbs->kg | Fuel tank, total mass |
+| KG_TO_LBS | 1/0.453592 | kg->lbs | Fuel writeback to JSBSim |
+| LBF_TO_N | 4.44822 | lbf->N | Force |
+| KTS_TO_MS | 0.514444 | kts->m/s | Airspeeds |
+| PSF_TO_PA | 47.880258 | psf->Pa | Dynamic/static pressure |
+| SLUG_TO_KG | 14.5939 | slug->kg | Mass |
+| SLUGFT3_TO_KGM3 | 515.379 | slug/ft^3->kg/m^3 | Air density |
+| PSI_TO_PA | 6894.76 | psi->Pa | Oil pressure (SI backfill) |
+| R_TO_K | 5/9 | Rankine->K factor | Temperature |
+| DEGF_TO_DEGC_SCALE | 5/9 | degF->degC factor | Engine temps |
+| DEGF_TO_DEGC_OFFSET | 32 | degF->degC offset | Engine temps |
+| DEG_TO_RAD | pi/180 | deg->rad | IC angles, heading |
 | AVGAS_DENSITY_KG_L | 0.72 | kg/litre | Fuel drain calculation |
 
-### navigation_node.cpp (lines 17-20)
+### failures_node.cpp (lines 79-81, named constants)
 
 | Constant | Value | Direction | Context |
 |---|---|---|---|
-| RAD_TO_DEG | 180/pi | rad→deg | GPS output, VOR radials |
-| M_TO_NM | 1/1852 | m→NM | DME distance |
-| M_TO_FT | 3.28084 | m→ft | GPS altitude |
-| MS_TO_KT | 1.94384 | m/s→kt | GPS ground speed |
+| MS_TO_KT | 1.94384 | m/s->kt | Condition trigger: airspeed |
+| M_TO_FT | 3.28084 | m->ft | Condition trigger: altitude |
+| MS_TO_FPM | 196.85 | m/s->fpm | Condition trigger: VS |
 
-### cigi_host_node.cpp (lines 46-50)
+### navigation_node.cpp, cigi_host_node.cpp, atmosphere_node.cpp, engines_model.cpp
 
-| Constant | Value | Direction | Context |
-|---|---|---|---|
-| RAD_TO_DEG | 180/pi | rad→deg | Entity Control lat/lon/attitude |
-| DEG_TO_RAD | pi/180 | deg→rad | HOT request tracker |
-| EARTH_A | 6378137.0 | metres | Body-to-latlon offset |
+All use named constants. See source files for full listing.
 
-### AirportDatabase.cpp (lines 10-12)
+---
 
-| Constant | Value | Direction | Context |
-|---|---|---|---|
-| FT2M | 0.3048 | ft→m | A424 elevation, runway length |
-| DEG2RAD | pi/180 | deg→rad | Lat/lon conversion |
+## 4. Resolved issues
 
-### atmosphere_node.cpp (lines 15-31)
+All issues from the original audit have been addressed:
 
-| Constant | Value | Context |
+| Issue | Status | Resolution |
 |---|---|---|
-| ISA_T0 | 288.15 K | Sea-level temp |
-| ISA_P0 | 101325.0 Pa | Sea-level pressure |
-| ISA_RHO0 | 1.225 kg/m^3 | Sea-level density |
-| ISA_LAPSE | 0.0065 K/m | Troposphere lapse |
-| ISA_G | 9.80665 m/s^2 | Standard gravity |
+| `_pct` suffix on 0-1 fields | **RESOLVED** | Renamed to `_norm` (V3, 2026-03-27) |
+| HatHotResponse fields lack suffix | **RESOLVED** | Renamed to lat_deg, lon_deg, hat_m, hot_m (2026-03-24) |
+| Hardcoded literals in failures_node.cpp | **RESOLVED** | Named constants MS_TO_KT, M_TO_FT, MS_TO_FPM |
+| AvionicsControls obs1/obs2 missing suffix | **RESOLVED** | Renamed to obs1_deg, obs2_deg (V3 batch 4) |
+| ElectricalState fields lack unit suffix | **RESOLVED** | bus_voltages_v, source_currents_a, etc. (V3 batch 3) |
+| FlightControls/EngineControls no suffix | **RESOLVED** | All fields renamed with _norm suffix (V3 batch 1+2) |
+| Lat/lon radians on wire | **RESOLVED** | All ROS2 lat/lon in degrees (2026-03-24 refactor) |
 
-### engines_model.cpp (C172 plugin, lines 12-13)
+### Deferred (correct but wasteful)
 
-| Constant | Value | Direction | Context |
-|---|---|---|---|
-| PSI_TO_KPA | 6.89476 | psi→kPa | Oil pressure for EngineState |
-| GPH_TO_KGPH | 2.72 | gal/h→kg/h | Fuel flow (avgas 0.72 kg/L) |
-
-### ios_backend_node.py (inline, lines 261-270)
-
-| Literal | Value | Direction | Context |
-|---|---|---|---|
-| 180.0/pi | ~57.296 | rad→deg | Lat, lon, heading, pitch, roll |
-| 3.28084 | m→ft | Altitude MSL |
-| 1.94384 | m/s→kt | IAS, ground speed |
-| 196.85 | m/s→fpm | Vertical speed |
-| 0.145038 | kPa→psi | Oil pressure display |
-| 2.7216 | kg/h→gal/h | Fuel flow display |
-| 273.15 | K→degC offset | SAT, TAT |
-
-### failures_node.cpp (inline, lines 82-88)
-
-| Literal | Value | Direction | Context |
-|---|---|---|---|
-| 1.94384 | m/s→kt | Condition trigger: airspeed |
-| 3.28084 | m→ft | Condition trigger: altitude |
-| 196.85 | m/s→fpm | Condition trigger: VS |
-
-### PositionPanel.jsx (lines 5-8)
-
-| Constant | Value | Direction | Context |
-|---|---|---|---|
-| DEG2RAD | pi/180 | deg→rad | Runway heading |
-| FT2M | 0.3048 | ft→m | Altitude input |
-| KT2MS | 0.514444 | kt→m/s | Airspeed input |
-| NM_TO_DEG_LAT | 1/60 | NM→deg lat | Position offset |
-
-### JSBSimFuelWriteback.cpp (line 12)
-
-| Constant | Value | Direction | Context |
-|---|---|---|---|
-| KG_TO_LBS | 1/0.453592 | kg→lbs | Fuel tank writeback |
+**Oil pressure triple conversion:**
+JSBSim(psi) -> FMS.oil_pressure_pa(Pa) -> EngineState.oil_press_kpa(kPa) -> WS(psi).
+The value starts and ends in PSI but gets converted 3 times. The instrument field
+(engine_oil_pressure_psi) avoids this. Fix when next touching the oil pressure chain.
 
 ---
 
-## 3. Conversion chains
+## 5. Message field inventory (updated 2026-03-27)
 
-**Altitude:**
-JSBSim(ft) → JSBSimAdapter(*FT_TO_M) → FlightModelState.altitude_msl_m(m)
-→ ios_backend(*3.28084) → WS alt_ft_msl(ft) → frontend display(ft)
-
-**Airspeed (IAS):**
-JSBSim(kts) → JSBSimAdapter(*KTS_TO_MS) → FlightModelState.ias_ms(m/s)
-→ ios_backend(*1.94384) → WS ias_kt(kt) → frontend display(kt)
-
-**Vertical speed:**
-JSBSim(fps) → JSBSimAdapter(*FT_TO_M) → FlightModelState.vertical_speed_ms(m/s)
-→ ios_backend(*196.85) → WS vs_fpm(fpm) → frontend display(fpm)
-
-**Lat/lon:**
-JSBSim(rad) → JSBSimAdapter(passthrough) → FlightModelState(rad)
-→ ios_backend(*180/pi) → WS(deg) → frontend display(deg)
-→ cigi_bridge(*RAD_TO_DEG) → Entity Control(deg) → X-Plane
-
-**Fuel tank quantities:**
-JSBSim(lbs) → JSBSimAdapter(*LBS_TO_KG) → FlightModelState.fuel_tank_kg(kg)
-→ fuel_node(passthrough) → FuelState.tank_quantity_kg(kg)
-→ fuel_writeback(*KG_TO_LBS) → JSBSim(lbs)
-
-**Engine EGT:**
-JSBSim(degF) → JSBSimAdapter((F-32)*5/9) → FlightModelState.engine_egt_degc(degC)
-+ JSBSimAdapter(degC+273.15) → FlightModelState.itt_k(K) [SI backfill]
-
-**Oil pressure:**
-JSBSim(psi) → JSBSimAdapter(passthrough) → FlightModelState.engine_oil_pressure_psi(psi)
-+ JSBSimAdapter(*PSI_TO_PA) → FlightModelState.oil_pressure_pa(Pa) [SI backfill]
-→ engines_model(*PSI_TO_KPA) → EngineState.oil_press_kpa(kPa)
-→ ios_backend(*0.145038) → WS(psi) → frontend display(psi)
-
-**Terrain elevation (reposition):**
-X-Plane probe(m MSL) → CIGI HOT Response(m) → cigi_bridge → HatHotResponse.hot(m)
-→ FMA refine_terrain_altitude(/FT_TO_M) → JSBSim terrain-elevation-asl-ft(ft)
-
-**Airport elevation:**
-apt.dat(ft) → AirportDatabase(*FT2M) → Airport.elevation_m(m)
-→ GetRunways service → frontend → PositionPanel(*3.28084 display, *FT2M for IC alt_m)
-
----
-
-## 4. Potential issues
-
-### Resolved by lat/lon degrees refactor (2026-03-24)
-- All ROS2 lat/lon fields now use degrees. JSBSimAdapter is the single rad→deg boundary.
-- HatHotResponse fields renamed: lat_deg, lon_deg, hat_m, hot_m.
-- Oil pressure triple conversion: deferred (correct but wasteful).
-
-### Confirmed issues (remaining)
-
-1. **`_pct` suffix inconsistency** — fuel_total_pct, gear_position_pct, pitot_ice_pct store 0.0-1.0 ratios but suffix suggests 0-100%. Convention should be documented: `_pct` = ratio 0-1 in this codebase.
-
-2. **HatHotResponse fields lack unit suffix** — `lat`, `lon`, `hat`, `hot` have no suffix. Should be `lat_rad`, `lon_rad`, `hat_m`, `hot_m`.
-
-3. **Hardcoded literals in failures_node.cpp** — Uses `1.94384`, `3.28084`, `196.85` as raw numbers (lines 82-88) instead of named constants. Only file that does this.
-
-4. **Oil pressure triple conversion** — JSBSim(psi) → FMS.oil_pressure_pa(Pa) → EngineState.oil_press_kpa(kPa) → WS(psi). The value starts and ends in PSI but gets converted 3 times. The instrument field (engine_oil_pressure_psi) avoids this.
-
-5. **AvionicsControls.obs1/obs2 missing suffix** — Should be `obs1_deg`, `obs2_deg`.
-
-6. **ElectricalState fields lack unit suffix** — bus_voltages, source_voltages (volts), source_currents, load_currents (amps) have no suffix.
-
-7. **FlightControls/EngineControls normalized fields** — aileron, elevator, throttle[], mixture[] etc. are all normalized (-1 to 1 or 0 to 1) but have no suffix indicating this. Convention should be `_norm`.
-
-8. **NavigationState uses _deg for GPS lat/lon** — gps1_lat_deg, gps1_lon_deg are in degrees while FlightModelState uses _rad for the same coordinates. Intentional (instrument output vs wire format) but creates inconsistency.
-
-### Not an issue
-
-- Mixed SI + instrument units in FlightModelState: intentional dual representation for different consumers. Documented in CLAUDE.md.
-- `_rads` suffix (radians/second): technically unambiguous, just uncommon.
-
----
-
-## 5. Message field inventory
-
-### FlightModelState.msg — 80+ fields
+### FlightModelState.msg
 SI primary (m, m/s, rad, Pa, K, kg, kg/s) with instrument backfills (_psi, _degc, _inhg).
-Ambiguous: sim_time_sec (no suffix), load_factor_* (dimensionless), mach_number, fuel_total_pct (0-1 ratio), sim_clock.
+`_norm` for ratios (fuel_total_norm, gear_position_norm). `_pct` for 0-100 (throttle_pct, flap_pct).
 
-### FuelState.msg — 25 fields
-kg, litres, lph, kgs, Pa, pct(0-1). All suffixed except: density_kg_per_liter (descriptive name).
+### FuelState.msg
+kg, litres, lph, kgs, Pa, `_norm` for ratios (tank_quantity_norm, total_fuel_norm).
 
-### EngineState.msg — 35+ fields
-kPa, degC, inhg, kgph, kw, rpm, pct, nm, deg. Ambiguous: epr (dimensionless), vibration_level.
+### EngineState.msg
+kPa, degC, inhg, kgph, kw, rpm, `_pct` (n1_pct, n2_pct, torque_pct — all 0-100), nm, deg.
 
-### ElectricalState.msg — 15 fields
-**Most fields lack suffix.** bus_voltages, source_voltages, source_currents, load_currents, total_load_amps, master_bus_voltage — all missing _v/_a suffix.
+### ElectricalState.msg
+`_v` for voltages (bus_voltages_v, source_voltages_v, master_bus_voltage_v).
+`_a` for currents (source_currents_a, load_currents_a, total_load_a).
+`_pct` for battery_soc_pct (0-100).
 
-### AirDataState.msg — 12 fields per system (×3)
-ms, m, K, pct(0-1). Ambiguous: mach (dimensionless), pitot_ice_pct (0-1 not 0-100).
+### AirDataState.msg
+ms, m, K, `_norm` for pitot_ice_norm (0-1).
 
-### GearState.msg — 10 fields
-pct(0-1), deg. Ambiguous: brake_left/right, position_pct (0-1).
+### GearState.msg
+`_norm` for position (position_norm, brake_left_norm, brake_right_norm). _deg for nosewheel.
 
-### NavigationState.msg — 50+ fields
-deg, nm, kt, mhz, khz, dots. Ambiguous: signal_strength, adf_signal, transponder_code.
+### NavigationState.msg
+deg, nm, kt, mhz, khz, dots. Dimensionless: signal_strength, transponder_code.
 
-### AvionicsControls.msg — 15 fields
-mhz, khz. Ambiguous: obs1/obs2 (should be _deg), transponder_code, tacan_channel.
+### AvionicsControls.msg
+mhz, khz, `_deg` for OBS (obs1_deg, obs2_deg). Dimensionless: transponder_code, tacan_channel.
 
-### AtmosphereState.msg — 8 fields
+### FlightControls.msg + RawFlightControls.msg
+All axes: `_norm` suffix. Booleans: gear_down, parking_brake, rotor_brake (no suffix).
+
+### EngineControls.msg + RawEngineControls.msg
+All levers: `_norm` suffix (throttle_norm, mixture_norm, condition_norm, prop_lever_norm).
+
+### InitialConditions.msg
+_deg, _m, _rad, _ms, _pa, _k. `_norm` for fuel_total_norm (0-1).
+
+### AtmosphereState.msg
 K, Pa, kgm3, ms, m. All properly suffixed.
-
-### WeatherState.msg — 10 fields
-deg, kts, m, Pa, K. Ambiguous: turbulence_intensity (0-1), cloud_coverage (enum).
-
-### InitialConditions.msg — 11 fields
-rad, m, ms, Pa, K, pct(0-1). All suffixed. fuel_total_pct is 0-1.
-
-### HatHotResponse.msg — 5 fields
-**Worst offender.** lat, lon, hat, hot all lack unit suffix.
-
-### FlightControls.msg — 12 fields
-**All normalized, no suffix.** aileron, elevator, rudder, collective, trims, brakes, flaps, spoilers, speed_brake.
-
-### EngineControls.msg — 5 fields
-**All normalized, no suffix.** throttle[], mixture[], condition[], prop_rpm[].

@@ -64,6 +64,13 @@ uint8 EXTERNAL_DECOUPLED = 2
 
 ## Field naming conventions (LOCKED)
 
+### Unit suffixes
+- `_norm` = 0.0-1.0 or -1.0 to +1.0 normalized ratio (controls, fuel fraction, gear position, ice)
+- `_pct` = 0.0-100.0 percentage (N1%, torque%, battery SOC%, flap deployment%)
+- `_v` = volts, `_a` = amps, `_deg` = degrees, `_m` = metres, `_rpm` = RPM
+- No suffix = dimensionless, bool, enum, string, or count (mach, load_factor, epr, transponder_code)
+- **Rule:** If a field stores 0-1, it MUST use `_norm`, never `_pct`
+
 ### Avionics frequencies
 - MHz: `_freq_mhz` suffix (e.g., `nav1_freq_mhz`)
 - kHz: `_freq_khz` suffix (e.g., `adf1_freq_khz`)
