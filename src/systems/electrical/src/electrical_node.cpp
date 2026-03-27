@@ -223,6 +223,8 @@ public:
 
         if (!mode_is_ours) return;
 
+        // Intentionally runs in INIT/READY (not just RUNNING): the cockpit
+        // needs bus power before the sim starts so instruments are alive at startup.
         bool running = (sim_state_ == sim_msgs::msg::SimState::STATE_INIT ||
                         sim_state_ == sim_msgs::msg::SimState::STATE_READY ||
                         sim_state_ == sim_msgs::msg::SimState::STATE_RUNNING);

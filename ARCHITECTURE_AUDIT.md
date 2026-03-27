@@ -8,19 +8,14 @@ All bug batches complete. See DECISIONS.md for details.
 
 ### Open Items — opportunistic cleanup (fix when next touching the file)
 
-| ID | Type | Location | Description |
+| ID | Type | Location | Disposition |
 |---|---|---|---|
-| F1.5 | INCONSISTENCY | sim_manager | Relative config paths (should use ament_index_cpp) |
-| F3.4 | INCONSISTENCY | sim_failures | Creates publishers in on_activate instead of on_configure |
-| F3.8 | INCONSISTENCY | sim_electrical | Runs solver in INIT/READY states (should gate to RUNNING only) |
-| F4.11 | INCONSISTENCY | sim_manager | reload_client_ overwrite race on rapid double-call |
-| F4.12 | INCONSISTENCY | sim_electrical | Hardcodes 75% N2 seed (should come from YAML) |
-| F2.12 | DEAD | sim_manager | ScenarioEvent published, zero subscribers |
-
-**Recently resolved:**
-F1.6 (clock rate param), F4.5 (JSBSim logger), F6.3 (magnetic heading via WMM),
-F6.4 (wind direction), F2.10 (ArbitrationState forwarded), F2.11 (GearState forwarded),
-cigi caps_sub_ removed, RepositionBase deleted.
+| F1.5 | DEFERRED | sim_manager | Relative config paths — fix when containerizing. Works from workspace root. |
+| F4.11 | DEFERRED | sim_manager | reload_client_ race — fix when editing reload logic. Use client map or queue. |
+| F4.12 | DEFERRED | sim_electrical | 75% N2 seed — fix when writing EC135 engine plugin. Move to engine.yaml. |
+| F2.12 | KEEP | sim_manager | ScenarioEvent — intentional placeholder for future scenario playback. |
+| F3.4 | DONE | sim_failures | Publishers moved from on_activate to on_configure. |
+| F3.8 | DONE | sim_electrical | Documented: solver runs in INIT/READY intentionally (cockpit needs power). |
 
 **Scope:** Read-only review of all nodes, messages, configs, and wiring
 **Method:** Automated agent analysis of every .cpp, .hpp, .py, .msg, .srv, .yaml file under src/, ios/, and launch/

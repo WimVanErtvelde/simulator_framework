@@ -155,6 +155,30 @@ public:
     alert_pub_ = this->create_publisher<sim_msgs::msg::SimAlert>(
       "/sim/alerts", 10);
 
+    // FailureState and FailureInjection routing publishers
+    failure_state_pub_ = this->create_publisher<sim_msgs::msg::FailureState>(
+      "/sim/failure_state", 10);
+    fdm_cmd_pub_ = this->create_publisher<sim_msgs::msg::FailureInjection>(
+      "/sim/failure/flight_model_commands", 10);
+    elec_cmd_pub_ = this->create_publisher<sim_msgs::msg::FailureInjection>(
+      "/sim/failure/electrical_commands", 10);
+    navaid_cmd_pub_ = this->create_publisher<sim_msgs::msg::FailureInjection>(
+      "/sim/failure/navaid_commands", 10);
+    air_data_cmd_pub_ = this->create_publisher<sim_msgs::msg::FailureInjection>(
+      "/sim/failure/air_data_commands", 10);
+
+    // Subscriptions
+    cmd_sub_ = this->create_subscription<sim_msgs::msg::FailureCommand>(
+      "/devices/instructor/failure_command", 10,
+      std::bind(&FailuresNode::on_failure_command, this, std::placeholders::_1));
+
+    fdm_sub_ = this->create_subscription<sim_msgs::msg::FlightModelState>(
+      "/sim/flight_model/state", 10,
+      [this](sim_msgs::msg::FlightModelState::SharedPtr msg) {
+        latest_fdm_state_ = *msg;
+        have_fdm_state_ = true;
+      });
+
     // Load failures.yaml catalog
     std::string aircraft_id = this->get_parameter("aircraft_id").as_string();
     std::string yaml_path =
@@ -212,30 +236,6 @@ public:
 
   CallbackReturn on_activate(const rclcpp_lifecycle::State &) override
   {
-    // Lifecycle publishers for FailureState and FailureInjection routing
-    failure_state_pub_ = this->create_publisher<sim_msgs::msg::FailureState>(
-      "/sim/failure_state", 10);
-    fdm_cmd_pub_ = this->create_publisher<sim_msgs::msg::FailureInjection>(
-      "/sim/failure/flight_model_commands", 10);
-    elec_cmd_pub_ = this->create_publisher<sim_msgs::msg::FailureInjection>(
-      "/sim/failure/electrical_commands", 10);
-    navaid_cmd_pub_ = this->create_publisher<sim_msgs::msg::FailureInjection>(
-      "/sim/failure/navaid_commands", 10);
-    air_data_cmd_pub_ = this->create_publisher<sim_msgs::msg::FailureInjection>(
-      "/sim/failure/air_data_commands", 10);
-
-    // Subscriptions
-    cmd_sub_ = this->create_subscription<sim_msgs::msg::FailureCommand>(
-      "/devices/instructor/failure_command", 10,
-      std::bind(&FailuresNode::on_failure_command, this, std::placeholders::_1));
-
-    fdm_sub_ = this->create_subscription<sim_msgs::msg::FlightModelState>(
-      "/sim/flight_model/state", 10,
-      [this](sim_msgs::msg::FlightModelState::SharedPtr msg) {
-        latest_fdm_state_ = *msg;
-        have_fdm_state_ = true;
-      });
-
     // 10 Hz timer — evaluate armed queue and publish FailureState
     eval_timer_ = this->create_wall_timer(
       std::chrono::milliseconds(100),
@@ -280,6 +280,13 @@ public:
     heartbeat_pub_.reset();
     lifecycle_state_pub_.reset();
     alert_pub_.reset();
+    failure_state_pub_.reset();
+    fdm_cmd_pub_.reset();
+    elec_cmd_pub_.reset();
+    navaid_cmd_pub_.reset();
+    air_data_cmd_pub_.reset();
+    cmd_sub_.reset();
+    fdm_sub_.reset();
     catalog_.clear();
     active_failures_.clear();
     armed_queue_.clear();
