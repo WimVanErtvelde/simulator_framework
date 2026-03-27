@@ -4,7 +4,6 @@
 #include <std_msgs/msg/string.hpp>
 #include <std_msgs/msg/u_int8.hpp>
 #include <sim_msgs/msg/flight_model_state.hpp>
-#include <sim_msgs/msg/flight_model_capabilities.hpp>
 #include <sim_msgs/msg/hat_hot_response.hpp>
 #include <sim_msgs/msg/sim_state.hpp>
 #include <sim_msgs/msg/sim_alert.hpp>
@@ -122,7 +121,6 @@ private:
 
     // ── ROS2 interfaces ───────────────────────────────────────────────────
     rclcpp::Subscription<sim_msgs::msg::FlightModelState>::SharedPtr      fms_sub_;
-    rclcpp::Subscription<sim_msgs::msg::FlightModelCapabilities>::SharedPtr caps_sub_;
     rclcpp::Subscription<sim_msgs::msg::SimState>::SharedPtr              state_sub_;
     rclcpp_lifecycle::LifecyclePublisher<sim_msgs::msg::HatHotResponse>::SharedPtr hat_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr heartbeat_pub_;

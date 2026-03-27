@@ -2099,3 +2099,13 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - DECIDED: AirDataState.msg gains magnetic_heading_rad + magnetic_variation_deg fields. IOS reads heading from AirDataState.
 - REASON: FlightModelState is truth data. Magnetic heading is derived. This separation enables future compass failures (stuck DG, precession, deviation) in air_data_node without touching the FDM adapter.
 - AFFECTS: FlightModelState.msg (field removed), AirDataState.msg (fields added), navaid_sim (new publisher), air_data_node (new subscription + computation), JSBSimAdapter (dead code removed), navigation_node (switched to true_heading_rad), ios_backend + frontend (heading source changed to airData)
+
+## 2026-03-27 — Claude Code
+
+### ArbitrationState + GearState forwarded to IOS, dead code cleanup, clock rate param
+
+- DECIDED: ArbitrationState and GearState now forwarded to IOS via WebSocket. ios_backend subscribes to /sim/controls/arbitration and /sim/gear/state, forwards as arbitration_state and gear_state WS message types. Frontend stores wired but no display components yet.
+- DECIDED: Dead code removed — caps_sub_ empty callback in cigi_bridge deleted, RepositionBase legacy files deleted.
+- DECIDED: sim_manager clock_rate_hz parameter added (default 50.0). Replaces hardcoded 20ms timer.
+- REASON: F2.10/F2.11 from architecture audit — data was published but never reached IOS. Dead code cleanup for git hygiene. Clock rate parameterization per CLAUDE.md documentation.
+- AFFECTS: ios_backend (2 new subscriptions + WS handlers), useSimStore.js (2 new state slices), cigi_bridge (dead subscription + legacy files removed), sim_manager (parameterized clock rate)

@@ -132,13 +132,6 @@ CallbackReturn CigiHostNode::on_activate(const rclcpp_lifecycle::State &)
             latest_fms_ = msg;
         });
 
-    caps_sub_ = create_subscription<sim_msgs::msg::FlightModelCapabilities>(
-        "/sim/flight_model/capabilities",
-        rclcpp::QoS(1).transient_local(),
-        [this](sim_msgs::msg::FlightModelCapabilities::SharedPtr) {
-            // capabilities noted but not gating CIGI sending
-        });
-
     state_sub_ = create_subscription<sim_msgs::msg::SimState>(
         "/sim/state", 10,
         [this](sim_msgs::msg::SimState::SharedPtr msg) {
@@ -177,7 +170,6 @@ CallbackReturn CigiHostNode::on_deactivate(const rclcpp_lifecycle::State &)
     send_timer_.reset();
     heartbeat_timer_.reset();
     fms_sub_.reset();
-    caps_sub_.reset();
     state_sub_.reset();
     hat_pub_->on_deactivate();
     RCLCPP_INFO(get_logger(), "cigi_bridge deactivated");

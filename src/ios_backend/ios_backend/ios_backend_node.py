@@ -45,7 +45,8 @@ from sim_msgs.msg import (FlightModelState, FuelState, SimState, SimCommand, Pan
                           RawFlightControls, RawEngineControls,
                           ElectricalState, SimAlert, EngineState,
                           FailureCommand, FailureState, TerrainSource,
-                          InitialConditions, AirDataState)
+                          InitialConditions, AirDataState,
+                          ArbitrationState, GearState)
 from std_msgs.msg import String
 from lifecycle_msgs.srv import ChangeState
 from lifecycle_msgs.msg import Transition
@@ -114,6 +115,14 @@ class IosBackendNode(Node):
         # Air data subscription (pitot-static instruments)
         self._air_data_sub = self.create_subscription(
             AirDataState, '/sim/air_data/state', self._on_air_data_state, 10)
+
+        # Arbitration state (per-channel input source)
+        self._arbitration_sub = self.create_subscription(
+            ArbitrationState, '/sim/controls/arbitration', self._on_arbitration_state, 10)
+
+        # Gear state
+        self._gear_sub = self.create_subscription(
+            GearState, '/sim/gear/state', self._on_gear_state, 10)
 
         # Failure command publisher → sim_failures
         self._failure_cmd_pub = self.create_publisher(
@@ -581,6 +590,46 @@ class IosBackendNode(Node):
         }
         with self._lock:
             self._latest['air_data_state'] = data
+
+    @_safe_callback
+    def _on_arbitration_state(self, msg: ArbitrationState):
+        src_names = {0: 'FROZEN', 1: 'HARDWARE', 2: 'VIRTUAL', 3: 'INSTRUCTOR'}
+        data = {
+            'type': 'arbitration_state',
+            'flight_source': src_names.get(msg.flight_source, 'UNKNOWN'),
+            'engine_source': src_names.get(msg.engine_source, 'UNKNOWN'),
+            'avionics_source': src_names.get(msg.avionics_source, 'UNKNOWN'),
+            'panel_source': src_names.get(msg.panel_source, 'UNKNOWN'),
+            'hw_flight_healthy': bool(msg.hardware_flight_healthy),
+            'hw_engine_healthy': bool(msg.hardware_engine_healthy),
+            'hw_avionics_healthy': bool(msg.hardware_avionics_healthy),
+            'hw_panel_healthy': bool(msg.hardware_panel_healthy),
+        }
+        with self._lock:
+            self._latest['arbitration_state'] = data
+
+    @_safe_callback
+    def _on_gear_state(self, msg: GearState):
+        n = min(int(msg.gear_count), 5)
+        data = {
+            'type': 'gear_state',
+            'gear_count': int(msg.gear_count),
+            'gear_type': msg.gear_type,
+            'retractable': bool(msg.retractable),
+            'on_ground': bool(msg.on_ground),
+            'gear_handle_down': bool(msg.gear_handle_down),
+            'gear_unsafe': bool(msg.gear_unsafe),
+            'gear_warning': bool(msg.gear_warning),
+            'leg_names': [msg.leg_names[i] for i in range(n)],
+            'position_norm': [float(msg.position_norm[i]) for i in range(n)],
+            'weight_on_wheels': [bool(msg.weight_on_wheels[i]) for i in range(n)],
+            'brake_left_norm': float(msg.brake_left_norm),
+            'brake_right_norm': float(msg.brake_right_norm),
+            'parking_brake': bool(msg.parking_brake),
+            'nosewheel_angle_deg': float(msg.nosewheel_angle_deg),
+        }
+        with self._lock:
+            self._latest['gear_state'] = data
 
     def _load_failures_config(self, aircraft_id: str):
         """Load failure catalog from aircraft package failures.yaml."""

@@ -64,6 +64,7 @@ public:
     // ── Parameters ──────────────────────────────────────────────────────
     this->declare_parameter<std::string>("aircraft_id", "");
     this->declare_parameter<double>("time_scale", 1.0);
+    this->declare_parameter<double>("clock_rate_hz", 50.0);
     this->declare_parameter<std::string>("aircraft_config_dir", "");
 
     aircraft_id_ = this->get_parameter("aircraft_id").as_string();
@@ -125,9 +126,12 @@ public:
       });
 
     // ── Timers ──────────────────────────────────────────────────────────
-    // Clock at 50 Hz (wall timer — sim_manager is the clock source)
-    clock_timer_ = this->create_wall_timer(20ms,
+    double clock_hz = this->get_parameter("clock_rate_hz").as_double();
+    int clock_period_ms = static_cast<int>(1000.0 / clock_hz);
+    clock_timer_ = this->create_wall_timer(
+      std::chrono::milliseconds(clock_period_ms),
       std::bind(&SimManagerNode::on_clock_tick, this));
+    RCLCPP_INFO(this->get_logger(), "Clock rate: %.0f Hz (%d ms)", clock_hz, clock_period_ms);
 
     // State broadcast at 10 Hz
     state_timer_ = this->create_wall_timer(100ms,

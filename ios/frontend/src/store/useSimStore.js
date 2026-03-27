@@ -134,6 +134,22 @@ export const useSimStore = create((set, get) => ({
   // Engine config (from aircraft YAML — drives dynamic engine instrument layout)
   engineConfig: { engineCount: 0, engines: [] },
 
+  // Arbitration state (per-channel input source)
+  arbitration: {
+    flightSource: 'FROZEN', engineSource: 'FROZEN',
+    avionicsSource: 'FROZEN', panelSource: 'FROZEN',
+    hwFlightHealthy: false, hwEngineHealthy: false,
+    hwAvionicsHealthy: false, hwPanelHealthy: false,
+  },
+
+  // Gear state
+  gear: {
+    gearCount: 0, gearType: '', retractable: false,
+    onGround: true, gearHandleDown: true, gearUnsafe: false, gearWarning: false,
+    legNames: [], positionNorm: [], weightOnWheels: [],
+    brakeLeftNorm: 0, brakeRightNorm: 0, parkingBrake: false, nosewheelAngleDeg: 0,
+  },
+
   // Terrain source
   terrainSource: { source: 'UNKNOWN', description: '' },
 
@@ -653,6 +669,42 @@ export const useSimStore = create((set, get) => ({
                 staticHealthy: msg.static_healthy ?? s.airData.staticHealthy,
                 pitotHeatOn: msg.pitot_heat_on ?? s.airData.pitotHeatOn,
                 pitotIcePct: msg.pitot_ice_norm ?? s.airData.pitotIcePct,
+              },
+            })
+            break
+
+          case 'arbitration_state':
+            set({
+              arbitration: {
+                flightSource: msg.flight_source ?? s.arbitration.flightSource,
+                engineSource: msg.engine_source ?? s.arbitration.engineSource,
+                avionicsSource: msg.avionics_source ?? s.arbitration.avionicsSource,
+                panelSource: msg.panel_source ?? s.arbitration.panelSource,
+                hwFlightHealthy: msg.hw_flight_healthy ?? s.arbitration.hwFlightHealthy,
+                hwEngineHealthy: msg.hw_engine_healthy ?? s.arbitration.hwEngineHealthy,
+                hwAvionicsHealthy: msg.hw_avionics_healthy ?? s.arbitration.hwAvionicsHealthy,
+                hwPanelHealthy: msg.hw_panel_healthy ?? s.arbitration.hwPanelHealthy,
+              },
+            })
+            break
+
+          case 'gear_state':
+            set({
+              gear: {
+                gearCount: msg.gear_count ?? s.gear.gearCount,
+                gearType: msg.gear_type ?? s.gear.gearType,
+                retractable: msg.retractable ?? s.gear.retractable,
+                onGround: msg.on_ground ?? s.gear.onGround,
+                gearHandleDown: msg.gear_handle_down ?? s.gear.gearHandleDown,
+                gearUnsafe: msg.gear_unsafe ?? s.gear.gearUnsafe,
+                gearWarning: msg.gear_warning ?? s.gear.gearWarning,
+                legNames: msg.leg_names ?? s.gear.legNames,
+                positionNorm: msg.position_norm ?? s.gear.positionNorm,
+                weightOnWheels: msg.weight_on_wheels ?? s.gear.weightOnWheels,
+                brakeLeftNorm: msg.brake_left_norm ?? s.gear.brakeLeftNorm,
+                brakeRightNorm: msg.brake_right_norm ?? s.gear.brakeRightNorm,
+                parkingBrake: msg.parking_brake ?? s.gear.parkingBrake,
+                nosewheelAngleDeg: msg.nosewheel_angle_deg ?? s.gear.nosewheelAngleDeg,
               },
             })
             break
