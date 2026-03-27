@@ -346,7 +346,7 @@ class IosBackendNode(Node):
             'adf1_khz': float(msg.adf1_freq_khz),
             'adf2_khz': float(msg.adf2_freq_khz),
             # Compass heading
-            'hdg_mag_deg': float(msg.magnetic_heading_rad) * 180.0 / _m.pi,
+            'hdg_mag_deg': float(msg.magnetic_heading_rad) * 180.0 / math.pi,
             'mag_variation_deg': float(msg.magnetic_variation_deg),
         }
         with self._lock:
