@@ -11,19 +11,16 @@ All bug batches complete. See DECISIONS.md for details.
 | ID | Type | Location | Description |
 |---|---|---|---|
 | F1.5 | INCONSISTENCY | sim_manager | Relative config paths (should use ament_index_cpp) |
-| F1.6 | INCONSISTENCY | sim_manager | Clock rate hardcoded 50Hz, not a declared parameter |
 | F3.4 | INCONSISTENCY | sim_failures | Creates publishers in on_activate instead of on_configure |
 | F3.8 | INCONSISTENCY | sim_electrical | Runs solver in INIT/READY states (should gate to RUNNING only) |
-| F4.5 | DONE | JSBSimAdapter | ~~std::cerr logging~~ → replaced with log_error() callback (ee7bb14) |
 | F4.11 | INCONSISTENCY | sim_manager | reload_client_ overwrite race on rapid double-call |
 | F4.12 | INCONSISTENCY | sim_electrical | Hardcodes 75% N2 seed (should come from YAML) |
-| F6.3 | TODO | JSBSimAdapter:432 | magnetic_heading_rad = true heading (needs WMM declination) |
-| F6.4 | TODO | JSBSimAdapter:503 | wind_direction_rad always 0.0 (needs wind component computation) |
-| F2.10 | UNFINISHED | input_arbitrator | ArbitrationState published, ios_backend should subscribe + forward |
-| F2.11 | UNFINISHED | sim_gear | GearState published, ios_backend should subscribe + forward |
 | F2.12 | DEAD | sim_manager | ScenarioEvent published, zero subscribers |
-| — | DEAD | cigi_bridge | caps_sub_ subscription with empty callback |
-| — | DEAD | cigi_ig_interface/ | RepositionBase legacy files (not compiled) |
+
+**Recently resolved:**
+F1.6 (clock rate param), F4.5 (JSBSim logger), F6.3 (magnetic heading via WMM),
+F6.4 (wind direction), F2.10 (ArbitrationState forwarded), F2.11 (GearState forwarded),
+cigi caps_sub_ removed, RepositionBase deleted.
 
 **Scope:** Read-only review of all nodes, messages, configs, and wiring
 **Method:** Automated agent analysis of every .cpp, .hpp, .py, .msg, .srv, .yaml file under src/, ios/, and launch/
