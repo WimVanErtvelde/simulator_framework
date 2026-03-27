@@ -481,15 +481,15 @@ setInterval(() => {
     ws.send(JSON.stringify({
       type: 'set_flight_controls',
       data: {
-        aileron, elevator, rudder,
-        collective: 0, trim_aileron: 0, trim_elevator: trimElevator, trim_rudder: 0,
-        brake_left:  brakeHeld ? 1.0 : 0.0,
-        brake_right: brakeHeld ? 1.0 : 0.0,
+        aileron_norm: aileron, elevator_norm: elevator, rudder_norm: rudder,
+        collective_norm: 0, trim_aileron_norm: 0, trim_elevator_norm: trimElevator, trim_rudder_norm: 0,
+        brake_left_norm:  brakeHeld ? 1.0 : 0.0,
+        brake_right_norm: brakeHeld ? 1.0 : 0.0,
       }
     }));
     ws.send(JSON.stringify({
       type: 'set_engine_controls',
-      data: { throttle: [throttle], mixture: [1.0] }
+      data: { throttle_norm: [throttle], mixture_norm: [1.0] }
     }));
   }
 
