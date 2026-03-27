@@ -111,8 +111,8 @@ export default function MapView() {
   const { fdm, simState, track, ctrOnAircraft } = useSimStore()
 
   const icon = useMemo(
-    () => createAircraftIcon(fdm.hdgMagDeg, simState, fdm.isHelicopter),
-    [fdm.hdgMagDeg, simState, fdm.isHelicopter]
+    () => createAircraftIcon(fdm.hdgTrueDeg, simState, fdm.isHelicopter),
+    [fdm.hdgTrueDeg, simState, fdm.isHelicopter]
   )
 
   return (

@@ -2089,3 +2089,13 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - KEPT _pct: throttle_pct, flap_pct, speed_brake_pct (0-100), battery_soc_pct (0-100), n1_pct, n2_pct, torque_pct (0-100)
 - ALSO: V3 batch 1-4 renames (FlightControls/EngineControls _norm, ElectricalState _v/_a, AvionicsControls obs_deg)
 - AFFECTS: FlightModelState, FuelState, GearState, AirDataState, InitialConditions, config.yaml (both aircraft), all consumers (C++, Python, JS field name updates)
+
+## 2026-03-27 — Claude Code
+
+### Magnetic heading moved to air_data_node
+
+- DECIDED: Removed magnetic_heading_rad from FlightModelState. Magnetic heading is a compass instrument output, not flight model truth. Now computed in air_data_node as true_heading - magnetic_variation.
+- DECIDED: navaid_sim publishes /sim/world/magnetic_variation_deg (std_msgs/Float32, 1Hz) using existing WMM/MagDec class.
+- DECIDED: AirDataState.msg gains magnetic_heading_rad + magnetic_variation_deg fields. IOS reads heading from AirDataState.
+- REASON: FlightModelState is truth data. Magnetic heading is derived. This separation enables future compass failures (stuck DG, precession, deviation) in air_data_node without touching the FDM adapter.
+- AFFECTS: FlightModelState.msg (field removed), AirDataState.msg (fields added), navaid_sim (new publisher), air_data_node (new subscription + computation), JSBSimAdapter (dead code removed), navigation_node (switched to true_heading_rad), ios_backend + frontend (heading source changed to airData)

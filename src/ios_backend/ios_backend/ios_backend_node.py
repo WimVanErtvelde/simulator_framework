@@ -194,7 +194,7 @@ class IosBackendNode(Node):
             'alt_ft_msl': float(msg.altitude_msl_m) * 3.28084,
             'ias_kt': float(msg.ias_ms) * 1.94384,
             'gnd_speed_kt': float(msg.ground_speed_ms) * 1.94384,
-            'hdg_mag_deg': float(msg.magnetic_heading_rad) * 180.0 / _m.pi,
+            'hdg_true_deg': float(msg.true_heading_rad) * 180.0 / _m.pi,
             'track_deg': float(msg.ground_track_rad) * 180.0 / _m.pi,
             'vs_fpm': float(msg.vertical_speed_ms) * 196.85,  # m/s to ft/min
             'pitch_deg': float(msg.pitch_rad) * 180.0 / _m.pi,
@@ -575,6 +575,8 @@ class IosBackendNode(Node):
             'static_healthy': bool(msg.static_healthy[0]),
             'pitot_heat_on': bool(msg.pitot_heat_on[0]),
             'pitot_ice_norm': float(msg.pitot_ice_norm[0]),
+            'hdg_mag_deg': float(msg.magnetic_heading_rad) * 180.0 / _m.pi,
+            'mag_variation_deg': float(msg.magnetic_variation_deg),
         }
         with self._lock:
             self._latest['air_data_state'] = data

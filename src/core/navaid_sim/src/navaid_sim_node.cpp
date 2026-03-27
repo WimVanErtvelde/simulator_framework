@@ -2,6 +2,7 @@
 #include <rclcpp_lifecycle/lifecycle_node.hpp>
 #include <lifecycle_msgs/msg/transition.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <std_msgs/msg/float32.hpp>
 #include <sim_msgs/msg/flight_model_state.hpp>
 #include <sim_msgs/msg/avionics_controls.hpp>
 #include <sim_msgs/msg/nav_signal_table.hpp>
@@ -72,6 +73,8 @@ public:
       "/sim/diagnostics/lifecycle_state", 10);
     nav_signals_pub_ = this->create_publisher<sim_msgs::msg::NavSignalTable>(
       "/sim/world/nav_signals", 10);
+    mag_var_pub_ = this->create_publisher<std_msgs::msg::Float32>(
+      "/sim/world/magnetic_variation_deg", 10);
 
     // Subscriptions
     flight_model_sub_ = this->create_subscription<sim_msgs::msg::FlightModelState>(
@@ -336,6 +339,18 @@ public:
         heartbeat_pub_->publish(msg);
       });
 
+    // Magnetic variation at 1 Hz (declination changes slowly)
+    mag_var_timer_ = this->create_wall_timer(
+      std::chrono::seconds(1),
+      [this]() {
+        if (!flight_model_received_ || !magdec_ || !magdec_->isLoaded()) return;
+        float lat = static_cast<float>(last_flight_model_state_.latitude_deg);
+        float lon = static_cast<float>(last_flight_model_state_.longitude_deg);
+        auto msg = std_msgs::msg::Float32();
+        msg.data = magdec_->getDeclination(lat, lon);
+        mag_var_pub_->publish(msg);
+      });
+
     double rate_hz = this->get_parameter("update_rate_hz").as_double();
     int period_ms = static_cast<int>(1000.0 / rate_hz);
 
@@ -364,6 +379,7 @@ public:
     heartbeat_pub_.reset();
     lifecycle_state_pub_.reset();
     nav_signals_pub_.reset();
+    mag_var_pub_.reset();
     flight_model_sub_.reset();
     avionics_sub_.reset();
     failure_injection_sub_.reset();
@@ -692,6 +708,7 @@ private:
   // Publishers
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr heartbeat_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr lifecycle_state_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr mag_var_pub_;
   rclcpp_lifecycle::LifecyclePublisher<sim_msgs::msg::NavSignalTable>::SharedPtr nav_signals_pub_;
 
   // Subscriptions
@@ -707,6 +724,7 @@ private:
   rclcpp::TimerBase::SharedPtr heartbeat_timer_;
   rclcpp::TimerBase::SharedPtr auto_start_timer_;
   rclcpp::TimerBase::SharedPtr update_timer_;
+  rclcpp::TimerBase::SharedPtr mag_var_timer_;
 
   // Nav simulation core
   std::unique_ptr<AS::World> world_;

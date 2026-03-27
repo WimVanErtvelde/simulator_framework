@@ -46,7 +46,7 @@ export const useSimStore = create((set, get) => ({
   fdm: {
     lat: 51.5074, lon: -0.1278,
     altFtMsl: 0, iasKt: 0, gndSpeedKt: 0,
-    hdgMagDeg: 0, trackDeg: 0, vsFpm: 0,
+    hdgTrueDeg: 0, trackDeg: 0, vsFpm: 0,
     pitchDeg: 0, rollDeg: 0, isHelicopter: false,
   },
 
@@ -116,6 +116,7 @@ export const useSimStore = create((set, get) => ({
     satC: 0, tatC: 0,
     pitotHealthy: true, staticHealthy: true,
     pitotHeatOn: false, pitotIcePct: 0,
+    hdgMagDeg: 0, magVariationDeg: 0,
   },
 
   // Avionics config (from aircraft YAML — drives dynamic A/C page layout)
@@ -359,7 +360,7 @@ export const useSimStore = create((set, get) => ({
               altFtMsl: msg.alt_ft_msl ?? (msg.altitude_m_msl ? msg.altitude_m_msl * 3.28084 : s.fdm.altFtMsl),
               iasKt: msg.ias_kt ?? s.fdm.iasKt,
               gndSpeedKt: msg.gnd_speed_kt ?? s.fdm.gndSpeedKt,
-              hdgMagDeg: msg.hdg_mag_deg ?? s.fdm.hdgMagDeg,
+              hdgTrueDeg: msg.hdg_true_deg ?? s.fdm.hdgTrueDeg,
               trackDeg: msg.track_deg ?? s.fdm.trackDeg,
               vsFpm: msg.vs_fpm ?? s.fdm.vsFpm,
               pitchDeg: msg.pitch_deg ?? s.fdm.pitchDeg,
@@ -650,6 +651,8 @@ export const useSimStore = create((set, get) => ({
                 staticHealthy: msg.static_healthy ?? s.airData.staticHealthy,
                 pitotHeatOn: msg.pitot_heat_on ?? s.airData.pitotHeatOn,
                 pitotIcePct: msg.pitot_ice_norm ?? s.airData.pitotIcePct,
+                hdgMagDeg: msg.hdg_mag_deg ?? s.airData.hdgMagDeg,
+                magVariationDeg: msg.mag_variation_deg ?? s.airData.magVariationDeg,
               },
             })
             break

@@ -196,7 +196,7 @@ private:
       const auto & ns = last_nav_signals_;
       float obs1 = last_avionics_.obs1_deg;
       float obs2 = last_avionics_.obs2_deg;
-      double hdg_deg = flight_model_received_ ? last_flight_model_state_.magnetic_heading_rad * RAD_TO_DEG : 0.0;
+      double hdg_deg = flight_model_received_ ? last_flight_model_state_.true_heading_rad * RAD_TO_DEG : 0.0;
 
       // NAV1
       process_nav_receiver(

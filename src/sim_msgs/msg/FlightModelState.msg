@@ -135,7 +135,7 @@ float64 q_z
 float64 roll_rad            # phi — positive right wing down
 float64 pitch_rad           # theta — positive nose up
 float64 true_heading_rad    # psi — true heading, 0=North, clockwise
-float64 magnetic_heading_rad # magnetic heading [HLSIM word 130]
+# magnetic_heading_rad removed — now computed in air_data_node as instrument output
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. VELOCITY — three frames

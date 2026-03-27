@@ -416,7 +416,7 @@ export default function PositionPanel() {
         <NumpadField label="ALT (ft)" value={pos.alt} placeholder={fdm.altFtMsl.toFixed(0)}
           allowDecimal={false} hint="feet"
           onChange={(v) => setPos(p => ({ ...p, alt: v }))} />
-        <NumpadField label="HDG (\u00B0)" value={pos.hdg} placeholder={fdm.hdgMagDeg.toFixed(0)}
+        <NumpadField label="HDG (\u00B0)" value={pos.hdg} placeholder={fdm.hdgTrueDeg.toFixed(0)}
           allowDecimal={false} hint="0\u2013360"
           onChange={(v) => setPos(p => ({ ...p, hdg: v }))} />
       </div>

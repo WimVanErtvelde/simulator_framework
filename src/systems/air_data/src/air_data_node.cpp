@@ -3,6 +3,7 @@
 #include <lifecycle_msgs/msg/transition.hpp>
 #include <lifecycle_msgs/msg/state.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <std_msgs/msg/float32.hpp>
 #include <pluginlib/class_loader.hpp>
 #include <sim_interfaces/i_air_data_model.hpp>
 #include <ament_index_cpp/get_package_share_directory.hpp>
@@ -105,6 +106,13 @@ public:
       "/sim/controls/panel", 10,
       [this](const sim_msgs::msg::PanelControls::SharedPtr msg) {
         latest_panel_ = msg;
+      });
+
+    // Magnetic variation from navaid_sim (WMM, 1 Hz)
+    mag_var_sub_ = this->create_subscription<std_msgs::msg::Float32>(
+      "/sim/world/magnetic_variation_deg", 10,
+      [this](const std_msgs::msg::Float32::SharedPtr msg) {
+        mag_variation_deg_ = msg->data;
       });
 
     // Failure injection commands from sim_failures
@@ -295,6 +303,18 @@ public:
           msg.pitot_ice_norm[i]           = s.pitot_ice_norm;
         }
 
+        // Compass instrument output: true heading - magnetic variation
+        if (latest_fms_) {
+          float true_hdg = static_cast<float>(latest_fms_->true_heading_rad);
+          float var_rad = mag_variation_deg_ * static_cast<float>(M_PI / 180.0);
+          float mag_hdg = true_hdg - var_rad;
+          // Normalize to [0, 2pi)
+          while (mag_hdg < 0.0f) mag_hdg += static_cast<float>(2.0 * M_PI);
+          while (mag_hdg >= static_cast<float>(2.0 * M_PI)) mag_hdg -= static_cast<float>(2.0 * M_PI);
+          msg.magnetic_heading_rad = mag_hdg;
+          msg.magnetic_variation_deg = mag_variation_deg_;
+        }
+
         air_data_state_pub_->publish(msg);
       });
 
@@ -324,6 +344,7 @@ public:
     atmosphere_sub_.reset();
     weather_sub_.reset();
     electrical_sub_.reset();
+    mag_var_sub_.reset();
     panel_sub_.reset();
     failure_injection_sub_.reset();
     caps_sub_.reset();
@@ -379,6 +400,7 @@ private:
   rclcpp::Subscription<sim_msgs::msg::PanelControls>::SharedPtr panel_sub_;
   rclcpp::Subscription<sim_msgs::msg::FailureInjection>::SharedPtr failure_injection_sub_;
   rclcpp::Subscription<sim_msgs::msg::FlightModelCapabilities>::SharedPtr caps_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr mag_var_sub_;
 
   // Timers
   rclcpp::TimerBase::SharedPtr heartbeat_timer_;
@@ -403,6 +425,7 @@ private:
 
   // State
   uint8_t sim_state_ = sim_msgs::msg::SimState::STATE_INIT;
+  float mag_variation_deg_ = 0.0f;  // from navaid_sim WMM (east positive)
 };
 
 int main(int argc, char ** argv)

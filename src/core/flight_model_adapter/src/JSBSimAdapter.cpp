@@ -450,8 +450,7 @@ sim_msgs::msg::FlightModelState JSBSimAdapter::get_state() const
   state.q_y = c_psi2 * s_theta2 * c_phi2 + s_psi2 * c_theta2 * s_phi2;
   state.q_z = s_psi2 * c_theta2 * c_phi2 - c_psi2 * s_theta2 * s_phi2;
 
-  // Magnetic heading — approximate with a fixed declination (proper model deferred)
-  state.magnetic_heading_rad = psi;  // TODO: apply magnetic declination
+  // Magnetic heading computed in air_data_node using WMM declination from navaid_sim
 
   // --- 4. VELOCITY ---
   // NED
