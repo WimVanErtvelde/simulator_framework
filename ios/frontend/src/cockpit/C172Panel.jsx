@@ -15,6 +15,7 @@ import RoundGauge from './components/RoundGauge'
 import BarGauge from './components/BarGauge'
 import AnnunciatorLight from './components/AnnunciatorLight'
 import ToggleSwitch from './components/ToggleSwitch'
+import ControlPositionIndicator from './components/ControlPositionIndicator'
 import SelectorControl from './components/SelectorControl'
 import VerticalSlider from './components/VerticalSlider'
 
@@ -175,8 +176,13 @@ export default function C172Panel() {
       {/* ── LOWER PANEL ───────────────────────────────────────────── */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
 
+        {/* Control Position */}
+        <Section title="CONTROLS" style={{ minWidth: 130 }}>
+          <ControlPositionIndicator aileron={kb.aileron} elevator={kb.elevator} rudder={kb.rudder} />
+        </Section>
+
         {/* Engine Controls */}
-        <Section title="ENGINE CONTROLS" style={{ minWidth: 120 }}>
+        <Section title="ENGINE" style={{ minWidth: 120 }}>
           <div style={{ display: 'flex', gap: 16, justifyContent: 'center' }}>
             <VerticalSlider label="THR" color="#333" value={kb.throttle} height={100}
               onChange={(v) => setThrottle(v)} />
