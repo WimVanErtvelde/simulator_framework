@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useSimStore } from '../store/useSimStore'
 import useKeyboardControls from './useKeyboardControls'
 
@@ -44,18 +45,27 @@ function sendVirtualPanel(switchIds, switchStates, selectorIds, selectorValues) 
   ws.send(JSON.stringify({ type: 'set_virtual_panel', data }))
 }
 
-function sendEngineControls(throttle, mixture) {
+function sendEngineControls(data) {
   const ws = useSimStore.getState().ws
   if (!ws || ws.readyState !== WebSocket.OPEN) return
-  ws.send(JSON.stringify({
-    type: 'set_engine_controls',
-    data: { throttle_norm: [throttle], mixture_norm: [mixture] },
-  }))
+  ws.send(JSON.stringify({ type: 'set_engine_controls', data }))
+}
+
+function sendMagneto(pos) {
+  // 0=OFF, 1=R, 2=L, 3=BOTH, 4=START
+  const ml = pos === 2 || pos === 3 || pos === 4  // L, BOTH, START
+  const mr = pos === 1 || pos === 3 || pos === 4  // R, BOTH, START
+  const starter = pos === 4
+  sendEngineControls({ magneto_left: [ml], magneto_right: [mr], starter })
+  // Also send panel selector for engines_node plugin display
+  sendVirtualPanel(null, null, ['sel_magnetos'], [pos])
 }
 
 export default function C172Panel() {
   const { fdm, airData, nav, electrical, engines, fuel, gear, atmosphere } = useSimStore()
   const { state: kb, setThrottle, setMixture } = useKeyboardControls()
+  const [magnetoPos, setMagnetoPos] = useState(0)
+  const [fuelSelPos, setFuelSelPos] = useState(0)
 
   // Helper to find switch state by ID
   const sw = (id) => {
@@ -107,13 +117,13 @@ export default function C172Panel() {
           <ToggleSwitch label="CARB HT" on={sw('sw_carb_heat')}
             onToggle={() => sendVirtualPanel(['sw_carb_heat'], [!sw('sw_carb_heat')])} />
           <div style={{ borderLeft: '1px solid #1e293b', height: 56, margin: '0 4px' }} />
-          <SelectorControl label="MAGNETOS" value={0}
+          <SelectorControl label="MAGNETOS" value={magnetoPos}
             options={[
               { value: 0, label: 'OFF' }, { value: 1, label: 'R' },
               { value: 2, label: 'L' }, { value: 3, label: 'BOTH' },
               { value: 4, label: 'START' },
             ]}
-            onChange={(v) => sendVirtualPanel(null, null, ['sel_magnetos'], [v])} />
+            onChange={(v) => { setMagnetoPos(v); sendMagneto(v) }} />
         </div>
       </Section>
 
@@ -190,8 +200,8 @@ export default function C172Panel() {
                 { value: 3, label: 'OFF' }, { value: 1, label: 'LEFT' },
                 { value: 0, label: 'BOTH' }, { value: 2, label: 'RIGHT' },
               ]}
-              value={0}
-              onChange={(v) => sendVirtualPanel(null, null, ['sel_fuel'], [v])} />
+              value={fuelSelPos}
+              onChange={(v) => { setFuelSelPos(v); sendVirtualPanel(null, null, ['sel_fuel'], [v]) }} />
           </div>
           <div style={{ textAlign: 'center', marginTop: 4, fontSize: 10, color: '#64748b' }}>
             Total: {fuel.totalFuelLiters?.toFixed(0) ?? '--'} L ({((fuel.totalFuelPct ?? 0) * 100).toFixed(0)}%)

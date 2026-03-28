@@ -356,6 +356,17 @@ public:
             adapter_->set_property("fcs/mixture-cmd-norm[" + std::to_string(i) + "]",
                                    ec.mixture_norm[i]);
           }
+          // Magnetos: compute magneto_cmd from left/right bools
+          // 0=off, 1=left only, 2=right only, 3=both
+          int mag = 0;
+          bool ml = !ec.magneto_left.empty() && ec.magneto_left[0];
+          bool mr = !ec.magneto_right.empty() && ec.magneto_right[0];
+          if (ml && mr) mag = 3;
+          else if (ml) mag = 1;
+          else if (mr) mag = 2;
+          adapter_->set_property("propulsion/magneto_cmd", mag);
+          // Starter
+          adapter_->set_property("propulsion/starter_cmd", ec.starter ? 1.0 : 0.0);
         }
 
         // Freeze position: capture on rising edge, write back after step
