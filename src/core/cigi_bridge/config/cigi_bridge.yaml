@@ -1,6 +1,6 @@
 cigi_bridge:
   ros__parameters:
-    ig_address: "192.168.10.119"    # X-Plane machine IP (change to LAN IP when X-Plane is on a separate PC)
+    ig_address: "127.0.0.1"    # X-Plane machine IP (change to LAN IP when X-Plane is on a separate PC)
     ig_port: 8002               # UDP port the X-Plane CIGI plugin listens on
     host_port: 8001             # UDP port this node receives IG responses on (SOF, HAT/HOT)
     entity_id: 0                # CIGI entity ID of the ownship (0 = primary aircraft in X-Plane)
