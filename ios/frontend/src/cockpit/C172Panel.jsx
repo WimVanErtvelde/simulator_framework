@@ -244,6 +244,15 @@ export default function C172Panel() {
         </Section>
       </div>
 
+      {/* ── DIAGNOSTIC (temporary) ─────────────────────────────── */}
+      <div style={{ fontSize: 9, color: '#475569', fontFamily: FONT, padding: 4, background: '#0d1117', borderRadius: 4 }}>
+        BUS: {electrical.masterBusVoltage?.toFixed(1)}V | AMPS: {electrical.totalLoadAmps?.toFixed(1)} |
+        SOC: {electrical.batterySocPct?.toFixed(0)}% |
+        SW: [{electrical.switchIds?.join(', ')}] |
+        CLOSED: [{electrical.switchClosed?.map(c => c ? '1' : '0').join('')}] |
+        SRC: [{electrical.sourceNames?.join(', ')}] active=[{electrical.sourceActive?.map(a => a ? '1' : '0').join('')}]
+      </div>
+
       {/* ── KEYBOARD LEGEND ─────────────────────────────────────── */}
       <div style={{
         display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap',
