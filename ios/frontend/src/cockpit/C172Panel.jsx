@@ -39,11 +39,16 @@ function Section({ title, children, style }) {
 
 function sendVirtualPanel(switchIds, switchStates, selectorIds, selectorValues) {
   const ws = useSimStore.getState().ws
-  if (!ws || ws.readyState !== WebSocket.OPEN) return
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    console.warn('[C172Panel] WS not connected, cannot send panel command')
+    return
+  }
   const data = {}
   if (switchIds?.length) { data.switch_ids = switchIds; data.switch_states = switchStates }
   if (selectorIds?.length) { data.selector_ids = selectorIds; data.selector_values = selectorValues }
-  ws.send(JSON.stringify({ type: 'set_virtual_panel', data }))
+  const msg = JSON.stringify({ type: 'set_virtual_panel', data })
+  console.log('[C172Panel] TX:', msg)
+  ws.send(msg)
 }
 
 function sendEngineControls(data) {
