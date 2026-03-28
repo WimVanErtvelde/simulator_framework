@@ -26,7 +26,7 @@ initial_conditions:
   oat_deviation_k: 0.0
   qnh_pa: 101325.0
   fuel_total_norm: 0.75
-  configuration: ready_for_takeoff
+  configuration: cold_and_dark
 
 gear_ground_height_m: 1.48      # CG height above ground when static on gear (for IC placement only)
 

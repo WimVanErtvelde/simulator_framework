@@ -1,4 +1,5 @@
 import { useSimStore } from '../store/useSimStore'
+import useKeyboardControls from './useKeyboardControls'
 
 // Flight instruments
 import ASI from './instruments/ASI'
@@ -54,6 +55,7 @@ function sendEngineControls(throttle, mixture) {
 
 export default function C172Panel() {
   const { fdm, airData, nav, electrical, engines, fuel, gear, atmosphere } = useSimStore()
+  const { state: kb, setThrottle, setMixture } = useKeyboardControls()
 
   // Helper to find switch state by ID
   const sw = (id) => {
@@ -78,43 +80,45 @@ export default function C172Panel() {
         <AnnunciatorLight label="PITOT HT" active={!airData.pitotHeatOn && !gear.onGround} color="#f59e0b" />
       </div>
 
+      {/* ── SWITCH PANEL (full-width horizontal row) ────────────── */}
+      <Section title="SWITCHES">
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center', alignItems: 'flex-end' }}>
+          <ToggleSwitch label="BATT" on={sw('sw_battery')}
+            onToggle={() => sendVirtualPanel(['sw_battery'], [!sw('sw_battery')])} />
+          <ToggleSwitch label="ALT" on={sw('sw_alt')}
+            onToggle={() => sendVirtualPanel(['sw_alt'], [!sw('sw_alt')])} />
+          <ToggleSwitch label="AVIONICS" on={sw('sw_avionics_master')}
+            onToggle={() => sendVirtualPanel(['sw_avionics_master'], [!sw('sw_avionics_master')])} />
+          <ToggleSwitch label="FUEL PUMP" on={sw('sw_fuel_pump')}
+            onToggle={() => sendVirtualPanel(['sw_fuel_pump'], [!sw('sw_fuel_pump')])} />
+          <ToggleSwitch label="PITOT HT" on={sw('sw_pitot_heat')}
+            onToggle={() => sendVirtualPanel(['sw_pitot_heat'], [!sw('sw_pitot_heat')])} />
+          <ToggleSwitch label="BCN" on={sw('sw_beacon')}
+            onToggle={() => sendVirtualPanel(['sw_beacon'], [!sw('sw_beacon')])} />
+          <ToggleSwitch label="NAV" on={sw('sw_nav_lt')}
+            onToggle={() => sendVirtualPanel(['sw_nav_lt'], [!sw('sw_nav_lt')])} />
+          <ToggleSwitch label="STROBE" on={sw('sw_strobe')}
+            onToggle={() => sendVirtualPanel(['sw_strobe'], [!sw('sw_strobe')])} />
+          <ToggleSwitch label="LAND" on={sw('sw_landing_lt')}
+            onToggle={() => sendVirtualPanel(['sw_landing_lt'], [!sw('sw_landing_lt')])} />
+          <ToggleSwitch label="TAXI" on={sw('sw_taxi_lt')}
+            onToggle={() => sendVirtualPanel(['sw_taxi_lt'], [!sw('sw_taxi_lt')])} />
+          <div style={{ borderLeft: '1px solid #1e293b', height: 56, margin: '0 4px' }} />
+          <ToggleSwitch label="CARB HT" on={sw('sw_carb_heat')}
+            onToggle={() => sendVirtualPanel(['sw_carb_heat'], [!sw('sw_carb_heat')])} />
+          <div style={{ borderLeft: '1px solid #1e293b', height: 56, margin: '0 4px' }} />
+          <SelectorControl label="MAGNETOS" value={0}
+            options={[
+              { value: 0, label: 'OFF' }, { value: 1, label: 'R' },
+              { value: 2, label: 'L' }, { value: 3, label: 'BOTH' },
+              { value: 4, label: 'START' },
+            ]}
+            onChange={(v) => sendVirtualPanel(null, null, ['sel_magnetos'], [v])} />
+        </div>
+      </Section>
+
       {/* ── MAIN PANEL ────────────────────────────────────────────── */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-
-        {/* LEFT: Switch Panel */}
-        <Section title="SWITCHES" style={{ minWidth: 100 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'center' }}>
-            <ToggleSwitch label="BATT" on={sw('sw_battery')}
-              onToggle={() => sendVirtualPanel(['sw_battery'], [!sw('sw_battery')])} />
-            <ToggleSwitch label="ALT" on={sw('sw_alt')}
-              onToggle={() => sendVirtualPanel(['sw_alt'], [!sw('sw_alt')])} />
-            <ToggleSwitch label="AVIONICS" on={sw('sw_avionics_master')}
-              onToggle={() => sendVirtualPanel(['sw_avionics_master'], [!sw('sw_avionics_master')])} />
-            <ToggleSwitch label="FUEL PUMP" on={sw('sw_fuel_pump')}
-              onToggle={() => sendVirtualPanel(['sw_fuel_pump'], [!sw('sw_fuel_pump')])} />
-            <ToggleSwitch label="PITOT HT" on={sw('sw_pitot_heat')}
-              onToggle={() => sendVirtualPanel(['sw_pitot_heat'], [!sw('sw_pitot_heat')])} />
-            <ToggleSwitch label="BCN" on={sw('sw_beacon')}
-              onToggle={() => sendVirtualPanel(['sw_beacon'], [!sw('sw_beacon')])} />
-            <ToggleSwitch label="NAV" on={sw('sw_nav_lt')}
-              onToggle={() => sendVirtualPanel(['sw_nav_lt'], [!sw('sw_nav_lt')])} />
-            <ToggleSwitch label="STROBE" on={sw('sw_strobe')}
-              onToggle={() => sendVirtualPanel(['sw_strobe'], [!sw('sw_strobe')])} />
-            <ToggleSwitch label="LAND" on={sw('sw_landing_lt')}
-              onToggle={() => sendVirtualPanel(['sw_landing_lt'], [!sw('sw_landing_lt')])} />
-            <ToggleSwitch label="TAXI" on={sw('sw_taxi_lt')}
-              onToggle={() => sendVirtualPanel(['sw_taxi_lt'], [!sw('sw_taxi_lt')])} />
-          </div>
-          <div style={{ marginTop: 8 }}>
-            <SelectorControl label="MAGNETOS" value={0}
-              options={[
-                { value: 0, label: 'OFF' }, { value: 1, label: 'R' },
-                { value: 2, label: 'L' }, { value: 3, label: 'BOTH' },
-                { value: 4, label: 'START' },
-              ]}
-              onChange={(v) => sendVirtualPanel(null, null, ['sel_magnetos'], [v])} />
-          </div>
-        </Section>
 
         {/* CENTER: Flight Instruments (6-pack) */}
         <Section title="FLIGHT INSTRUMENTS" style={{ flex: 1 }}>
@@ -164,14 +168,10 @@ export default function C172Panel() {
         {/* Engine Controls */}
         <Section title="ENGINE CONTROLS" style={{ minWidth: 120 }}>
           <div style={{ display: 'flex', gap: 16, justifyContent: 'center' }}>
-            <VerticalSlider label="THR" color="#333" value={0} height={140}
-              onChange={(v) => sendEngineControls(v, 1.0)} />
-            <VerticalSlider label="MIX" color="#cc2222" value={1.0} height={140}
-              onChange={(v) => sendEngineControls(0.1, v)} />
-          </div>
-          <div style={{ display: 'flex', gap: 4, justifyContent: 'center', marginTop: 8 }}>
-            <ToggleSwitch label="CARB HT" on={sw('sw_carb_heat')}
-              onToggle={() => sendVirtualPanel(['sw_carb_heat'], [!sw('sw_carb_heat')])} />
+            <VerticalSlider label="THR" color="#333" value={kb.throttle} height={140}
+              onChange={(v) => setThrottle(v)} />
+            <VerticalSlider label="MIX" color="#cc2222" value={kb.mixture} height={140}
+              onChange={(v) => setMixture(v)} />
           </div>
         </Section>
 
@@ -225,6 +225,16 @@ export default function C172Panel() {
             <div><span style={{ color: '#64748b' }}>VAR</span> {(nav.magVariationDeg || 0).toFixed(1)}°</div>
           </div>
         </Section>
+      </div>
+
+      {/* ── KEYBOARD LEGEND ─────────────────────────────────────── */}
+      <div style={{
+        display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap',
+        padding: 6, fontSize: 9, color: '#475569', fontFamily: FONT,
+      }}>
+        <span>W/S pitch</span> <span>A/D roll</span> <span>Q/E yaw</span>
+        <span>R/F throttle</span> <span>Shift+R/F mixture</span>
+        <span>T/G trim</span> <span>B brake</span> <span>SPACE center</span>
       </div>
     </div>
   )
