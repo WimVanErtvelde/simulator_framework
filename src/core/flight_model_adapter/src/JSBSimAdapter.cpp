@@ -535,10 +535,10 @@ sim_msgs::msg::FlightModelState JSBSimAdapter::get_state() const
     exec_->GetPropertyValue("fcs/throttle-pos-norm[0]") * 100.0);
   state.fuel_flow_kgs[0] = static_cast<float>(
     exec_->GetPropertyValue("propulsion/engine[0]/fuel-flow-rate-pps") * LBS_TO_KG);
-  state.n1_pct[0] = 0.0f;  // piston engine — no N1
+  double prop_rpm = exec_->GetPropertyValue("propulsion/engine[0]/propeller-rpm");
+  state.n1_rpm[0] = static_cast<float>(prop_rpm);
+  state.n1_pct[0] = static_cast<float>(prop_rpm / max_engine_rpm_ * 100.0);
   state.n2_pct[0] = 0.0f;
-  state.n1_rpm[0] = static_cast<float>(
-    exec_->GetPropertyValue("propulsion/engine[0]/propeller-rpm"));
   state.n2_rpm[0] = 0.0f;
   state.power_turbine_rpm[0] = 0.0f;
   state.power_turbine_pct[0] = 0.0f;
@@ -711,10 +711,19 @@ sim_msgs::msg::FlightModelState JSBSimAdapter::get_state() const
   return state;
 }
 
-void JSBSimAdapter::apply_engine_commands(const sim_msgs::msg::EngineCommands & /*cmd*/)
+void JSBSimAdapter::apply_engine_commands(const sim_msgs::msg::EngineCommands & cmd)
 {
-  // No-op for current aircraft (piston C172).
-  // Turboprop/FADEC write-back will be implemented when those aircraft are added.
+  if (!initialized_ || !exec_) return;
+
+  for (uint8_t i = 0; i < cmd.engine_count && i < 4; ++i) {
+    // Starter — authority lives in engines plugin (bus voltage gated)
+    std::string prop = "propulsion/engine[" + std::to_string(i) + "]/set-running";
+    // starter_cmd is global (not per-engine) in JSBSim piston model
+    if (i == 0) {
+      exec_->SetPropertyValue("propulsion/starter_cmd", cmd.starter_engage[i] ? 1.0 : 0.0);
+    }
+    // Turboprop/FADEC: prop_pitch, feather, reverse will be added here.
+  }
 }
 
 FlightModelCapabilities JSBSimAdapter::get_capabilities() const

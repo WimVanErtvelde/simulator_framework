@@ -10,4 +10,5 @@ float32[4] n1_target_pct         # Commanded N1 target — FADEC when modelled h
 float32[4] fuel_flow_command_kgs  # Commanded fuel flow — FADEC when modelled here
 bool[4]    feather_command        # Command prop feather
 bool[4]    reverse_command        # Command reverse thrust
+bool[4]    starter_engage         # Command starter motor — gated by bus voltage in engines plugin
 uint8      engine_count           # Number of active engines

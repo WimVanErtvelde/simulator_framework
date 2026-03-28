@@ -99,7 +99,7 @@ public:
       state_.state[0] = sim_interfaces::EngineRunState::RUNNING;
     }
 
-    state_.starter_engaged[0] = starter_engaged_;
+    state_.starter_engaged[0] = starter_engaged_ && bus_ok;
 
     // ── CHT thermal model ───────────────────────────────────────────
     float dt = static_cast<float>(dt_sec);

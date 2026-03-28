@@ -47,6 +47,9 @@ public:
 
   void refine_terrain_altitude(double alt_msl_m, double terrain_elev_m) override;
 
+  /// Set max engine RPM for n1_pct computation (piston: propeller-rpm / max → %).
+  void set_max_engine_rpm(double rpm) { if (rpm > 0.0) max_engine_rpm_ = rpm; }
+
   /// Set an optional error logger. If not set, errors go to stderr.
   void set_error_logger(std::function<void(const std::string &)> logger);
 
@@ -63,6 +66,9 @@ private:
 
   // Active fuel drain failures: tank_index → rate_lph
   std::map<int, float> active_drains_;
+
+  // Engine RPM scaling for n1_pct computation (from aircraft config.yaml)
+  double max_engine_rpm_{2700.0};
 };
 
 }  // namespace flight_model_adapter

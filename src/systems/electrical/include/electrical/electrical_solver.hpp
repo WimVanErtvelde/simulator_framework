@@ -22,6 +22,7 @@ struct BatteryParams {
     double capacity_ah = 40.0;
     double internal_resistance_ohm = 0.05;
     double charge_rate_max = 20.0;
+    double initial_soc = 95.0;
     std::vector<std::pair<double, double>> soc_voltage_curve; // (soc_pct, voltage)
 };
 
@@ -91,6 +92,7 @@ struct LoadDef {
     double inrush_duration_ms = 0.0;
     CircuitBreakerDef cb;
     bool essential = false;
+    std::string switch_id; // panel switch that gates this load (empty = always-on when bus powered)
     std::vector<std::string> affected_systems;
 };
 
@@ -236,6 +238,7 @@ private:
     std::unordered_map<std::string, SwitchState> switch_states_;
     std::unordered_map<std::string, LoadState> load_states_;
     std::unordered_map<std::string, std::string> faults_; // target_id -> fault_type
+    std::unordered_map<std::string, bool> panel_switch_states_; // sw_landing_lt -> true/false
 
     std::vector<CasMessage> active_cas_;
     double sim_time_ = 0.0;

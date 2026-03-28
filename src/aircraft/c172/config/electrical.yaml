@@ -39,6 +39,7 @@ sources:
       capacity_ah: 35
       internal_resistance_ohm: 0.04
       charge_rate_max: 15
+      initial_soc: 95
       soc_voltage_curve:
         - [0, 18.0]
         - [10, 20.0]
@@ -155,6 +156,7 @@ loads:
     bus: essential_bus
     type: resistive
     nominal_current: 4.0
+    switch_id: sw_pitot_heat
     circuit_breaker:
       id: cb_pitot
       rating: 7.5
@@ -250,6 +252,7 @@ loads:
     nominal_current: 4.0
     inrush_current: 12.0
     inrush_duration_ms: 400
+    switch_id: sw_fuel_pump
     circuit_breaker:
       id: cb_fuel_pump
       rating: 7.5
@@ -291,6 +294,7 @@ loads:
     bus: primary_bus
     type: resistive
     nominal_current: 8.0
+    switch_id: sw_landing_lt
     circuit_breaker:
       id: cb_ldg_lt
       rating: 15.0
@@ -304,6 +308,7 @@ loads:
     bus: primary_bus
     type: resistive
     nominal_current: 3.5
+    switch_id: sw_taxi_lt
     circuit_breaker:
       id: cb_taxi_lt
       rating: 5.0
@@ -317,6 +322,7 @@ loads:
     bus: primary_bus
     type: resistive
     nominal_current: 2.0
+    switch_id: sw_nav_lt
     circuit_breaker:
       id: cb_nav_lt
       rating: 5.0
@@ -330,6 +336,7 @@ loads:
     bus: primary_bus
     type: resistive
     nominal_current: 2.0
+    switch_id: sw_strobe
     circuit_breaker:
       id: cb_strobe
       rating: 5.0
@@ -343,6 +350,7 @@ loads:
     bus: primary_bus
     type: resistive
     nominal_current: 1.5
+    switch_id: sw_beacon
     circuit_breaker:
       id: cb_beacon
       rating: 3.0
@@ -356,6 +364,7 @@ loads:
     bus: primary_bus
     type: resistive
     nominal_current: 1.5
+    switch_id: sw_inst_lt
     circuit_breaker:
       id: cb_inst_lt
       rating: 3.0
@@ -368,9 +377,10 @@ loads:
     label: "STARTER"
     bus: primary_bus
     type: motor
-    nominal_current: 50.0
-    inrush_current: 100.0
+    nominal_current: 150.0
+    inrush_current: 300.0
     inrush_duration_ms: 2000
+    switch_id: sw_starter_engage
     circuit_breaker:
       id: cb_starter
       rating: 80.0

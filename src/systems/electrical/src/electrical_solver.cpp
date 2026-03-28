@@ -32,6 +32,7 @@ static BatteryParams parseBattery(const json& j) {
     if (j.contains("capacity_ah")) b.capacity_ah = j["capacity_ah"];
     if (j.contains("internal_resistance_ohm")) b.internal_resistance_ohm = j["internal_resistance_ohm"];
     if (j.contains("charge_rate_max")) b.charge_rate_max = j["charge_rate_max"];
+    if (j.contains("initial_soc")) b.initial_soc = j["initial_soc"];
     if (j.contains("soc_voltage_curve")) {
         for (auto& pt : j["soc_voltage_curve"]) {
             b.soc_voltage_curve.emplace_back(pt[0].get<double>(), pt[1].get<double>());
@@ -139,6 +140,7 @@ bool ElectricalSolver::loadTopology(const std::string& json_path) {
         ld.inrush_duration_ms = j.value("inrush_duration_ms", 0.0);
         if (j.contains("circuit_breaker")) ld.cb = parseCB(j["circuit_breaker"]);
         ld.essential = j.value("essential", false);
+        if (j.contains("switch_id")) ld.switch_id = j["switch_id"].get<std::string>();
         if (j.contains("affected_systems")) {
             for (auto& s : j["affected_systems"]) {
                 ld.affected_systems.push_back(s.get<std::string>());
@@ -214,6 +216,7 @@ static BatteryParams parseBatteryYaml(const YAML::Node& n) {
     if (n["capacity_ah"])             b.capacity_ah             = n["capacity_ah"].as<double>();
     if (n["internal_resistance_ohm"]) b.internal_resistance_ohm = n["internal_resistance_ohm"].as<double>();
     if (n["charge_rate_max"])         b.charge_rate_max         = n["charge_rate_max"].as<double>();
+    if (n["initial_soc"])            b.initial_soc             = n["initial_soc"].as<double>();
     if (n["soc_voltage_curve"]) {
         for (const auto& pt : n["soc_voltage_curve"]) {
             b.soc_voltage_curve.emplace_back(pt[0].as<double>(), pt[1].as<double>());
@@ -319,6 +322,7 @@ bool ElectricalSolver::loadTopologyYaml(const std::string& yaml_path) {
             if (j["inrush_duration_ms"]) ld.inrush_duration_ms = j["inrush_duration_ms"].as<double>();
             if (j["circuit_breaker"])    ld.cb                 = parseCBYaml(j["circuit_breaker"]);
             if (j["essential"])          ld.essential          = j["essential"].as<bool>();
+            if (j["switch_id"])          ld.switch_id          = j["switch_id"].as<std::string>();
             if (j["affected_systems"]) {
                 for (const auto& s : j["affected_systems"]) {
                     ld.affected_systems.push_back(s.as<std::string>());
@@ -373,13 +377,14 @@ void ElectricalSolver::reset() {
     switch_states_.clear();
     load_states_.clear();
     faults_.clear();
+    panel_switch_states_.clear();
     active_cas_.clear();
     sim_time_ = 0.0;
 
     for (auto& sd : topology_.sources) {
         SourceState ss;
         if (sd.battery.has_value()) {
-            ss.battery_soc = 95.0; // start with charged battery
+            ss.battery_soc = sd.battery->initial_soc;
         } else {
             ss.battery_soc = -1.0;
         }
@@ -656,7 +661,15 @@ void ElectricalSolver::updateLoads(double dt) {
         }
 
         bool cb_ok = ls.cb_closed && !ls.cb_tripped && !ls.cb_pulled;
-        ls.powered = bus.powered && cb_ok && fault != "open";
+
+        // Load switch gating: if switch_id is set, load only draws when that switch is ON
+        bool switch_on = true;
+        if (!ld.switch_id.empty()) {
+            auto ps_it = panel_switch_states_.find(ld.switch_id);
+            switch_on = (ps_it != panel_switch_states_.end()) ? ps_it->second : false;
+        }
+
+        ls.powered = bus.powered && cb_ok && switch_on && fault != "open";
 
         if (ls.powered) {
             double draw = ld.nominal_current;
@@ -805,6 +818,19 @@ void ElectricalSolver::setFdmInputs(const FdmInputs& inputs) {
 }
 
 void ElectricalSolver::commandSwitch(const std::string& id, int cmd) {
+    // Store panel switch state for load gating (sw_landing_lt, sw_pitot_heat, etc.)
+    switch (cmd) {
+        case 0: panel_switch_states_[id] = false; break;
+        case 1: panel_switch_states_[id] = true; break;
+        case 2: {
+            auto ps_it = panel_switch_states_.find(id);
+            bool prev = (ps_it != panel_switch_states_.end()) ? ps_it->second : false;
+            panel_switch_states_[id] = !prev;
+            break;
+        }
+    }
+
+    // Topology switches (source→bus connections)
     auto it = switch_states_.find(id);
     if (it == switch_states_.end()) return;
 

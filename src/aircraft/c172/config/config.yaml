@@ -14,6 +14,7 @@ aircraft:
     - sim_navigation
 
 jsbsim_model_name: "c172p"
+max_engine_rpm: 2700
 
 initial_conditions:
   latitude_deg: 50.9014       # EBBR

@@ -181,8 +181,9 @@ public:
     RCLCPP_INFO(this->get_logger(), "Configuring flight model: type=%s, aircraft=%s",
       fdm_type.c_str(), aircraft_id.c_str());
 
-    // Load aircraft config.yaml (model name, default IC, gear height)
+    // Load aircraft config.yaml (model name, default IC, gear height, engine RPM)
     std::string jsbsim_model_name;
+    double max_engine_rpm = 0.0;
     sim_msgs::msg::InitialConditions default_ic;
     try {
       auto pkg_dir = ament_index_cpp::get_package_share_directory("aircraft_" + aircraft_id);
@@ -194,6 +195,9 @@ public:
       if (config["gear_ground_height_m"]) {
         gear_cg_height_m_ = config["gear_ground_height_m"].as<double>();
         RCLCPP_INFO(this->get_logger(), "Gear ground height from config: %.2f m", gear_cg_height_m_);
+      }
+      if (config["max_engine_rpm"]) {
+        max_engine_rpm = config["max_engine_rpm"].as<double>();
       }
       if (config["initial_conditions"]) {
         auto ic = config["initial_conditions"];
@@ -210,8 +214,13 @@ public:
 
     if (fdm_type == "jsbsim") {
       adapter_ = std::make_unique<flight_model_adapter::JSBSimAdapter>();
-      static_cast<flight_model_adapter::JSBSimAdapter*>(adapter_.get())->set_error_logger(
+      auto * jsbsim = static_cast<flight_model_adapter::JSBSimAdapter*>(adapter_.get());
+      jsbsim->set_error_logger(
         [this](const std::string & msg) { RCLCPP_ERROR(this->get_logger(), "%s", msg.c_str()); });
+      if (max_engine_rpm > 0.0) {
+        jsbsim->set_max_engine_rpm(max_engine_rpm);
+        RCLCPP_INFO(this->get_logger(), "Max engine RPM from config: %.0f", max_engine_rpm);
+      }
       if (jsbsim_root.empty()) {
         jsbsim_root = JSBSIM_ROOT_DIR;
       }
@@ -365,8 +374,8 @@ public:
           else if (ml) mag = 1;
           else if (mr) mag = 2;
           adapter_->set_property("propulsion/magneto_cmd", mag);
-          // Starter
-          adapter_->set_property("propulsion/starter_cmd", ec.starter ? 1.0 : 0.0);
+          // Starter: NOT written here — authority is in engines plugin via EngineCommands
+          // (bus voltage gated). See apply_engine_commands().
         }
 
         // Freeze position: capture on rising edge, write back after step

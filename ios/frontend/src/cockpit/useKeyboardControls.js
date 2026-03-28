@@ -81,6 +81,11 @@ export default function useKeyboardControls() {
           starter: s.starter,
         }
       }))
+      // Starter engage switch for electrical solver load gating
+      ws.send(JSON.stringify({
+        type: 'set_virtual_panel',
+        data: { switch_ids: ['sw_starter_engage'], switch_states: [s.starter] }
+      }))
     }, 50) // 20 Hz
 
     return () => {

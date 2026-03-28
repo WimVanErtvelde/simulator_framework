@@ -207,7 +207,7 @@ public:
         // Always publish — IOS needs live data even when frozen
         auto snap = model_->get_state();
         publish_engine_state(snap);
-        publish_engine_commands(snap.engine_count);
+        publish_engine_commands(snap);
       });
 
     RCLCPP_INFO(this->get_logger(), "sim_engine_systems activated");
@@ -380,12 +380,16 @@ private:
     engine_state_pub_->publish(msg);
   }
 
-  void publish_engine_commands(uint8_t engine_count)
+  void publish_engine_commands(const sim_interfaces::EngineStateData & snap)
   {
     auto msg = sim_msgs::msg::EngineCommands();
     msg.header.stamp = this->now();
-    msg.engine_count = engine_count;
-    // All fields default to zero/false — correct for piston/turboshaft.
+    msg.engine_count = snap.engine_count;
+    // Starter engage — gated by bus voltage in the engines plugin
+    for (uint8_t i = 0; i < snap.engine_count && i < 4; ++i) {
+      msg.starter_engage[i] = snap.starter_engaged[i];
+    }
+    // All other fields default to zero/false — correct for piston/turboshaft.
     // Turboprop/FADEC plugins will populate these when implemented.
     engine_commands_pub_->publish(msg);
   }

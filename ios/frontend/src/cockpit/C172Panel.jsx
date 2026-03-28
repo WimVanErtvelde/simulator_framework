@@ -124,7 +124,7 @@ export default function C172Panel() {
             onChange={(v) => {
               setMagnetoPos(v)
               kbSetMagneto(v)  // update shared state so keyboard tick doesn't overwrite
-              sendVirtualPanel(null, null, ['sel_magnetos'], [v])  // panel selector for engines_node
+              sendVirtualPanel(['sw_starter_engage'], [v === 4], ['sel_magnetos'], [v])
             }} />
         </div>
       </Section>
