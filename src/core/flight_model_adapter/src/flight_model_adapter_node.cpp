@@ -367,15 +367,6 @@ public:
           adapter_->set_property("propulsion/magneto_cmd", mag);
           // Starter
           adapter_->set_property("propulsion/starter_cmd", ec.starter ? 1.0 : 0.0);
-          // Diagnostic: log magneto/starter changes
-          static int prev_mag = -1; static bool prev_start = false;
-          if (mag != prev_mag || ec.starter != prev_start) {
-            RCLCPP_INFO(this->get_logger(), "ENGINE: mag=%d starter=%d thr=%.2f mix=%.2f",
-              mag, ec.starter ? 1 : 0,
-              ec.throttle_norm.empty() ? -1.0 : ec.throttle_norm[0],
-              ec.mixture_norm.empty() ? -1.0 : ec.mixture_norm[0]);
-            prev_mag = mag; prev_start = ec.starter;
-          }
         }
 
         // Freeze position: capture on rising edge, write back after step

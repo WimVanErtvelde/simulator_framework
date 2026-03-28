@@ -85,8 +85,12 @@ public:
     }
 
     // ── Engine state machine ────────────────────────────────────────
+    // Starter needs bus voltage > 20V to engage (battery under load sags to ~18V
+    // when flat — starter motor won't turn). This prevents starting without battery.
+    bool bus_ok = inputs.bus_voltage > 20.0f;
+
     if (!engine_running_) {
-      if (starter_engaged_ && ignition_on && mixture > 0.01f && inputs.fuel_available[0]) {
+      if (starter_engaged_ && ignition_on && mixture > 0.01f && inputs.fuel_available[0] && bus_ok) {
         state_.state[0] = sim_interfaces::EngineRunState::CRANKING;
       } else {
         state_.state[0] = sim_interfaces::EngineRunState::OFF;

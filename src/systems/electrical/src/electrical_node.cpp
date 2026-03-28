@@ -131,12 +131,6 @@ public:
             n2.push_back(static_cast<double>(msg->n1_pct[i]));  // C172: N1 = RPM/RPMmax * 100
           }
           model_->set_engine_n2(n2);
-          // Diagnostic: log engine speed feeding electrical solver
-          static int log_count = 0;
-          if (++log_count % 250 == 1) {  // every ~5s at 50Hz
-            RCLCPP_INFO(this->get_logger(), "ELEC: engine_n2=%.1f%% bus=%.1fV",
-              n2[0], 0.0);  // bus voltage logged in update
-          }
         }
       });
 
