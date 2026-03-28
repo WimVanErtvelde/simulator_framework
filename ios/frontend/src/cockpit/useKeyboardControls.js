@@ -12,10 +12,17 @@ export default function useKeyboardControls() {
     aileron: 0, elevator: 0, rudder: 0,
     throttle: 0, mixture: 1.0,
     trimElevator: 0, brakeHeld: false,
+    magnetoLeft: false, magnetoRight: false, starter: false,
   })
 
   const setThrottle = useCallback((v) => { state.current.throttle = clamp(v, 0, 1) }, [])
   const setMixture = useCallback((v) => { state.current.mixture = clamp(v, 0, 1) }, [])
+  const setMagneto = useCallback((pos) => {
+    const s = state.current
+    s.magnetoLeft = pos === 2 || pos === 3 || pos === 4
+    s.magnetoRight = pos === 1 || pos === 3 || pos === 4
+    s.starter = pos === 4
+  }, [])
 
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -68,7 +75,11 @@ export default function useKeyboardControls() {
       }))
       ws.send(JSON.stringify({
         type: 'set_engine_controls',
-        data: { throttle_norm: [s.throttle], mixture_norm: [s.mixture] }
+        data: {
+          throttle_norm: [s.throttle], mixture_norm: [s.mixture],
+          magneto_left: [s.magnetoLeft], magneto_right: [s.magnetoRight],
+          starter: s.starter,
+        }
       }))
     }, 50) // 20 Hz
 
@@ -80,5 +91,5 @@ export default function useKeyboardControls() {
     }
   }, [])
 
-  return { state: state.current, setThrottle, setMixture }
+  return { state: state.current, setThrottle, setMixture, setMagneto }
 }

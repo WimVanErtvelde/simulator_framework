@@ -52,19 +52,11 @@ function sendEngineControls(data) {
   ws.send(JSON.stringify({ type: 'set_engine_controls', data }))
 }
 
-function sendMagneto(pos) {
-  // 0=OFF, 1=R, 2=L, 3=BOTH, 4=START
-  const ml = pos === 2 || pos === 3 || pos === 4  // L, BOTH, START
-  const mr = pos === 1 || pos === 3 || pos === 4  // R, BOTH, START
-  const starter = pos === 4
-  sendEngineControls({ magneto_left: [ml], magneto_right: [mr], starter })
-  // Also send panel selector for engines_node plugin display
-  sendVirtualPanel(null, null, ['sel_magnetos'], [pos])
-}
+
 
 export default function C172Panel() {
   const { fdm, airData, nav, electrical, engines, fuel, gear, atmosphere } = useSimStore()
-  const { state: kb, setThrottle, setMixture } = useKeyboardControls()
+  const { state: kb, setThrottle, setMixture, setMagneto: kbSetMagneto } = useKeyboardControls()
   const [magnetoPos, setMagnetoPos] = useState(0)
   const [fuelSelPos, setFuelSelPos] = useState(0)
 
@@ -124,7 +116,11 @@ export default function C172Panel() {
               { value: 2, label: 'L' }, { value: 3, label: 'BOTH' },
               { value: 4, label: 'START' },
             ]}
-            onChange={(v) => { setMagnetoPos(v); sendMagneto(v) }} />
+            onChange={(v) => {
+              setMagnetoPos(v)
+              kbSetMagneto(v)  // update shared state so keyboard tick doesn't overwrite
+              sendVirtualPanel(null, null, ['sel_magnetos'], [v])  // panel selector for engines_node
+            }} />
         </div>
       </Section>
 
