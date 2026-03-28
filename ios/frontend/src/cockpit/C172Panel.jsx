@@ -122,13 +122,13 @@ export default function C172Panel() {
 
         {/* CENTER: Flight Instruments (6-pack) */}
         <Section title="FLIGHT INSTRUMENTS" style={{ flex: 1 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4, justifyItems: 'center' }}>
-            <ASI iasKt={airData.iasKt} />
-            <AttitudeIndicator pitchDeg={fdm.pitchDeg} rollDeg={fdm.rollDeg} />
-            <Altimeter altFt={airData.altIndicatedFt} qnhHpa={atmosphere.qnhHpa} />
-            <TurnCoordinator yawRateRads={0} rollDeg={fdm.rollDeg} />
-            <HeadingIndicator hdgDeg={hdgMagDeg} />
-            <VSI vsFpm={airData.vsFpm} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 2, justifyItems: 'center' }}>
+            <div style={{ transform: 'scale(0.78)', transformOrigin: 'top center' }}><ASI iasKt={airData.iasKt} /></div>
+            <div style={{ transform: 'scale(0.78)', transformOrigin: 'top center' }}><AttitudeIndicator pitchDeg={fdm.pitchDeg} rollDeg={fdm.rollDeg} /></div>
+            <div style={{ transform: 'scale(0.78)', transformOrigin: 'top center' }}><Altimeter altFt={airData.altIndicatedFt} qnhHpa={atmosphere.qnhHpa} /></div>
+            <div style={{ transform: 'scale(0.78)', transformOrigin: 'top center', marginTop: -30 }}><TurnCoordinator yawRateRads={0} rollDeg={fdm.rollDeg} /></div>
+            <div style={{ transform: 'scale(0.78)', transformOrigin: 'top center', marginTop: -30 }}><HeadingIndicator hdgDeg={hdgMagDeg} /></div>
+            <div style={{ transform: 'scale(0.78)', transformOrigin: 'top center', marginTop: -30 }}><VSI vsFpm={airData.vsFpm} /></div>
           </div>
         </Section>
 
@@ -137,20 +137,20 @@ export default function C172Panel() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 4, justifyItems: 'center' }}>
             <RoundGauge value={engines.rpm?.[0] ?? 0} min={0} max={3000}
               label="TACH" unit="RPM" greenArc={[2100, 2700]} redLine={2700}
-              ticks={6} decimals={0} size={130} />
+              ticks={6} decimals={0} size={110} />
             <RoundGauge value={engines.manifoldPressureInhg?.[0] ?? 0} min={10} max={35}
-              label="MAN PRESS" unit="inHg" ticks={5} decimals={1} size={130} />
+              label="MAN PRESS" unit="inHg" ticks={5} decimals={1} size={110} />
             <RoundGauge value={engines.oilPressurePsi?.[0] ?? 0} min={0} max={100}
               label="OIL PRESS" unit="PSI" greenArc={[60, 90]} redLine={25}
-              ticks={5} decimals={0} size={130} />
+              ticks={5} decimals={0} size={110} />
             <RoundGauge value={engines.oilTempDegc?.[0] ?? 0} min={0} max={130}
               label="OIL TEMP" unit="C" greenArc={[50, 100]} redLine={116}
-              ticks={5} decimals={0} size={130} />
+              ticks={5} decimals={0} size={110} />
             <RoundGauge value={engines.egtDegc?.[0] ?? 0} min={0} max={900}
-              label="EGT" unit="C" ticks={6} decimals={0} size={130} />
+              label="EGT" unit="C" ticks={6} decimals={0} size={110} />
             <RoundGauge value={engines.chtDegc?.[0] ?? 0} min={0} max={260}
               label="CHT" unit="C" greenArc={[100, 240]} redLine={238}
-              ticks={5} decimals={0} size={130} />
+              ticks={5} decimals={0} size={110} />
           </div>
           {/* Electrical mini */}
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginTop: 8 }}>
@@ -168,9 +168,9 @@ export default function C172Panel() {
         {/* Engine Controls */}
         <Section title="ENGINE CONTROLS" style={{ minWidth: 120 }}>
           <div style={{ display: 'flex', gap: 16, justifyContent: 'center' }}>
-            <VerticalSlider label="THR" color="#333" value={kb.throttle} height={140}
+            <VerticalSlider label="THR" color="#333" value={kb.throttle} height={100}
               onChange={(v) => setThrottle(v)} />
-            <VerticalSlider label="MIX" color="#cc2222" value={kb.mixture} height={140}
+            <VerticalSlider label="MIX" color="#cc2222" value={kb.mixture} height={100}
               onChange={(v) => setMixture(v)} />
           </div>
         </Section>

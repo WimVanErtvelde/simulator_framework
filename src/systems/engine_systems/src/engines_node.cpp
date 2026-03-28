@@ -302,7 +302,7 @@ private:
       }
     }
 
-    // Selectors → power/prop/condition levers (IDs from aircraft YAML via plugin)
+    // Selectors → power/prop/condition levers + magneto/ignition (IDs from aircraft YAML)
     for (size_t i = 0; i < latest_panel_.selector_ids.size() &&
                         i < latest_panel_.selector_values.size(); ++i) {
       const auto & id = latest_panel_.selector_ids[i];
@@ -320,6 +320,14 @@ private:
       for (size_t e = 0; e < sw_cfg_.power_lever_ids.size() && e < 4; ++e) {
         if (!sw_cfg_.power_lever_ids[e].empty() && id == sw_cfg_.power_lever_ids[e])
           inputs.power_lever_norm[e] = norm;
+      }
+      // Magneto selector: 0=OFF, 1=R, 2=L, 3=BOTH → ignition on if > 0
+      // Position 4 = START → also triggers starter
+      for (size_t e = 0; e < sw_cfg_.ignition_ids.size() && e < 4; ++e) {
+        if (!sw_cfg_.ignition_ids[e].empty() && id == sw_cfg_.ignition_ids[e]) {
+          inputs.ignition[e] = (val >= 1 && val <= 4);
+          if (val == 4) inputs.starter[e] = true;  // START position
+        }
       }
     }
 
