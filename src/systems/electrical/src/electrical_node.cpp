@@ -124,6 +124,14 @@ public:
       [this](const sim_msgs::msg::FlightModelState::SharedPtr msg) {
         on_ground_ = msg->on_ground;
         update_ground_state();
+        // Feed real engine N1/N2 to electrical solver (alternator needs RPM)
+        if (model_ && msg->engine_count > 0) {
+          std::vector<double> n2;
+          for (uint8_t i = 0; i < msg->engine_count && i < 4; ++i) {
+            n2.push_back(static_cast<double>(msg->n1_pct[i]));  // C172: N1 = RPM/RPMmax * 100
+          }
+          model_->set_engine_n2(n2);
+        }
       });
 
     // Failure injection commands from sim_failures
@@ -179,8 +187,9 @@ public:
       model_ = loader_->createSharedInstance(plugin_name);
       model_->configure(yaml_path);
 
-      // Default engine N2 to running (75%) — until engine systems node feeds real data
-      model_->set_engine_n2({75.0});
+      // Engine N2 starts at 0 — alternator will not produce voltage until engine is running.
+      // Real N2 is fed from /sim/flight_model/state subscription in the FMS callback.
+      model_->set_engine_n2({0.0});
 
     } catch (const std::exception & e) {
       std::string err = std::string("Failed to configure electrical: ") + e.what();
