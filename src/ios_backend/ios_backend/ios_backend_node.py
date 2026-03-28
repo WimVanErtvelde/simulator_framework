@@ -1319,7 +1319,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     # Reposition via CMD_REPOSITION - sim_manager owns the workflow
                     import math as _m
                     airspeed_ms = float(msg.get('airspeed_ms', 0))
-                    config = 'airborne_clean' if airspeed_ms > 1.0 else 'ready_for_takeoff'
+                    # Configuration from frontend selector; fallback to inference from airspeed
+                    config = msg.get('configuration', '')
+                    if not config:
+                        config = 'airborne_clean' if airspeed_ms > 1.0 else 'ready_for_takeoff'
                     payload = {
                         'latitude_deg': float(msg.get('lat_deg', 0)),
                         'longitude_deg': float(msg.get('lon_deg', 0)),

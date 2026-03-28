@@ -300,7 +300,8 @@ function NumpadField({ label, value, placeholder, allowDecimal = true, hint = ''
 // ─── Main panel ──────────────────────────────────────────────────────────────
 export default function PositionPanel() {
   const { fdm, sendCommand, requestAction, pendingAction,
-          getRunways, setDeparture, runwayResults } = useSimStore()
+          getRunways, setDeparture, runwayResults,
+          icConfiguration, setIcConfiguration } = useSimStore()
 
   const [depAirport, setDepAirport] = useState(null)
   const [destAirport, setDestAirport] = useState(null)
@@ -359,6 +360,27 @@ export default function PositionPanel() {
       <PanelRow label="ALT" value={fdm.altFtMsl.toFixed(0)} unit="ft MSL" />
 
       <SectionHeader title="DEPARTURE" />
+
+      {/* IC Configuration selector */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+        {[
+          { key: 'cold_and_dark', label: 'COLD & DARK' },
+          { key: 'ready_for_takeoff', label: 'READY T/O' },
+          { key: 'airborne_clean', label: 'AIRBORNE' },
+        ].map(opt => (
+          <button key={opt.key} onClick={() => setIcConfiguration(opt.key)} style={{
+            flex: 1, padding: '5px 4px', fontSize: 10, fontWeight: 600,
+            fontFamily: "'JetBrains Mono', monospace",
+            border: `1px solid ${icConfiguration === opt.key ? '#00ff88' : '#1e293b'}`,
+            borderRadius: 4, cursor: 'pointer',
+            background: icConfiguration === opt.key ? 'rgba(0,255,136,0.12)' : '#111827',
+            color: icConfiguration === opt.key ? '#00ff88' : '#64748b',
+          }}>
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
       <AirportSearch value={depAirport} onSelect={setDepAirport} />
 
       {activeAirport?.runways?.length > 0 && (

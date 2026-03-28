@@ -185,6 +185,7 @@ export const useSimStore = create((set, get) => ({
   hdgUp: false,
 
   // Pending confirm (for destructive actions)
+  icConfiguration: 'cold_and_dark',  // IC preset: cold_and_dark / ready_for_takeoff / airborne_clean
   pendingAction: null,   // { type: string, expiresAt: number }
 
   // ─── ACTIONS ─────────────────────────────────────────────────────
@@ -313,11 +314,13 @@ export const useSimStore = create((set, get) => ({
   },
 
   setDeparture: (data) => {
-    const { ws, wsConnected } = get()
+    const { ws, wsConnected, icConfiguration } = get()
     if (!wsConnected || !ws) return false
-    ws.send(JSON.stringify({ type: 'set_departure', ...data }))
+    ws.send(JSON.stringify({ type: 'set_departure', configuration: icConfiguration, ...data }))
     return true
   },
+
+  setIcConfiguration: (config) => set({ icConfiguration: config }),
 
   // ─── WEBSOCKET ───────────────────────────────────────────────────
 
