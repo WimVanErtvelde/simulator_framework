@@ -509,6 +509,7 @@ export default function AircraftPanel() {
   const [groundSelectors, setGroundSelectors] = useState({})
   const [showLoads, setShowLoads] = useState(false)
   const [showCBs, setShowCBs] = useState(false)
+  const [localForced, setLocalForced] = useState({})
 
   const { radios, displays } = avionicsConfig
 
@@ -634,7 +635,7 @@ export default function AircraftPanel() {
           const idx = electrical.switchIds?.indexOf(id)
           return idx >= 0 ? (electrical.switchClosed[idx] ?? false) : false
         }
-        const isForced = (id) => forcedSwitchIds.includes(id)
+        const isForced = (id) => !!localForced[id]
 
         return (
           <>
@@ -648,27 +649,23 @@ export default function AircraftPanel() {
                   alignItems: 'center', gap: 8,
                   padding: '4px 0', fontSize: 12, fontFamily: 'monospace',
                 }}>
-                  {/* Col 1: FRC checkbox — isolated grid cell */}
-                  <div
-                    onClick={() => {
+                  {/* Col 1: FRC checkbox — local state, no round-trip needed */}
+                  <input
+                    type="checkbox"
+                    checked={forced}
+                    onClick={(e) => {
+                      e.stopPropagation()
                       const newForced = !forced
+                      setLocalForced(prev => ({ ...prev, [sw.id]: newForced }))
                       sendPanel([sw.id], [on], null, null, [newForced])
                     }}
-                    style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      cursor: 'pointer', userSelect: 'none',
-                    }}
+                    onChange={() => {}}
                     title={forced ? 'Release force' : 'Force switch'}
-                  >
-                    <div style={{
-                      width: 14, height: 14, borderRadius: 2,
-                      border: forced ? '2px solid #f59e0b' : '1px solid #475569',
-                      background: forced ? '#f59e0b' : 'transparent',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      {forced && <span style={{ color: '#0a0e17', fontSize: 10, fontWeight: 900, lineHeight: 1 }}>✓</span>}
-                    </div>
-                  </div>
+                    style={{
+                      width: 14, height: 14, cursor: 'pointer',
+                      accentColor: '#f59e0b',
+                    }}
+                  />
                   {/* Col 2: Label */}
                   <span style={{ color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {sw.label}
@@ -679,9 +676,9 @@ export default function AircraftPanel() {
                       }}>FORCED</span>
                     )}
                   </span>
-                  {/* Col 3: Toggle */}
+                  {/* Col 3: Toggle — forced: change forced value; unforced: normal command */}
                   <button
-                    onClick={() => sendPanel([sw.id], [!on], null, null, [true])}
+                    onClick={() => sendPanel([sw.id], [!on], null, null, forced ? [true] : undefined)}
                     style={{
                       width: 48, height: 22, borderRadius: 11, cursor: 'pointer',
                       border: '1px solid ' + (on ? '#f59e0b' : '#334155'),
