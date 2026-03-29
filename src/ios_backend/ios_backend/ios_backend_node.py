@@ -1245,16 +1245,26 @@ async def websocket_endpoint(websocket: WebSocket):
 
     async def sender():
         prev_json = {}
-        send_count = 0
+        last_send = {}   # key → monotonic time of last send
+        # High-frequency topics throttled to 10 Hz; others sent immediately
+        _THROTTLED = frozenset((
+            'flight_model_state', 'electrical_state', 'nav_state',
+            'air_data_state', 'engines_state', 'fuel_state', 'gear_state',
+        ))
+        _MIN_INTERVAL = 0.1  # 10 Hz
         while True:
             try:
+                now = time.monotonic()
                 snapshot = ros_node.get_snapshot() if ros_node else {}
                 for key, data in snapshot.items():
+                    if key in _THROTTLED:
+                        if now - last_send.get(key, 0) < _MIN_INTERVAL:
+                            continue
                     encoded = _dumps(data)
                     if prev_json.get(key) != encoded:
                         await websocket.send_text(encoded)
                         prev_json[key] = encoded
-                        send_count += 1
+                        last_send[key] = now
                 await asyncio.sleep(0.05)
             except Exception as e:
                 if ros_node:
