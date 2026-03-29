@@ -148,38 +148,6 @@ function FreqInput({ label, value, unit, step = 0.05, min, max, onChange, radioT
   )
 }
 
-function ForceToggle({ label, on, onToggle }) {
-  return (
-    <div style={{
-      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-      padding: '4px 0', fontSize: 12, fontFamily: 'monospace',
-    }}>
-      <span style={{ color: '#64748b' }}>
-        {label}
-        <span style={{
-          fontSize: 9, fontWeight: 700, color: '#f59e0b', marginLeft: 6,
-          letterSpacing: 1,
-        }}>FORCE</span>
-      </span>
-      <button
-        onClick={onToggle}
-        style={{
-          width: 48, height: 22, borderRadius: 11, cursor: 'pointer',
-          border: '1px solid ' + (on ? '#f59e0b' : '#334155'),
-          background: on ? '#f59e0b' : '#334155',
-          position: 'relative', transition: 'background 0.2s, border-color 0.2s',
-        }}
-      >
-        <div style={{
-          width: 18, height: 18, borderRadius: '50%',
-          background: '#1e293b', position: 'absolute', top: 1,
-          left: on ? 27 : 1, transition: 'left 0.2s',
-        }} />
-      </button>
-    </div>
-  )
-}
-
 function voltageColor(v) {
   if (v > 13) return '#00ff88'
   if (v > 11) return '#f59e0b'
