@@ -591,11 +591,10 @@ void ElectricalSolver::updateRelayCoils() {
                 continue;
             }
 
-            // Relay requires coil power — runs after each propagation pass
-            // so the coil bus has had a chance to be energised
+            // Relay requires coil power — coil state overrides commanded position
             auto coil_it = bus_states_.find(sw.coil_bus);
-            if (coil_it != bus_states_.end() && !coil_it->second.powered) {
-                ss.closed = false; // relay drops out when coil is unpowered
+            if (coil_it != bus_states_.end()) {
+                ss.closed = coil_it->second.powered; // energized = closed, de-energized = open
             }
         }
     }
@@ -833,6 +832,11 @@ void ElectricalSolver::commandSwitch(const std::string& id, int cmd) {
     // Topology switches (source→bus connections)
     auto it = switch_states_.find(id);
     if (it == switch_states_.end()) return;
+
+    // Relay-type switches with a coil_bus are driven by coil logic, not commands
+    for (const auto& sw : topology_.switches) {
+        if (sw.id == id && sw.type == "relay" && !sw.coil_bus.empty()) return;
+    }
 
     auto& ss = it->second;
     switch (cmd) {
