@@ -2109,3 +2109,46 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - DECIDED: sim_manager clock_rate_hz parameter added (default 50.0). Replaces hardcoded 20ms timer.
 - REASON: F2.10/F2.11 from architecture audit — data was published but never reached IOS. Dead code cleanup for git hygiene. Clock rate parameterization per CLAUDE.md documentation.
 - AFFECTS: ios_backend (2 new subscriptions + WS handlers), useSimStore.js (2 new state slices), cigi_bridge (dead subscription + legacy files removed), sim_manager (parameterized clock rate)
+
+## 2026-03-28 — 20:00 — Claude Code
+- DECIDED: IOS A/C panel and cockpit panel render switches/CBs/loads dynamically from electrical.yaml. ios_backend loads config and sends as electrical_config WS message (same pattern as navigation.yaml → avionics_config).
+- DECIDED: Per-switch FORCE arbitration replaces sticky per-channel instructor priority. Each switch tracks its own force state independently. FORCE checkbox on IOS A/C page per switch. Instructor forcing sw_battery does not lock out cockpit page sw_landing_lt.
+- DECIDED: PanelControls.msg gains switch_forced[] and selector_forced[] arrays. Empty = normal command (cockpit/hardware). Populated = force/release (IOS).
+- DECIDED: ArbitrationState.msg gains forced_switch_ids[] and forced_selector_ids[] for frontend force checkbox rendering.
+- DECIDED: has_inst_panel_ sticky flag removed from arbitrator. Panel channel no longer has per-channel sticky behavior.
+- REASON: Hardcoded switch panels require code changes when YAML changes. Per-channel sticky lockout made cockpit page unusable after any IOS interaction. Per-switch force matches real training sim behavior (instructor forces individual switches, not entire panel).
+- AFFECTS: PanelControls.msg, ArbitrationState.msg, input_arbitrator (per-switch force model), ios_backend (electrical config loading), AircraftPanel.jsx (dynamic + FORCE), useSimStore.js (electricalConfig + force state)
+
+## 2026-03-28 — Claude Code
+
+### Electrical system fixes
+
+- DECIDED: ElectricalSolver loads gate on switch_id field. LoadDef gains switch_id (empty = always-on). Solver checks panel_switch_states_ before including load current. Loads without switch_id behave as before.
+- DECIDED: Starter routed through EngineCommands writeback. EngineCommands.msg gains starter_engage[4]. C172 engines plugin checks bus_voltage > 20V AND magneto START before setting starter_engage. FMA writes propulsion/starter_cmd from EngineCommands only. Direct starter_cmd write from EngineControls removed.
+- DECIDED: JSBSimAdapter populates n1_pct as generic engine speed % for all engine types. Piston: propeller_rpm / max_rpm * 100. max_rpm from config.yaml. Fixes alternator RPM gate which read n1_pct (always 0 for pistons).
+- DECIDED: updateRelayCoils() sets ss.closed = coil_powered (was only clearing on unpowered). commandSwitch() skips relay-type switches with coil_bus. Fixes essential_bus staying dead.
+- DECIDED: Starter current updated to 150A nominal / 300A inrush. Initial SOC from YAML not hardcoded.
+- AFFECTS: electrical_solver.hpp/cpp (LoadDef.switch_id, panel_switch_states_, relay logic), electrical.yaml (switch_id per load, starter 150A), EngineCommands.msg, engines_model.cpp (bus voltage gate + starter_engage), JSBSimAdapter (n1_pct, starter_cmd removal), flight_model_adapter_node (starter_cmd removal)
+
+### Per-switch FORCE arbitration
+
+- DECIDED: Replaced sticky has_inst_panel_ with per-switch force model. Each switch tracks forced state independently. PanelControls.msg gains switch_forced[] and selector_forced[]. ArbitrationState.msg gains forced_switch_ids[] and forced_selector_ids[].
+- DECIDED: IOS A/C panel has FORCE checkbox per switch. Tick = force switch to value, untick = release to cockpit/hardware. Instructor commands without switch_forced no longer auto-force (backward compat clause removed).
+- AFFECTS: PanelControls.msg, ArbitrationState.msg, input_arbitrator (per-switch merge), AircraftPanel.jsx (FORCE checkboxes), useSimStore.js
+
+### Config-driven panels
+
+- DECIDED: IOS A/C panel and C172 cockpit panel render switches dynamically from electrical.yaml. ios_backend loads config, sends as electrical_config WS message. Adding a switch to YAML auto-renders it on both pages.
+- DECIDED: Both source switches (from switches section) and load switches (switch_id from loads section) rendered. Filtered by pilot_controllable for display.
+- AFFECTS: ios_backend (electrical config loading), AircraftPanel.jsx, CockpitElectrical.jsx, useSimStore.js
+
+### Performance
+
+- DECIDED: All React components use useShallow selectors. Prevents re-render cascades from unrelated store updates.
+- DECIDED: Track array capped at 10K points with thinning. Leaflet icon quantized to 2° heading. Backend throttles WS sends to 10Hz per topic. sim_time_sec rounded to reduce JSON diff churn.
+- AFFECTS: All frontend components, useSimStore.js, ios_backend sender loop
+
+### Engine RPM deduplication
+
+- DECIDED: max_engine_rpm removed from config.yaml. FMA now reads rpm_max from engine.yaml (engines[0]). Single source of truth for engine RPM limit. Aircraft without engine.yaml fall back to JSBSimAdapter default (2700).
+- AFFECTS: flight_model_adapter_node.cpp, c172 config.yaml, engine.yaml

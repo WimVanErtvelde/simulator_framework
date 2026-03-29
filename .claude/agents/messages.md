@@ -91,6 +91,40 @@ uint8 EXTERNAL_DECOUPLED = 2
 - Capability messages: `*Capabilities`
 - Injection messages: `*Injection` (FailureInjection)
 
+## PanelControls — per-switch force fields
+
+```
+string[] switch_ids
+bool[]   switch_states
+bool[]   switch_forced      # parallel to switch_ids: true=force, false=release (empty=normal)
+string[] selector_ids
+int32[]  selector_values
+bool[]   selector_forced    # parallel to selector_ids (empty=normal)
+```
+
+- `switch_forced`/`selector_forced` empty → normal value update (cockpit, hardware)
+- `switch_forced[i] = true` → instructor forces this switch at switch_states[i]
+- `switch_forced[i] = false` → instructor releases this switch back to cockpit/hardware
+- IOS toggle without force array → implicit force (backward compatible)
+
+## ArbitrationState — per-switch force reporting
+
+```
+string[] forced_switch_ids    # switch IDs currently forced by instructor
+string[] forced_selector_ids  # selector IDs currently forced by instructor
+```
+
+Frontend reads these to render FORCE checkboxes on the IOS A/C panel.
+
+## EngineCommands — starter writeback
+
+```
+bool[4] starter_engage    # true = starter motor engaged (bus voltage + magneto gated)
+```
+
+Engines plugin sets `starter_engage` based on bus_voltage > 20V AND magneto in START position.
+FMA writes `propulsion/starter_cmd` from this field. Direct starter_cmd from EngineControls removed.
+
 ## Three-tier avionics pipeline
 
 ```

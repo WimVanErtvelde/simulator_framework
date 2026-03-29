@@ -355,7 +355,7 @@ All topics use `snake_case`. No abbreviations unless universally understood (e.g
 | `/sim/electrical/state` | ElectricalState | sim_electrical | DC/AC buses, sources, loads, SOC |
 | `/sim/fuel/state` | FuelState | sim_fuel | Quantities, flow, CG |
 | `/sim/engines/state` | EngineState | sim_engine_systems | N1/N2, EGT, torque |
-| `/sim/engines/commands` | EngineCommands | sim_engine_systems | Turboprop/FADEC writeback (zeros for piston) |
+| `/sim/engines/commands` | EngineCommands | sim_engine_systems | Includes starter_engage[4]; turboprop/FADEC writeback |
 | `/sim/gear/state` | GearState | sim_gear | WoW per leg, position, brakes, nosewheel |
 | `/sim/air_data/state` | AirDataState | sim_air_data | Instrument IAS, altitude, VSI (pitot-static) |
 | `/sim/navigation/state` | NavigationState | sim_navigation | Onboard receiver outputs: VOR, ILS, GPS, ADF, DME, TACAN |
@@ -414,13 +414,15 @@ Instructor takeover is **sticky** for flight/engine/avionics — once instructor
 channel, source stays INSTRUCTOR until node reconfigure. No auto-release, no timeout.
 
 **Panel channel — per-switch force model (NOT sticky):**
-- Each switch/selector tracks its own force state independently
+Panel channel uses per-switch FORCE model. Each switch tracks its own force state
+independently. IOS forcing `sw_battery` doesn't lock out cockpit page's `sw_landing_lt`.
+FORCE is engaged/released via `switch_forced[]` in PanelControls. Flight/engine channels
+remain sticky (safety). `has_inst_panel_` flag removed.
 - IOS sends `switch_forced: [true]` to force, `[false]` to release
-- IOS toggle without force flag = implicit force (backward compatible)
+- Instructor commands without `switch_forced` set virtual value (no implicit force)
 - Virtual/hardware commands update their value but don't override forced switches
 - Effective value: forced > hardware (if healthy) > virtual
 - `ArbitrationState.forced_switch_ids[]` reports which switches are currently forced
-- Instructor forcing `sw_battery` does NOT lock out cockpit page's `sw_landing_lt`
 
 ---
 
@@ -508,7 +510,7 @@ React + Zustand + WebSocket + React Router. Served by Vite dev server on port 51
 - `src/components/NavTabs.jsx` — 9 left-side navigation tabs (56px wide, monospace symbols)
 - `src/components/MapView.jsx` — Leaflet map, type-aware aircraft icon (color = sim state)
 - `src/components/panels/NodesPanel.jsx` — dynamic node discovery, lifecycle state, per-node controls
-- `src/components/panels/AircraftPanel.jsx` — fully dynamic A/C page, driven by navigation.yaml + electrical.yaml
+- `src/components/panels/AircraftPanel.jsx` — fully dynamic A/C page — radios from navigation.yaml, electrical switches/sources/buses/loads from electrical.yaml, FORCE checkboxes per switch, engine gauges from EngineState
 - `src/components/cockpit/CockpitElectrical.jsx` — virtual cockpit electrical panel (VIRTUAL)
 
 **Config-driven panels:** ios_backend loads aircraft YAML configs and sends them as WS messages

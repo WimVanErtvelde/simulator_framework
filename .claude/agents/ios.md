@@ -49,11 +49,29 @@ python3 -m uvicorn ios_backend.ios_backend_node:app --host 0.0.0.0 --port 8080
 `/sim/diagnostics/heartbeat`, `/sim/diagnostics/lifecycle_state`, `/sim/failure_state`
 
 ### Topic publishers
-- `/devices/instructor/panel` — IOS switch overrides (INSTRUCTOR priority)
+- `/devices/instructor/panel` — IOS switch overrides (INSTRUCTOR priority, with switch_forced[])
 - `/devices/instructor/controls/avionics` — IOS frequency tuning
-- `/devices/virtual/panel` — cockpit page switches (VIRTUAL priority)
+- `/devices/virtual/panel` — cockpit page switches (VIRTUAL priority, no force flags)
 
 **NEVER publish to `/sim/` topics from ios_backend.** Always `/devices/instructor/` or `/devices/virtual/`.
+
+### WebSocket config messages (sent on connect + aircraft_id change)
+- `avionics_config` — radios, displays from navigation.yaml
+- `engine_config` — engine type, limits from engine.yaml
+- `fuel_config` — tanks, display units from fuel.yaml
+- `failures_config` — failure catalog from failures.yaml
+- `electrical_config` — sources, buses, switches, loads from electrical.yaml
+
+### WS command: set_panel
+```json
+{ "type": "set_panel", "data": {
+    "switch_ids": ["sw_battery"], "switch_states": [true],
+    "switch_forced": [true],
+    "selector_ids": ["sel_magnetos"], "selector_values": [3],
+    "selector_forced": [true]
+}}
+```
+`switch_forced`/`selector_forced`: empty = normal command, `[true]` = force, `[false]` = release.
 
 ### REST endpoints
 - `GET /api/navaids/search?q=&types=&limit=` — navaid search for failure panel
@@ -64,6 +82,9 @@ python3 -m uvicorn ios_backend.ios_backend_node:app --host 0.0.0.0 --port 8080
 - Failure inject/clear/clear_all via WS commands
 - Navaid station search UI for world navaid failures
 - CMD_REPOSITION for IOS POS page departure/reposition
+- Config-driven electrical panel from electrical.yaml (sources, buses, switches, loads, CBs)
+- Per-switch FORCE checkbox on IOS A/C page — forces individual switches without locking others
+- Aircraft YAML configs sent as WS messages: avionics_config, engine_config, fuel_config, failures_config, electrical_config
 
 ## Frontend (`ios/frontend/`)
 
@@ -77,9 +98,11 @@ Run: `cd ios/frontend && npm run dev` → http://localhost:5173
 ### Key files
 - `src/store/useSimStore.js` — Zustand store, WebSocket handler, CMD dispatch
 - `src/components/StatusStrip.jsx` — 3-row status (Row 3 = dynamic radio from navigation.yaml)
+- `src/components/panels/AircraftPanel.jsx` — dynamic A/C page: radios, electrical, engine gauges, FORCE checkboxes
 - `src/components/panels/PositionPanel.jsx` — airport search, runway selection, position icons
 - `src/components/panels/FailuresPanel.jsx` — ATA-grouped catalog, navaid search, inject/clear
 - `src/components/panels/NodesPanel.jsx` — dynamic node discovery, lifecycle controls
+- `src/cockpit/CockpitElectrical.jsx` — virtual cockpit electrical panel (VIRTUAL priority, green styling)
 
 ### Design palette
 bg `#0a0e17`, panel `#111827`, elevated `#1c2333`, borders `#1e293b`,
@@ -94,10 +117,16 @@ IOS switches: amber. Virtual cockpit: green.
 - Virtual cockpit → `/devices/virtual/` (VIRTUAL priority)
 - All UIs read state from `/sim/controls/panel` (arbitrated) — never own published commands
 
+### Performance
+- All components use `useShallow` selectors — only re-render when own data changes
+- Backend throttles high-frequency WS topics (FDM, electrical, nav, etc.) to 10Hz max
+- Float values rounded in backend callbacks to reduce JSON diff churn
+- Track array capped at 10K points with progressive thinning
+- Leaflet aircraft icon quantized to 2° heading steps
+
 ### Not yet implemented
 - COM/NAV frequency entry UI
 - Flight departure/arrival graphs
-- Freeze position/fuel toggles
 - Debrief panel
 - SimSnapshot save/load
 
