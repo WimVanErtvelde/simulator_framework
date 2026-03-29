@@ -676,12 +676,9 @@ export default function AircraftPanel() {
                       }}>FORCED</span>
                     )}
                   </span>
-                  {/* Col 3: Toggle — IOS = instructor, always forces (implicit force) */}
+                  {/* Col 3: Toggle — forced: change forced value; unforced: normal command */}
                   <button
-                    onClick={() => {
-                      setLocalForced(prev => ({ ...prev, [sw.id]: true }))
-                      sendPanel([sw.id], [!on], null, null, [true])
-                    }}
+                    onClick={() => sendPanel([sw.id], [!on], null, null, forced ? [true] : undefined)}
                     style={{
                       width: 48, height: 22, borderRadius: 11, cursor: 'pointer',
                       border: '1px solid ' + (on ? '#f59e0b' : '#334155'),
