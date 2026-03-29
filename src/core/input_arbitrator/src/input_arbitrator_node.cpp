@@ -466,14 +466,19 @@ private:
       if (source == SOURCE_INSTRUCTOR) {
         bool has_force_flag = (i < msg.switch_forced.size());
         if (has_force_flag && !msg.switch_forced[i]) {
-          // RELEASE: give back to cockpit/hardware — no state needed
+          // RELEASE: give back to cockpit/hardware — don't touch value
           ctrl.forced = false;
-          RCLCPP_INFO(get_logger(), "Panel RELEASE: id=%s ctrl.forced=0", id.c_str());
-        } else if (has_state) {
-          // FORCE (explicit or implicit — IOS toggle = implicit force)
+          RCLCPP_INFO(get_logger(), "Panel RELEASE: id=%s", id.c_str());
+        } else if (has_force_flag && msg.switch_forced[i] && has_state) {
+          // EXPLICIT FORCE: lock switch at this value
           ctrl.forced = true;
           ctrl.force_value = msg.switch_states[i];
           RCLCPP_INFO(get_logger(), "Panel FORCE: id=%s state=%d", id.c_str(), (int)msg.switch_states[i]);
+        } else if (!has_force_flag && has_state) {
+          // No force flag: instructor sets value without forcing
+          ctrl.has_virtual = true;
+          ctrl.virtual_value = msg.switch_states[i];
+          RCLCPP_INFO(get_logger(), "Panel SET (no force): id=%s state=%d", id.c_str(), (int)msg.switch_states[i]);
         }
         changed = true;
       } else if (has_state) {
@@ -491,28 +496,34 @@ private:
     }
 
     // --- Process selectors ---
-    for (size_t i = 0; i < msg.selector_ids.size() && i < msg.selector_values.size(); ++i) {
+    for (size_t i = 0; i < msg.selector_ids.size(); ++i) {
       const auto & id = msg.selector_ids[i];
-      int32_t val = msg.selector_values[i];
+      bool has_val = (i < msg.selector_values.size());
       auto & ctrl = selector_controls_[id];
 
       if (source == SOURCE_INSTRUCTOR) {
         bool has_force_flag = (i < msg.selector_forced.size());
         if (has_force_flag && !msg.selector_forced[i]) {
           ctrl.forced = false;
-        } else {
+        } else if (has_force_flag && msg.selector_forced[i] && has_val) {
           ctrl.forced = true;
-          ctrl.force_value = val;
+          ctrl.force_value = msg.selector_values[i];
+        } else if (!has_force_flag && has_val) {
+          ctrl.has_virtual = true;
+          ctrl.virtual_value = msg.selector_values[i];
         }
         changed = true;
-      } else if (source == SOURCE_VIRTUAL) {
-        ctrl.has_virtual = true;
-        if (ctrl.virtual_value != val) changed = true;
-        ctrl.virtual_value = val;
-      } else if (source == SOURCE_HARDWARE) {
-        ctrl.has_hardware = true;
-        if (ctrl.hardware_value != val) changed = true;
-        ctrl.hardware_value = val;
+      } else if (has_val) {
+        int32_t val = msg.selector_values[i];
+        if (source == SOURCE_VIRTUAL) {
+          ctrl.has_virtual = true;
+          if (ctrl.virtual_value != val) changed = true;
+          ctrl.virtual_value = val;
+        } else if (source == SOURCE_HARDWARE) {
+          ctrl.has_hardware = true;
+          if (ctrl.hardware_value != val) changed = true;
+          ctrl.hardware_value = val;
+        }
       }
     }
 
