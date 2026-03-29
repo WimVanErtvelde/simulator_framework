@@ -115,9 +115,11 @@ export default function MapView() {
     fdm: s.fdm, simState: s.simState, track: s.track, ctrOnAircraft: s.ctrOnAircraft,
   })))
 
+  // Quantize heading to 2° steps — avoids recreating icon on every FDM update
+  const roundedHdg = Math.round(fdm.hdgTrueDeg / 2) * 2
   const icon = useMemo(
-    () => createAircraftIcon(fdm.hdgTrueDeg, simState, fdm.isHelicopter),
-    [fdm.hdgTrueDeg, simState, fdm.isHelicopter]
+    () => createAircraftIcon(roundedHdg, simState, fdm.isHelicopter),
+    [roundedHdg, simState, fdm.isHelicopter]
   )
 
   return (
