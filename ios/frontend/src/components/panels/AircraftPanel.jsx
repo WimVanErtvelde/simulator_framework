@@ -657,7 +657,13 @@ export default function AircraftPanel() {
                       e.stopPropagation()
                       const newForced = !forced
                       setLocalForced(prev => ({ ...prev, [sw.id]: newForced }))
-                      sendPanel([sw.id], [on], null, null, [newForced])
+                      if (newForced) {
+                        // ENGAGE force: send current state + forced=true
+                        sendPanel([sw.id], [on], null, null, [true])
+                      } else {
+                        // RELEASE force: no switch_states, just the release flag
+                        sendPanel([sw.id], [], null, null, [false])
+                      }
                     }}
                     onChange={() => {}}
                     title={forced ? 'Release force' : 'Force switch'}

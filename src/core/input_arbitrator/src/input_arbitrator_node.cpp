@@ -456,33 +456,37 @@ private:
     bool changed = false;
 
     // --- Process switches ---
-    for (size_t i = 0; i < msg.switch_ids.size() && i < msg.switch_states.size(); ++i) {
+    // Iterate over switch_ids (not bounded by switch_states) so force-only
+    // release messages (switch_ids + switch_forced, no switch_states) work.
+    for (size_t i = 0; i < msg.switch_ids.size(); ++i) {
       const auto & id = msg.switch_ids[i];
-      bool state = msg.switch_states[i];
+      bool has_state = (i < msg.switch_states.size());
       auto & ctrl = switch_controls_[id];
 
       if (source == SOURCE_INSTRUCTOR) {
         bool has_force_flag = (i < msg.switch_forced.size());
         if (has_force_flag && !msg.switch_forced[i]) {
-          // RELEASE: give back to cockpit/hardware
+          // RELEASE: give back to cockpit/hardware — no state needed
           ctrl.forced = false;
-        } else {
+          RCLCPP_INFO(get_logger(), "Panel RELEASE: id=%s ctrl.forced=0", id.c_str());
+        } else if (has_state) {
           // FORCE (explicit or implicit — IOS toggle = implicit force)
           ctrl.forced = true;
-          ctrl.force_value = state;
+          ctrl.force_value = msg.switch_states[i];
+          RCLCPP_INFO(get_logger(), "Panel FORCE: id=%s state=%d", id.c_str(), (int)msg.switch_states[i]);
         }
-        RCLCPP_INFO(get_logger(), "Panel: id=%s has_flag=%d forced_val=%d ctrl.forced=%d state=%d",
-            id.c_str(), (int)has_force_flag, has_force_flag ? (int)msg.switch_forced[i] : -1,
-            (int)ctrl.forced, (int)state);
         changed = true;
-      } else if (source == SOURCE_VIRTUAL) {
-        ctrl.has_virtual = true;
-        if (ctrl.virtual_value != state) changed = true;
-        ctrl.virtual_value = state;
-      } else if (source == SOURCE_HARDWARE) {
-        ctrl.has_hardware = true;
-        if (ctrl.hardware_value != state) changed = true;
-        ctrl.hardware_value = state;
+      } else if (has_state) {
+        bool state = msg.switch_states[i];
+        if (source == SOURCE_VIRTUAL) {
+          ctrl.has_virtual = true;
+          if (ctrl.virtual_value != state) changed = true;
+          ctrl.virtual_value = state;
+        } else if (source == SOURCE_HARDWARE) {
+          ctrl.has_hardware = true;
+          if (ctrl.hardware_value != state) changed = true;
+          ctrl.hardware_value = state;
+        }
       }
     }
 
