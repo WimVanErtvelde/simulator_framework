@@ -181,12 +181,13 @@ public:
     RCLCPP_INFO(this->get_logger(), "Configuring flight model: type=%s, aircraft=%s",
       fdm_type.c_str(), aircraft_id.c_str());
 
-    // Load aircraft config.yaml (model name, default IC, gear height, engine RPM)
+    // Load aircraft config.yaml (model name, default IC, gear height)
     std::string jsbsim_model_name;
     double max_engine_rpm = 0.0;
     sim_msgs::msg::InitialConditions default_ic;
+    std::string pkg_dir;
     try {
-      auto pkg_dir = ament_index_cpp::get_package_share_directory("aircraft_" + aircraft_id);
+      pkg_dir = ament_index_cpp::get_package_share_directory("aircraft_" + aircraft_id);
       auto config_path = pkg_dir + "/config/config.yaml";
       YAML::Node config = YAML::LoadFile(config_path);
       if (config["jsbsim_model_name"]) {
@@ -195,9 +196,6 @@ public:
       if (config["gear_ground_height_m"]) {
         gear_cg_height_m_ = config["gear_ground_height_m"].as<double>();
         RCLCPP_INFO(this->get_logger(), "Gear ground height from config: %.2f m", gear_cg_height_m_);
-      }
-      if (config["max_engine_rpm"]) {
-        max_engine_rpm = config["max_engine_rpm"].as<double>();
       }
       if (config["initial_conditions"]) {
         auto ic = config["initial_conditions"];
@@ -210,6 +208,19 @@ public:
     } catch (const std::exception & e) {
       RCLCPP_WARN(this->get_logger(), "Could not load aircraft config: %s — using defaults",
         e.what());
+    }
+
+    // Load engine rpm_max from engine.yaml (single source of truth)
+    if (!pkg_dir.empty()) {
+      try {
+        auto engine_path = pkg_dir + "/config/engine.yaml";
+        YAML::Node eng_cfg = YAML::LoadFile(engine_path);
+        if (eng_cfg["engines"] && eng_cfg["engines"].IsSequence() && eng_cfg["engines"].size() > 0) {
+          max_engine_rpm = eng_cfg["engines"][0]["rpm_max"].as<double>(0.0);
+        }
+      } catch (const std::exception & e) {
+        RCLCPP_DEBUG(this->get_logger(), "No engine.yaml for %s — using default max RPM", aircraft_id.c_str());
+      }
     }
 
     if (fdm_type == "jsbsim") {
