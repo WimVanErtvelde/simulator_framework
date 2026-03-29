@@ -182,9 +182,9 @@ export const useSimStore = create((set, get) => ({
   // Session
   session: { name: 'Session 1', pilotName: '', instructorName: '' },
 
-  // Flight track — capped to prevent memory leaks on long sessions
+  // Flight track — thinned to prevent memory leaks on long sessions
   track: [],
-  trackMaxPoints: 50000,  // ~83 min at 10 Hz
+  trackMaxPoints: 10000,
 
   // UI
   activeTab: 'map',
@@ -233,12 +233,12 @@ export const useSimStore = create((set, get) => ({
 
   appendTrackPoint: (lat, lon) => set((s) => {
     const t = s.track
-    // Drop oldest 10% when at capacity to avoid trimming every frame
     if (t.length >= s.trackMaxPoints) {
-      const drop = Math.floor(s.trackMaxPoints * 0.1)
-      const trimmed = t.slice(drop)
-      trimmed.push([lat, lon])
-      return { track: trimmed }
+      // Thin: keep every 2nd point in old data, full res in last 1000
+      const cutoff = t.length - 1000
+      const thinned = t.filter((_, i) => i % 2 === 0 || i >= cutoff)
+      thinned.push([lat, lon])
+      return { track: thinned }
     }
     // Mutate in place + bump reference — avoids full copy every frame
     t.push([lat, lon])
