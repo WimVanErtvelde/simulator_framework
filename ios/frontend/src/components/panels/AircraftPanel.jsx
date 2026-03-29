@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
 import { useSimStore } from '../../store/useSimStore'
+import { useShallow } from 'zustand/react/shallow'
 import { PanelRow, SectionHeader } from './PanelUtils'
 import NumpadPopup from '../ui/NumpadPopup'
 
@@ -503,7 +504,13 @@ function TurboshaftEngineDisplay({ idx, engines, config, fuel }) {
 export default function AircraftPanel() {
   const { fuel, aircraftId, nav, avionics, sendAvionics, electrical, sendPanel,
           avionicsConfig, electricalConfig, forcedSwitchIds,
-          engines, engineConfig, fuelConfig } = useSimStore()
+          engines, engineConfig, fuelConfig } = useSimStore(useShallow(s => ({
+    fuel: s.fuel, aircraftId: s.aircraftId, nav: s.nav, avionics: s.avionics,
+    sendAvionics: s.sendAvionics, electrical: s.electrical, sendPanel: s.sendPanel,
+    avionicsConfig: s.avionicsConfig, electricalConfig: s.electricalConfig,
+    forcedSwitchIds: s.forcedSwitchIds, engines: s.engines, engineConfig: s.engineConfig,
+    fuelConfig: s.fuelConfig,
+  })))
 
   // Track local selector values (not yet in electrical state feedback)
   const [groundSelectors, setGroundSelectors] = useState({})

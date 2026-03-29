@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react'
 import { MapContainer, TileLayer, Marker, Polyline, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import { useSimStore } from '../store/useSimStore'
+import { useShallow } from 'zustand/react/shallow'
 
 // Fix Leaflet default icon
 import iconUrl from 'leaflet/dist/images/marker-icon.png'
@@ -75,7 +76,9 @@ function MapFollower({ lat, lon, ctrOnAircraft }) {
 }
 
 function MapOverlayControls() {
-  const { ctrOnAircraft, clearTrack } = useSimStore()
+  const { ctrOnAircraft, clearTrack } = useSimStore(useShallow(s => ({
+    ctrOnAircraft: s.ctrOnAircraft, clearTrack: s.clearTrack,
+  })))
   const set = useSimStore.setState
 
   const btnStyle = {
@@ -108,7 +111,9 @@ function MapOverlayControls() {
 }
 
 export default function MapView() {
-  const { fdm, simState, track, ctrOnAircraft } = useSimStore()
+  const { fdm, simState, track, ctrOnAircraft } = useSimStore(useShallow(s => ({
+    fdm: s.fdm, simState: s.simState, track: s.track, ctrOnAircraft: s.ctrOnAircraft,
+  })))
 
   const icon = useMemo(
     () => createAircraftIcon(fdm.hdgTrueDeg, simState, fdm.isHelicopter),

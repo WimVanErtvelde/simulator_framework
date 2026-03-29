@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useSimStore } from '../../store/useSimStore'
+import { useShallow } from 'zustand/react/shallow'
 import { PanelRow, SectionHeader, FullWidthBtn } from './PanelUtils'
 import KeyboardPopup from '../ui/KeyboardPopup'
 
@@ -38,7 +39,9 @@ function SessionField({ label, value, onChange }) {
 }
 
 export default function SessionPanel() {
-  const { session, wsConnected, wsReconnectCount } = useSimStore()
+  const { session, wsConnected, wsReconnectCount } = useSimStore(useShallow(s => ({
+    session: s.session, wsConnected: s.wsConnected, wsReconnectCount: s.wsReconnectCount,
+  })))
   const [form, setForm] = useState({
     instructorName: session.instructorName,
     pilotName: session.pilotName,

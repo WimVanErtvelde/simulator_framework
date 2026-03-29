@@ -1,4 +1,5 @@
 import { useSimStore } from '../store/useSimStore'
+import { useShallow } from 'zustand/react/shallow'
 import PositionPanel from './panels/PositionPanel'
 import AircraftPanel from './panels/AircraftPanel'
 import FailuresPanel from './panels/FailuresPanel'
@@ -20,7 +21,7 @@ const TABS = {
 }
 
 export default function SidePanel() {
-  const { activeTab } = useSimStore()
+  const { activeTab } = useSimStore(useShallow(s => ({ activeTab: s.activeTab })))
   const tabInfo = TABS[activeTab]
 
   if (!tabInfo) return null

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSimStore } from '../../store/useSimStore'
+import { useShallow } from 'zustand/react/shallow'
 import { SectionHeader, FullWidthBtn } from './PanelUtils'
 import KeyboardPopup from '../ui/KeyboardPopup'
 
@@ -236,7 +237,11 @@ function FailureRow({ failure, isActive, onInject, onClear }) {
 
 export default function FailuresPanel() {
   const { activeFailures, activeFailureIds, failuresCatalog,
-          injectFailure, clearFailure, clearAllFailures } = useSimStore()
+          injectFailure, clearFailure, clearAllFailures } = useSimStore(useShallow(s => ({
+    activeFailures: s.activeFailures, activeFailureIds: s.activeFailureIds,
+    failuresCatalog: s.failuresCatalog, injectFailure: s.injectFailure,
+    clearFailure: s.clearFailure, clearAllFailures: s.clearAllFailures,
+  })))
   const [expanded, setExpanded] = useState({})
   const [worldExpanded, setWorldExpanded] = useState(false)
 

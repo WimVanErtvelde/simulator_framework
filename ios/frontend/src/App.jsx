@@ -1,4 +1,5 @@
 import { useSimStore } from './store/useSimStore'
+import { useShallow } from 'zustand/react/shallow'
 import StatusStrip from './components/StatusStrip'
 import NavTabs from './components/NavTabs'
 import MapView from './components/MapView'
@@ -6,7 +7,7 @@ import SidePanel from './components/SidePanel'
 import ActionBar from './components/ActionBar'
 
 export default function App() {
-  const { activeTab } = useSimStore()
+  const { activeTab } = useSimStore(useShallow(s => ({ activeTab: s.activeTab })))
 
   return (
     <div style={{

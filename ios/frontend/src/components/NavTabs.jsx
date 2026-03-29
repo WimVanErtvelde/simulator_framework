@@ -1,4 +1,5 @@
 import { useSimStore } from '../store/useSimStore'
+import { useShallow } from 'zustand/react/shallow'
 
 const TABS = [
   { id: 'map',       icon: '◈',  label: 'MAP' },
@@ -16,7 +17,10 @@ const TABS = [
 ]
 
 export default function NavTabs() {
-  const { activeTab, setActiveTab, activeFailures, nodes } = useSimStore()
+  const { activeTab, setActiveTab, activeFailures, nodes } = useSimStore(useShallow(s => ({
+    activeTab: s.activeTab, setActiveTab: s.setActiveTab,
+    activeFailures: s.activeFailures, nodes: s.nodes,
+  })))
   const hasLostNode = Object.values(nodes).some(n => n.status === 'LOST')
 
   return (

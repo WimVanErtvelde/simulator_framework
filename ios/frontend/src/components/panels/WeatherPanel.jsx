@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useSimStore } from '../../store/useSimStore'
+import { useShallow } from 'zustand/react/shallow'
 import { PanelRow, SectionHeader, FullWidthBtn } from './PanelUtils'
 import NumpadPopup from '../ui/NumpadPopup'
 
@@ -53,7 +54,9 @@ function WeatherField({ label, field, form, update, placeholder, inputStyle, all
 }
 
 export default function WeatherPanel() {
-  const { atmosphere, sendCommand } = useSimStore()
+  const { atmosphere, sendCommand } = useSimStore(useShallow(s => ({
+    atmosphere: s.atmosphere, sendCommand: s.sendCommand,
+  })))
   const [form, setForm] = useState({
     vis: '', qnh: '', oat: '', windDir: '', windSpd: '',
   })

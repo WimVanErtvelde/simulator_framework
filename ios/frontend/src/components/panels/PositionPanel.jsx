@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSimStore } from '../../store/useSimStore'
+import { useShallow } from 'zustand/react/shallow'
 import { PanelRow, SectionHeader, FullWidthBtn } from './PanelUtils'
 import KeyboardPopup from '../ui/KeyboardPopup'
 import NumpadPopup from '../ui/NumpadPopup'
@@ -28,7 +29,9 @@ function AircraftIcon({ rotation = 0, size = 24, color = '#64748b' }) {
 
 // ─── Airport search with dropdown ────────────────────────────────────────────
 function AirportSearch({ value, onSelect, placeholder = 'ICAO or name' }) {
-  const { searchAirports, airportSearchResults } = useSimStore()
+  const { searchAirports, airportSearchResults } = useSimStore(useShallow(s => ({
+    searchAirports: s.searchAirports, airportSearchResults: s.airportSearchResults,
+  })))
   const [query, setQuery] = useState('')
   const [kbOpen, setKbOpen] = useState(false)
   const debounceRef = useRef(null)
@@ -301,7 +304,12 @@ function NumpadField({ label, value, placeholder, allowDecimal = true, hint = ''
 export default function PositionPanel() {
   const { fdm, sendCommand, requestAction, pendingAction,
           getRunways, setDeparture, runwayResults,
-          icConfiguration, setIcConfiguration } = useSimStore()
+          icConfiguration, setIcConfiguration } = useSimStore(useShallow(s => ({
+    fdm: s.fdm, sendCommand: s.sendCommand, requestAction: s.requestAction,
+    pendingAction: s.pendingAction, getRunways: s.getRunways, setDeparture: s.setDeparture,
+    runwayResults: s.runwayResults, icConfiguration: s.icConfiguration,
+    setIcConfiguration: s.setIcConfiguration,
+  })))
 
   const [depAirport, setDepAirport] = useState(null)
   const [destAirport, setDestAirport] = useState(null)

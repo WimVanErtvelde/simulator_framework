@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useSimStore } from '../store/useSimStore'
+import { useShallow } from 'zustand/react/shallow'
 import useKeyboardControls from './useKeyboardControls'
 
 // Flight instruments
@@ -60,7 +61,10 @@ function sendEngineControls(data) {
 
 
 export default function C172Panel() {
-  const { fdm, airData, nav, electrical, engines, fuel, gear, atmosphere } = useSimStore()
+  const { fdm, airData, nav, electrical, engines, fuel, gear, atmosphere } = useSimStore(useShallow(s => ({
+    fdm: s.fdm, airData: s.airData, nav: s.nav, electrical: s.electrical,
+    engines: s.engines, fuel: s.fuel, gear: s.gear, atmosphere: s.atmosphere,
+  })))
   const { state: kb, setThrottle, setMixture, setMagneto: kbSetMagneto } = useKeyboardControls()
   const [magnetoPos, setMagnetoPos] = useState(0)
   const [fuelSelPos, setFuelSelPos] = useState(0)

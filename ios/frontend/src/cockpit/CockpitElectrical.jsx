@@ -1,4 +1,5 @@
 import { useSimStore } from '../store/useSimStore'
+import { useShallow } from 'zustand/react/shallow'
 
 // Virtual cockpit electrical panel — publishes to /devices/virtual/panel
 // Switches loaded dynamically from electricalConfig (electrical.yaml).
@@ -47,7 +48,9 @@ function voltageColor(v) {
 }
 
 export default function CockpitElectrical() {
-  const { electrical, electricalConfig, aircraftId } = useSimStore()
+  const { electrical, electricalConfig, aircraftId } = useSimStore(useShallow(s => ({
+    electrical: s.electrical, electricalConfig: s.electricalConfig, aircraftId: s.aircraftId,
+  })))
 
   const toggleVirtual = (id, currentState) => {
     const { ws, wsConnected } = useSimStore.getState()

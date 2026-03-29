@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
 import { useSimStore } from '../store/useSimStore'
+import { useShallow } from 'zustand/react/shallow'
 import NumpadPopup from './ui/NumpadPopup'
 
 const STATE_BADGES = {
@@ -101,7 +102,13 @@ function buildAvionicsPayload(avionics, storeKey, newVal) {
 export default function StatusStrip() {
   const { simState, simTimeSec, aircraftId, fdm, nav, atmosphere,
           armedFailures, activeFailures, avionics, avionicsConfig,
-          terrainSource, sendAvionics } = useSimStore()
+          terrainSource, sendAvionics } = useSimStore(useShallow(s => ({
+    simState: s.simState, simTimeSec: s.simTimeSec, aircraftId: s.aircraftId,
+    fdm: s.fdm, nav: s.nav, atmosphere: s.atmosphere,
+    armedFailures: s.armedFailures, activeFailures: s.activeFailures,
+    avionics: s.avionics, avionicsConfig: s.avionicsConfig,
+    terrainSource: s.terrainSource, sendAvionics: s.sendAvionics,
+  })))
   const [numpad, setNumpad] = useState(null)   // { id, label, anchor }
   const [numpadError, setNumpadError] = useState(false)
   const dim = simState === 'UNKNOWN' || simState === 'INIT'

@@ -1,4 +1,5 @@
 import { useSimStore, CMD } from '../../store/useSimStore'
+import { useShallow } from 'zustand/react/shallow'
 import { SectionHeader, FullWidthBtn } from './PanelUtils'
 
 const STATUS_COLORS = {
@@ -48,7 +49,9 @@ function SmallBtn({ label, style, onClick, disabled }) {
 const STATUS_ORDER = { OK: 0, DEGRADED: 1, LOST: 2, OFFLINE: 3 }
 
 export default function NodesPanel() {
-  const { nodes, sendCommand } = useSimStore()
+  const { nodes, sendCommand } = useSimStore(useShallow(s => ({
+    nodes: s.nodes, sendCommand: s.sendCommand,
+  })))
   const entries = Object.entries(nodes)
     .sort(([, a], [, b]) => {
       const aOrder = STATUS_ORDER[a.status] ?? 3

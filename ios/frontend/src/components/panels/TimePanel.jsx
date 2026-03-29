@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useSimStore } from '../../store/useSimStore'
+import { useShallow } from 'zustand/react/shallow'
 import { SectionHeader, FullWidthBtn } from './PanelUtils'
 
 const neutralBtn = {
@@ -17,7 +18,9 @@ const stepBtn = {
 }
 
 export default function TimePanel() {
-  const { simTimeSec, sendCommand } = useSimStore()
+  const { simTimeSec, sendCommand } = useSimStore(useShallow(s => ({
+    simTimeSec: s.simTimeSec, sendCommand: s.sendCommand,
+  })))
   const [hour, setHour] = useState(12)
   const [minute, setMinute] = useState(0)
   const [pending, setPending] = useState(false)

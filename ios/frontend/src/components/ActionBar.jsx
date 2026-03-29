@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react'
 import { useSimStore, CMD } from '../store/useSimStore'
+import { useShallow } from 'zustand/react/shallow'
 
 const btnBase = {
   height: 48, minWidth: 130, borderRadius: 4,
@@ -46,7 +47,11 @@ function ActionBtn({ label, style, disabled, onClick, isPending }) {
 }
 
 export default function ActionBar() {
-  const { simState, wsConnected, wsReconnectCount, sendCommand, sendToggle, requestAction, pendingAction, freezePosition, freezeFuel } = useSimStore()
+  const { simState, wsConnected, wsReconnectCount, sendCommand, sendToggle, requestAction, pendingAction, freezePosition, freezeFuel } = useSimStore(useShallow(s => ({
+    simState: s.simState, wsConnected: s.wsConnected, wsReconnectCount: s.wsReconnectCount,
+    sendCommand: s.sendCommand, sendToggle: s.sendToggle, requestAction: s.requestAction,
+    pendingAction: s.pendingAction, freezePosition: s.freezePosition, freezeFuel: s.freezeFuel,
+  })))
   const [resetOpen, setResetOpen] = useState(false)
   const [simOpen, setSimOpen] = useState(false)
   const resetRef = useRef(null)

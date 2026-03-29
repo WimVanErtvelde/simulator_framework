@@ -1,8 +1,9 @@
 import { useSimStore } from '../../store/useSimStore'
+import { useShallow } from 'zustand/react/shallow'
 import { SectionHeader, FullWidthBtn } from './PanelUtils'
 
 export default function ScenariosPanel() {
-  const { sendCommand } = useSimStore()
+  const { sendCommand } = useSimStore(useShallow(s => ({ sendCommand: s.sendCommand })))
 
   const saveScenario = () => {
     const name = prompt('Scenario name:')
