@@ -1,8 +1,8 @@
 import { useSimStore } from '../store/useSimStore'
 
 // Virtual cockpit electrical panel — publishes to /devices/virtual/panel
-// This is the "pilot's panel" view, distinct from the IOS instructor view.
-// Switches and buses are rendered dynamically from the electrical state.
+// Switches loaded dynamically from electricalConfig (electrical.yaml).
+// NO FORCE checkboxes — that's IOS-only. Green styling = VIRTUAL priority.
 
 function ToggleSwitch({ label, on, onToggle }) {
   return (
@@ -20,7 +20,6 @@ function ToggleSwitch({ label, on, onToggle }) {
           position: 'relative',
         }}
       >
-        {/* Toggle lever */}
         <div style={{
           width: 24, height: 24, borderRadius: 3,
           background: on ? '#e2e8f0' : '#64748b',
@@ -41,10 +40,15 @@ function ToggleSwitch({ label, on, onToggle }) {
   )
 }
 
-export default function CockpitElectrical() {
-  const { electrical, aircraftId } = useSimStore()
+function voltageColor(v) {
+  if (v > 13) return '#00ff88'
+  if (v > 11) return '#f59e0b'
+  return '#ef4444'
+}
 
-  // Virtual cockpit publishes to /devices/virtual/panel (via different WS message)
+export default function CockpitElectrical() {
+  const { electrical, electricalConfig, aircraftId } = useSimStore()
+
   const toggleVirtual = (id, currentState) => {
     const { ws, wsConnected } = useSimStore.getState()
     if (!wsConnected || !ws) return
@@ -53,6 +57,14 @@ export default function CockpitElectrical() {
       data: { switch_ids: [id], switch_states: [!currentState] },
     }))
   }
+
+  // Look up live switch state by ID from ElectricalState
+  const swClosed = (id) => {
+    const idx = electrical.switchIds?.indexOf(id)
+    return idx >= 0 ? (electrical.switchClosed[idx] ?? false) : false
+  }
+
+  const cfg = electricalConfig
 
   return (
     <div style={{
@@ -71,33 +83,64 @@ export default function CockpitElectrical() {
         {aircraftId.toUpperCase()} Electrical Panel — Virtual Cockpit
       </div>
 
-      {/* Switch panel — rendered dynamically from solver state */}
+      {/* Switch panel — from electricalConfig */}
       <div style={{
         background: '#111827', border: '1px solid #1e293b', borderRadius: 8,
         padding: '32px 48px', display: 'flex', gap: 32, alignItems: 'flex-start',
         flexWrap: 'wrap', justifyContent: 'center',
         boxShadow: '0 4px 24px rgba(0,0,0,0.5)',
       }}>
-        {electrical.switchIds?.length > 0 ? (
-          electrical.switchIds.map((id, i) => {
-            const label = electrical.switchLabels?.[i] || id
-            const on = electrical.switchClosed[i] ?? false
+        {cfg ? (
+          cfg.switches?.filter(s => s.pilot_controllable !== false).map(sw => {
+            const on = swClosed(sw.id)
             return (
-              <ToggleSwitch key={id} label={label} on={on}
-                onToggle={() => toggleVirtual(id, on)} />
+              <ToggleSwitch key={sw.id} label={sw.label} on={on}
+                onToggle={() => toggleVirtual(sw.id, on)} />
             )
           })
         ) : (
           <div style={{ color: '#64748b', fontSize: 13 }}>
-            No switch data — waiting for electrical node
+            Waiting for electrical config...
           </div>
         )}
       </div>
 
-      {/* Bus voltage readout */}
-      {electrical.busNames?.length > 0 && (
+      {/* Sources */}
+      {electrical.sourceNames?.length > 0 && (
         <div style={{
           marginTop: 32, background: '#111827', border: '1px solid #1e293b',
+          borderRadius: 8, padding: '16px 32px', minWidth: 300,
+        }}>
+          <div style={{
+            fontSize: 10, fontWeight: 700, letterSpacing: 2, color: '#475569',
+            marginBottom: 12, textTransform: 'uppercase',
+          }}>Sources</div>
+          {electrical.sourceNames.map((name, i) => (
+            <div key={name} style={{
+              display: 'flex', justifyContent: 'space-between',
+              padding: '4px 0', fontSize: 13,
+            }}>
+              <span style={{ color: '#94a3b8' }}>{name}</span>
+              <span>
+                <span style={{ color: electrical.sourceActive[i] ? '#00ff88' : '#ef4444', fontWeight: 700 }}>
+                  {electrical.sourceActive[i] ? 'ON' : 'OFF'}
+                </span>
+                <span style={{ color: '#64748b', marginLeft: 10 }}>
+                  {electrical.sourceVoltages[i]?.toFixed(1) ?? '--'}V
+                </span>
+                <span style={{ color: '#64748b', marginLeft: 8 }}>
+                  {electrical.sourceCurrents[i]?.toFixed(1) ?? '--'}A
+                </span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Bus voltages */}
+      {electrical.busNames?.length > 0 && (
+        <div style={{
+          marginTop: 16, background: '#111827', border: '1px solid #1e293b',
           borderRadius: 8, padding: '16px 32px', minWidth: 300,
         }}>
           <div style={{
@@ -106,19 +149,52 @@ export default function CockpitElectrical() {
           }}>Bus Voltages</div>
           {electrical.busNames.map((name, i) => {
             const v = electrical.busVoltages[i] ?? 0
-            const color = v > 13 ? '#00ff88' : v > 11 ? '#f59e0b' : '#ef4444'
             return (
               <div key={name} style={{
                 display: 'flex', justifyContent: 'space-between',
                 padding: '4px 0', fontSize: 13,
               }}>
                 <span style={{ color: '#94a3b8' }}>{name}</span>
-                <span style={{ color, fontWeight: 700 }}>{v.toFixed(1)} V</span>
+                <span style={{ color: voltageColor(v), fontWeight: 700 }}>{v.toFixed(1)} V</span>
               </div>
             )
           })}
         </div>
       )}
+
+      {/* Summary */}
+      <div style={{
+        marginTop: 16, background: '#111827', border: '1px solid #1e293b',
+        borderRadius: 8, padding: '16px 32px', minWidth: 300,
+      }}>
+        <div style={{
+          display: 'flex', justifyContent: 'space-between',
+          padding: '4px 0', fontSize: 13,
+        }}>
+          <span style={{ color: '#94a3b8' }}>Total Load</span>
+          <span style={{ color: '#e2e8f0', fontWeight: 700 }}>
+            {electrical.totalLoadAmps?.toFixed(1) ?? '--'} A
+          </span>
+        </div>
+        <div style={{
+          display: 'flex', justifyContent: 'space-between',
+          padding: '4px 0', fontSize: 13,
+        }}>
+          <span style={{ color: '#94a3b8' }}>Battery SOC</span>
+          <span style={{ color: '#e2e8f0', fontWeight: 700 }}>
+            {electrical.batterySocPct?.toFixed(0) ?? '--'}%
+          </span>
+        </div>
+        <div style={{
+          display: 'flex', justifyContent: 'space-between',
+          padding: '4px 0', fontSize: 13,
+        }}>
+          <span style={{ color: '#94a3b8' }}>Master Bus</span>
+          <span style={{ color: voltageColor(electrical.masterBusVoltage ?? 0), fontWeight: 700 }}>
+            {electrical.masterBusVoltage?.toFixed(1) ?? '--'} V
+          </span>
+        </div>
+      </div>
 
       {/* Link back to IOS */}
       <a href="/" style={{
