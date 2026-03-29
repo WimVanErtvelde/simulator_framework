@@ -534,10 +534,13 @@ function TurboshaftEngineDisplay({ idx, engines, config, fuel }) {
 
 export default function AircraftPanel() {
   const { fuel, aircraftId, nav, avionics, sendAvionics, electrical, sendPanel,
-          avionicsConfig, engines, engineConfig, fuelConfig } = useSimStore()
+          avionicsConfig, electricalConfig, forcedSwitchIds,
+          engines, engineConfig, fuelConfig } = useSimStore()
 
   // Track local selector values (not yet in electrical state feedback)
   const [groundSelectors, setGroundSelectors] = useState({})
+  const [showLoads, setShowLoads] = useState(false)
+  const [showCBs, setShowCBs] = useState(false)
 
   const { radios, displays } = avionicsConfig
 
@@ -648,50 +651,193 @@ export default function AircraftPanel() {
         )
       })()}
 
-      {/* ── ELECTRICAL ────────────────────────────────── */}
+      {/* ── ELECTRICAL (config-driven from electrical.yaml) ─── */}
       <SectionHeader title="ELECTRICAL" />
-      {electrical.switchIds?.map((id, i) => {
-        const label = electrical.switchLabels?.[i] || id
-        const on = electrical.switchClosed[i] ?? false
-        return (
-          <ForceToggle key={id} label={label} on={on}
-            onToggle={() => sendPanel([id], [!on])} />
+      {(() => {
+        const cfg = electricalConfig
+        if (!cfg) return (
+          <div style={{ color: '#64748b', fontSize: 12, fontFamily: 'monospace' }}>
+            Waiting for electrical config...
+          </div>
         )
-      })}
-      {electrical.busNames?.length > 0 && (
-        <>
-          <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace', marginTop: 8, marginBottom: 4 }}>
-            BUS VOLTAGES
-          </div>
-          {electrical.busNames.map((name, i) => (
-            <PanelRow key={name} label={name}
-              value={electrical.busVoltages[i]?.toFixed(1) ?? '--'}
+
+        // Look up live switch state by ID from ElectricalState
+        const swClosed = (id) => {
+          const idx = electrical.switchIds?.indexOf(id)
+          return idx >= 0 ? (electrical.switchClosed[idx] ?? false) : false
+        }
+        const isForced = (id) => forcedSwitchIds.includes(id)
+
+        return (
+          <>
+            {/* Switches (pilot_controllable only) */}
+            {cfg.switches?.filter(s => s.pilot_controllable !== false).map(sw => {
+              const on = swClosed(sw.id)
+              const forced = isForced(sw.id)
+              return (
+                <div key={sw.id} style={{
+                  display: 'grid', gridTemplateColumns: '24px 1fr 48px',
+                  alignItems: 'center', gap: 8,
+                  padding: '4px 0', fontSize: 12, fontFamily: 'monospace',
+                }}>
+                  {/* Col 1: FRC checkbox — isolated grid cell */}
+                  <div
+                    onClick={() => {
+                      const newForced = !forced
+                      sendPanel([sw.id], [on], null, null, [newForced])
+                    }}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      cursor: 'pointer', userSelect: 'none',
+                    }}
+                    title={forced ? 'Release force' : 'Force switch'}
+                  >
+                    <div style={{
+                      width: 14, height: 14, borderRadius: 2,
+                      border: forced ? '2px solid #f59e0b' : '1px solid #475569',
+                      background: forced ? '#f59e0b' : 'transparent',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {forced && <span style={{ color: '#0a0e17', fontSize: 10, fontWeight: 900, lineHeight: 1 }}>✓</span>}
+                    </div>
+                  </div>
+                  {/* Col 2: Label */}
+                  <span style={{ color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {sw.label}
+                    {forced && (
+                      <span style={{
+                        fontSize: 8, fontWeight: 700, color: '#f59e0b', marginLeft: 6,
+                        letterSpacing: 1, verticalAlign: 'super',
+                      }}>FORCED</span>
+                    )}
+                  </span>
+                  {/* Col 3: Toggle */}
+                  <button
+                    onClick={() => sendPanel([sw.id], [!on], null, null, [true])}
+                    style={{
+                      width: 48, height: 22, borderRadius: 11, cursor: 'pointer',
+                      border: '1px solid ' + (on ? '#f59e0b' : '#334155'),
+                      background: on ? '#f59e0b' : '#334155',
+                      position: 'relative', transition: 'background 0.2s, border-color 0.2s',
+                    }}
+                  >
+                    <div style={{
+                      width: 18, height: 18, borderRadius: '50%',
+                      background: '#1e293b', position: 'absolute', top: 1,
+                      left: on ? 27 : 1, transition: 'left 0.2s',
+                    }} />
+                  </button>
+                </div>
+              )
+            })}
+
+            {/* Sources */}
+            {electrical.sourceNames?.length > 0 && (
+              <>
+                <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace', marginTop: 8, marginBottom: 4 }}>
+                  SOURCES
+                </div>
+                {electrical.sourceNames.map((name, i) => (
+                  <div key={name} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '2px 0', fontSize: 12, fontFamily: 'monospace',
+                  }}>
+                    <span style={{ color: '#94a3b8' }}>{name}</span>
+                    <span style={{ color: electrical.sourceActive[i] ? '#00ff88' : '#ef4444' }}>
+                      {electrical.sourceActive[i] ? 'ON' : 'OFF'}
+                      <span style={{ color: '#64748b', marginLeft: 8 }}>
+                        {electrical.sourceVoltages[i]?.toFixed(1) ?? '--'}V
+                      </span>
+                      <span style={{ color: '#64748b', marginLeft: 6 }}>
+                        {electrical.sourceCurrents[i]?.toFixed(1) ?? '--'}A
+                      </span>
+                    </span>
+                  </div>
+                ))}
+              </>
+            )}
+
+            {/* Buses */}
+            {electrical.busNames?.length > 0 && (
+              <>
+                <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace', marginTop: 8, marginBottom: 4 }}>
+                  BUSES
+                </div>
+                {electrical.busNames.map((name, i) => (
+                  <PanelRow key={name} label={name}
+                    value={electrical.busVoltages[i]?.toFixed(1) ?? '--'}
+                    unit="V"
+                    valueStyle={{ color: voltageColor(electrical.busVoltages[i] ?? 0) }}
+                  />
+                ))}
+              </>
+            )}
+
+            {/* Summary */}
+            <PanelRow label="Total Load" value={electrical.totalLoadAmps?.toFixed(1) ?? '--'} unit="A" />
+            <PanelRow label="Battery SOC" value={electrical.batterySocPct?.toFixed(0) ?? '--'} unit="%" />
+            <PanelRow label="Master Bus"
+              value={electrical.masterBusVoltage?.toFixed(1) ?? '--'}
               unit="V"
-              valueStyle={{ color: voltageColor(electrical.busVoltages[i] ?? 0) }}
+              valueStyle={{ color: voltageColor(electrical.masterBusVoltage ?? 0) }}
             />
-          ))}
-        </>
-      )}
-      {electrical.sourceNames?.length > 0 && (
-        <>
-          <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace', marginTop: 8, marginBottom: 4 }}>
-            SOURCES
-          </div>
-          {electrical.sourceNames.map((name, i) => (
-            <PanelRow key={name} label={name}
-              value={electrical.sourceActive[i] ? 'ON' : 'OFF'}
-              valueStyle={{ color: electrical.sourceActive[i] ? '#00ff88' : '#ef4444' }}
-            />
-          ))}
-        </>
-      )}
-      <PanelRow label="Total Load" value={electrical.totalLoadAmps?.toFixed(1) ?? '--'} unit="A" />
-      <PanelRow label="Battery SOC" value={electrical.batterySocPct?.toFixed(0) ?? '--'} unit="%" />
-      <PanelRow label="Master Bus"
-        value={electrical.masterBusVoltage?.toFixed(1) ?? '--'}
-        unit="V"
-        valueStyle={{ color: voltageColor(electrical.masterBusVoltage ?? 0) }}
-      />
+
+            {/* Loads (collapsible) */}
+            {electrical.loadNames?.length > 0 && (
+              <>
+                <div
+                  onClick={() => setShowLoads(p => !p)}
+                  style={{
+                    fontSize: 10, color: '#64748b', fontFamily: 'monospace',
+                    marginTop: 8, marginBottom: 4, cursor: 'pointer', userSelect: 'none',
+                  }}
+                >
+                  {showLoads ? '▾' : '▸'} LOADS ({electrical.loadNames.length})
+                </div>
+                {showLoads && electrical.loadNames.map((name, i) => (
+                  <div key={name} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '1px 0 1px 12px', fontSize: 11, fontFamily: 'monospace',
+                  }}>
+                    <span style={{ color: electrical.loadPowered[i] ? '#94a3b8' : '#475569' }}>{name}</span>
+                    <span style={{ color: electrical.loadPowered[i] ? '#00ff88' : '#475569' }}>
+                      {electrical.loadPowered[i] ? `${electrical.loadCurrents[i]?.toFixed(1) ?? '0'}A` : 'OFF'}
+                    </span>
+                  </div>
+                ))}
+              </>
+            )}
+
+            {/* Circuit Breakers (collapsible) */}
+            {electrical.cbNames?.length > 0 && (
+              <>
+                <div
+                  onClick={() => setShowCBs(p => !p)}
+                  style={{
+                    fontSize: 10, color: '#64748b', fontFamily: 'monospace',
+                    marginTop: 8, marginBottom: 4, cursor: 'pointer', userSelect: 'none',
+                  }}
+                >
+                  {showCBs ? '▾' : '▸'} CIRCUIT BREAKERS ({electrical.cbNames.length})
+                </div>
+                {showCBs && electrical.cbNames.map((name, i) => (
+                  <div key={name} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '1px 0 1px 12px', fontSize: 11, fontFamily: 'monospace',
+                  }}>
+                    <span style={{ color: electrical.cbTripped[i] ? '#ff3b30' : '#94a3b8' }}>{name}</span>
+                    <span style={{
+                      color: electrical.cbTripped[i] ? '#ff3b30' : electrical.cbClosed[i] ? '#00ff88' : '#475569',
+                    }}>
+                      {electrical.cbTripped[i] ? 'TRIPPED' : electrical.cbClosed[i] ? 'OK' : 'OPEN'}
+                    </span>
+                  </div>
+                ))}
+              </>
+            )}
+          </>
+        )
+      })()}
 
       {/* ── NAV DISPLAYS (dynamic from config) ─────────── */}
       {displays.map(({ id, type }) => {

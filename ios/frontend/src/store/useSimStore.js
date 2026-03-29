@@ -106,6 +106,7 @@ export const useSimStore = create((set, get) => ({
     sourceNames: [], sourceActive: [], sourceVoltages: [], sourceCurrents: [],
     loadNames: [], loadPowered: [], loadCurrents: [],
     switchIds: [], switchLabels: [], switchClosed: [],
+    cbNames: [], cbClosed: [], cbTripped: [],
     totalLoadAmps: 0, batterySocPct: 0,
     masterBusVoltage: 0, avionicsBusPowered: false, essentialBusPowered: false,
   },
@@ -121,6 +122,13 @@ export const useSimStore = create((set, get) => ({
 
   // Avionics config (from aircraft YAML — drives dynamic A/C page layout)
   avionicsConfig: { radios: [], displays: [] },
+
+  // Electrical config (from aircraft electrical.yaml — drives dynamic IOS/cockpit panels)
+  electricalConfig: null,
+
+  // Per-switch force state (from ArbitrationState.forced_switch_ids)
+  forcedSwitchIds: [],
+  forcedSelectorIds: [],
 
   // Engine state (from sim_engine_systems node)
   engines: {
@@ -287,13 +295,15 @@ export const useSimStore = create((set, get) => ({
     return true
   },
 
-  sendPanel: (switchIds, switchStates, selectorIds, selectorValues) => {
+  sendPanel: (switchIds, switchStates, selectorIds, selectorValues, switchForced, selectorForced) => {
     const { ws, wsConnected } = get()
     if (!wsConnected || !ws) return false
     const data = { switch_ids: switchIds, switch_states: switchStates }
+    if (switchForced?.length) data.switch_forced = switchForced
     if (selectorIds?.length) {
       data.selector_ids = selectorIds
       data.selector_values = selectorValues
+      if (selectorForced?.length) data.selector_forced = selectorForced
     }
     ws.send(JSON.stringify({ type: 'set_panel', data }))
     return true
@@ -543,6 +553,9 @@ export const useSimStore = create((set, get) => ({
                 switchIds: msg.switch_ids ?? s.electrical.switchIds,
                 switchLabels: msg.switch_labels ?? s.electrical.switchLabels,
                 switchClosed: msg.switch_closed ?? s.electrical.switchClosed,
+                cbNames: msg.cb_names ?? s.electrical.cbNames,
+                cbClosed: msg.cb_closed ?? s.electrical.cbClosed,
+                cbTripped: msg.cb_tripped ?? s.electrical.cbTripped,
                 totalLoadAmps: msg.total_load_a ?? s.electrical.totalLoadAmps,
                 batterySocPct: msg.battery_soc_pct ?? s.electrical.batterySocPct,
                 masterBusVoltage: msg.master_bus_voltage_v ?? s.electrical.masterBusVoltage,
@@ -559,6 +572,10 @@ export const useSimStore = create((set, get) => ({
                 displays: msg.displays ?? [],
               },
             })
+            break
+
+          case 'electrical_config':
+            set({ electricalConfig: msg })
             break
 
           case 'engines_state':
@@ -688,6 +705,8 @@ export const useSimStore = create((set, get) => ({
                 hwAvionicsHealthy: msg.hw_avionics_healthy ?? s.arbitration.hwAvionicsHealthy,
                 hwPanelHealthy: msg.hw_panel_healthy ?? s.arbitration.hwPanelHealthy,
               },
+              forcedSwitchIds: msg.forced_switch_ids ?? s.forcedSwitchIds,
+              forcedSelectorIds: msg.forced_selector_ids ?? s.forcedSelectorIds,
             })
             break
 

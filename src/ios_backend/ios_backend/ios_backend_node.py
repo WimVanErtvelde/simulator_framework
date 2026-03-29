@@ -180,6 +180,7 @@ class IosBackendNode(Node):
         self._load_engine_config('c172')
         self._load_fuel_config('c172')
         self._load_failures_config('c172')
+        self._load_electrical_config('c172')
 
         self.get_logger().info('ios_backend started — ws://0.0.0.0:8080/ws')
 
@@ -261,6 +262,7 @@ class IosBackendNode(Node):
                 self._load_engine_config(msg.aircraft_id)
                 self._load_fuel_config(msg.aircraft_id)
                 self._load_failures_config(msg.aircraft_id)
+                self._load_electrical_config(msg.aircraft_id)
 
     @_safe_callback
     def _on_nav_state(self, msg: NavigationState):
@@ -398,6 +400,9 @@ class IosBackendNode(Node):
             'master_bus_voltage_v': float(msg.master_bus_voltage_v),
             'avionics_bus_powered': bool(msg.avionics_bus_powered),
             'essential_bus_powered': bool(msg.essential_bus_powered),
+            'cb_names': list(msg.cb_names),
+            'cb_closed': [bool(c) for c in msg.cb_closed],
+            'cb_tripped': [bool(t) for t in msg.cb_tripped],
         }
         with self._lock:
             self._latest['electrical_state'] = data
@@ -604,6 +609,8 @@ class IosBackendNode(Node):
             'hw_engine_healthy': bool(msg.hardware_engine_healthy),
             'hw_avionics_healthy': bool(msg.hardware_avionics_healthy),
             'hw_panel_healthy': bool(msg.hardware_panel_healthy),
+            'forced_switch_ids': list(msg.forced_switch_ids),
+            'forced_selector_ids': list(msg.forced_selector_ids),
         }
         with self._lock:
             self._latest['arbitration_state'] = data
@@ -676,6 +683,45 @@ class IosBackendNode(Node):
                 f'Loaded failures config for {aircraft_id}: {len(catalog)} failures')
         except Exception as e:
             self.get_logger().error(f'Failed to load failures config: {e}')
+
+    def _load_electrical_config(self, aircraft_id: str):
+        """Load electrical topology from aircraft package electrical.yaml."""
+        try:
+            from ament_index_python.packages import get_package_share_directory
+            pkg = f'aircraft_{aircraft_id}'
+            share_dir = get_package_share_directory(pkg)
+            yaml_path = os.path.join(share_dir, 'config', 'electrical.yaml')
+        except Exception:
+            yaml_path = None
+
+        # Fallback to source tree
+        if not yaml_path or not os.path.isfile(yaml_path):
+            yaml_path = f'src/aircraft/{aircraft_id}/config/electrical.yaml'
+
+        if not os.path.isfile(yaml_path):
+            self.get_logger().warn(f'No electrical.yaml for {aircraft_id}')
+            return
+
+        try:
+            with open(yaml_path) as f:
+                cfg = yaml.safe_load(f)
+            data = {
+                'type': 'electrical_config',
+                'aircraft_id': aircraft_id,
+                'sources': cfg.get('sources', []),
+                'buses': cfg.get('buses', []),
+                'switches': cfg.get('switches', []),
+                'loads': cfg.get('loads', []),
+                'direct_connections': cfg.get('direct_connections', []),
+            }
+            with self._lock:
+                self._latest['electrical_config'] = data
+            self.get_logger().info(
+                f'Loaded electrical config for {aircraft_id}: '
+                f'{len(data["sources"])} sources, {len(data["buses"])} buses, '
+                f'{len(data["switches"])} switches, {len(data["loads"])} loads')
+        except Exception as e:
+            self.get_logger().error(f'Failed to load electrical config: {e}')
 
     def publish_failure_command(self, data: dict):
         """Publish a FailureCommand to /devices/instructor/failure_command."""
@@ -787,8 +833,10 @@ class IosBackendNode(Node):
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.switch_ids = data.get('switch_ids', [])
         msg.switch_states = data.get('switch_states', [])
+        msg.switch_forced = data.get('switch_forced', [])
         msg.selector_ids = data.get('selector_ids', [])
         msg.selector_values = data.get('selector_values', [])
+        msg.selector_forced = data.get('selector_forced', [])
         msg.pot_ids = data.get('pot_ids', [])
         msg.pot_values = data.get('pot_values', [])
         msg.encoder_abs_ids = data.get('encoder_abs_ids', [])
