@@ -215,6 +215,7 @@ public:
     const std::unordered_map<std::string, BusState>& getBusStates() const { return bus_states_; }
     const std::unordered_map<std::string, SwitchState>& getSwitchStates() const { return switch_states_; }
     const std::unordered_map<std::string, LoadState>& getLoadStates() const { return load_states_; }
+    const std::unordered_map<std::string, bool>& getPanelSwitchStates() const { return panel_switch_states_; }
     const std::vector<CasMessage>& getCasMessages() const { return active_cas_; }
     double getSimTime() const { return sim_time_; }
 

@@ -2,6 +2,7 @@
 #include <electrical/electrical_solver.hpp>
 #include <pluginlib/class_list_macros.hpp>
 #include <string>
+#include <unordered_set>
 
 namespace aircraft_c172
 {
@@ -73,13 +74,29 @@ public:
                                (float)ss.current, (float)ss.battery_soc});
     }
 
-    // Switches
+    // Source switches (from topology)
     for (const auto & [id, sw] : solver_.getSwitchStates()) {
       std::string label = id;
       for (const auto & sd : topo.switches) {
         if (sd.id == id) { label = sd.label; break; }
       }
       snap.switches.push_back({id, label, sw.closed});
+    }
+
+    // Load switches (from panel_switch_states_ — sw_landing_lt, sw_pitot_heat, etc.)
+    // These are switch_id fields on loads, tracked separately from source switches.
+    std::unordered_set<std::string> source_sw_ids;
+    for (const auto & [id, _] : solver_.getSwitchStates()) {
+      source_sw_ids.insert(id);
+    }
+    for (const auto & [id, on] : solver_.getPanelSwitchStates()) {
+      if (source_sw_ids.count(id)) continue;  // already in source switches
+      // Find label from load config
+      std::string label = id;
+      for (const auto & ld : topo.loads) {
+        if (ld.switch_id == id) { label = ld.label; break; }
+      }
+      snap.switches.push_back({id, label, on});
     }
 
     // Loads + CBs — use id as name
