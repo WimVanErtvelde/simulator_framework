@@ -18,6 +18,7 @@
 #include <sim_msgs/msg/sim_alert.hpp>
 
 #include <map>
+#include <unordered_map>
 #include <string>
 #include <chrono>
 
@@ -74,7 +75,10 @@ public:
     has_inst_flight_   = false;
     has_inst_engine_   = false;
     has_inst_avionics_ = false;
-    has_inst_panel_    = false;
+    switch_controls_.clear();
+    selector_controls_.clear();
+    pot_map_.clear();
+    encoder_abs_map_.clear();
 
     sim_frozen_ = false;
     last_hw_heartbeat_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
@@ -169,7 +173,6 @@ public:
     sub_inst_panel_ = this->create_subscription<sim_msgs::msg::PanelControls>(
       "/devices/instructor/panel", qos,
       [this](sim_msgs::msg::PanelControls::SharedPtr msg) {
-        has_inst_panel_ = true;
         on_panel_received(*msg, SOURCE_INSTRUCTOR);
       });
 
@@ -420,7 +423,28 @@ private:
   }
 
   // ──────────────────────────────────────────────────────────────────
-  // Panel on-change handler
+  // Per-switch / per-selector force state
+  // ──────────────────────────────────────────────────────────────────
+  struct SwitchControlState {
+    bool forced = false;
+    bool force_value = false;
+    bool has_virtual = false;
+    bool virtual_value = false;
+    bool has_hardware = false;
+    bool hardware_value = false;
+  };
+
+  struct SelectorControlState {
+    bool forced = false;
+    int32_t force_value = 0;
+    bool has_virtual = false;
+    int32_t virtual_value = 0;
+    bool has_hardware = false;
+    int32_t hardware_value = 0;
+  };
+
+  // ──────────────────────────────────────────────────────────────────
+  // Panel on-change handler — per-switch force model
   // ──────────────────────────────────────────────────────────────────
   void on_panel_received(const sim_msgs::msg::PanelControls & msg, uint8_t source)
   {
@@ -429,71 +453,130 @@ private:
       return;
     }
 
-    // Check if this source has priority
-    uint8_t effective_source = resolve_source(has_inst_panel_, hw_panel_healthy_);
-    if (sim_frozen_) {
-      effective_source = SOURCE_INSTRUCTOR;  // only instructor during freeze
-    }
-
-    if (source != effective_source) {
-      return;  // this source doesn't have priority right now
-    }
-
-    // Merge incoming switch states into current panel state
-    bool changed = merge_panel(msg);
-
-    if (changed) {
-      current_panel_.header.stamp = this->now();
-      last_published_panel_ = current_panel_;
-      pub_panel_->publish(current_panel_);
-    }
-  }
-
-  bool merge_panel(const sim_msgs::msg::PanelControls & msg)
-  {
     bool changed = false;
 
-    // Merge switches
+    // --- Process switches ---
     for (size_t i = 0; i < msg.switch_ids.size() && i < msg.switch_states.size(); ++i) {
       const auto & id = msg.switch_ids[i];
       bool state = msg.switch_states[i];
+      auto & ctrl = switch_controls_[id];
 
-      auto it = switch_map_.find(id);
-      if (it == switch_map_.end() || it->second != state) {
-        switch_map_[id] = state;
+      if (source == SOURCE_INSTRUCTOR) {
+        bool has_force_flag = (i < msg.switch_forced.size());
+        if (has_force_flag && !msg.switch_forced[i]) {
+          // RELEASE: give back to cockpit/hardware
+          ctrl.forced = false;
+        } else {
+          // FORCE (explicit or implicit — IOS toggle = implicit force)
+          ctrl.forced = true;
+          ctrl.force_value = state;
+        }
+        RCLCPP_INFO(get_logger(), "Panel: id=%s has_flag=%d forced_val=%d ctrl.forced=%d state=%d",
+            id.c_str(), (int)has_force_flag, has_force_flag ? (int)msg.switch_forced[i] : -1,
+            (int)ctrl.forced, (int)state);
         changed = true;
+      } else if (source == SOURCE_VIRTUAL) {
+        ctrl.has_virtual = true;
+        if (ctrl.virtual_value != state) changed = true;
+        ctrl.virtual_value = state;
+      } else if (source == SOURCE_HARDWARE) {
+        ctrl.has_hardware = true;
+        if (ctrl.hardware_value != state) changed = true;
+        ctrl.hardware_value = state;
       }
     }
 
-    // Merge selectors
+    // --- Process selectors ---
     for (size_t i = 0; i < msg.selector_ids.size() && i < msg.selector_values.size(); ++i) {
       const auto & id = msg.selector_ids[i];
       int32_t val = msg.selector_values[i];
+      auto & ctrl = selector_controls_[id];
 
-      auto it = selector_map_.find(id);
-      if (it == selector_map_.end() || it->second != val) {
-        selector_map_[id] = val;
+      if (source == SOURCE_INSTRUCTOR) {
+        bool has_force_flag = (i < msg.selector_forced.size());
+        if (has_force_flag && !msg.selector_forced[i]) {
+          ctrl.forced = false;
+        } else {
+          ctrl.forced = true;
+          ctrl.force_value = val;
+        }
         changed = true;
+      } else if (source == SOURCE_VIRTUAL) {
+        ctrl.has_virtual = true;
+        if (ctrl.virtual_value != val) changed = true;
+        ctrl.virtual_value = val;
+      } else if (source == SOURCE_HARDWARE) {
+        ctrl.has_hardware = true;
+        if (ctrl.hardware_value != val) changed = true;
+        ctrl.hardware_value = val;
       }
+    }
+
+    // --- Process pots/encoders (simple merge, no force) ---
+    for (size_t i = 0; i < msg.pot_ids.size() && i < msg.pot_values.size(); ++i) {
+      pot_map_[msg.pot_ids[i]] = msg.pot_values[i];
+      changed = true;
+    }
+    for (size_t i = 0; i < msg.encoder_abs_ids.size() && i < msg.encoder_abs_values.size(); ++i) {
+      encoder_abs_map_[msg.encoder_abs_ids[i]] = msg.encoder_abs_values[i];
+      changed = true;
     }
 
     if (changed) {
-      // Rebuild current_panel_ from maps
-      current_panel_.switch_ids.clear();
-      current_panel_.switch_states.clear();
-      for (const auto & [id, state] : switch_map_) {
-        current_panel_.switch_ids.push_back(id);
-        current_panel_.switch_states.push_back(state);
+      publish_effective_panel();
+    }
+  }
+
+  void publish_effective_panel()
+  {
+    auto output = sim_msgs::msg::PanelControls();
+    output.header.stamp = this->now();
+
+    // Resolve effective switch values
+    for (const auto & [id, ctrl] : switch_controls_) {
+      bool effective;
+      if (ctrl.forced) {
+        effective = ctrl.force_value;
+      } else if (ctrl.has_hardware && hw_panel_healthy_) {
+        effective = ctrl.hardware_value;
+      } else if (ctrl.has_virtual) {
+        effective = ctrl.virtual_value;
+      } else {
+        continue;  // no value from any source
       }
-      current_panel_.selector_ids.clear();
-      current_panel_.selector_values.clear();
-      for (const auto & [id, val] : selector_map_) {
-        current_panel_.selector_ids.push_back(id);
-        current_panel_.selector_values.push_back(val);
-      }
+      output.switch_ids.push_back(id);
+      output.switch_states.push_back(effective);
     }
 
-    return changed;
+    // Resolve effective selector values
+    for (const auto & [id, ctrl] : selector_controls_) {
+      int32_t effective;
+      if (ctrl.forced) {
+        effective = ctrl.force_value;
+      } else if (ctrl.has_hardware && hw_panel_healthy_) {
+        effective = ctrl.hardware_value;
+      } else if (ctrl.has_virtual) {
+        effective = ctrl.virtual_value;
+      } else {
+        continue;
+      }
+      output.selector_ids.push_back(id);
+      output.selector_values.push_back(effective);
+    }
+
+    // Pots and encoders — pass through
+    for (const auto & [id, val] : pot_map_) {
+      output.pot_ids.push_back(id);
+      output.pot_values.push_back(val);
+    }
+    for (const auto & [id, val] : encoder_abs_map_) {
+      output.encoder_abs_ids.push_back(id);
+      output.encoder_abs_values.push_back(val);
+    }
+
+    current_panel_ = output;
+    last_published_panel_ = output;
+    pub_panel_->publish(output);
   }
 
   // ──────────────────────────────────────────────────────────────────
@@ -620,12 +703,26 @@ private:
       pub_avionics_->publish(avionics_out);
     }
 
-    // --- Panel source update (no 50 Hz publish — on-change only) ---
-    panel_source_ = resolve_source(has_inst_panel_, hw_panel_healthy_);
-    if (sim_frozen_) {
-      // During freeze, panel source is FROZEN for display purposes,
-      // but instructor panel commands still pass through via on_panel_received()
-      panel_source_ = SOURCE_FROZEN;
+    // --- Panel source — per-switch model, report dominant source ---
+    {
+      bool any_forced = false;
+      for (const auto & [id, ctrl] : switch_controls_) {
+        if (ctrl.forced) { any_forced = true; break; }
+      }
+      if (!any_forced) {
+        for (const auto & [id, ctrl] : selector_controls_) {
+          if (ctrl.forced) { any_forced = true; break; }
+        }
+      }
+      if (sim_frozen_) {
+        panel_source_ = SOURCE_FROZEN;
+      } else if (any_forced) {
+        panel_source_ = SOURCE_INSTRUCTOR;
+      } else if (hw_panel_healthy_) {
+        panel_source_ = SOURCE_HARDWARE;
+      } else {
+        panel_source_ = SOURCE_VIRTUAL;
+      }
     }
   }
 
@@ -646,6 +743,14 @@ private:
     msg.hardware_engine_healthy   = hw_engine_healthy_;
     msg.hardware_avionics_healthy = hw_avionics_healthy_;
     msg.hardware_panel_healthy    = hw_panel_healthy_;
+
+    // Per-switch force lists for frontend FORCE checkbox rendering
+    for (const auto & [id, ctrl] : switch_controls_) {
+      if (ctrl.forced) msg.forced_switch_ids.push_back(id);
+    }
+    for (const auto & [id, ctrl] : selector_controls_) {
+      if (ctrl.forced) msg.forced_selector_ids.push_back(id);
+    }
 
     pub_arbitration_->publish(msg);
   }
@@ -671,10 +776,10 @@ private:
   bool hw_panel_healthy_    = false;
 
   // Instructor presence flags (sticky — once instructor publishes, they own the channel)
+  // NOTE: panel channel no longer uses sticky flag — per-switch force model instead
   bool has_inst_flight_   = false;
   bool has_inst_engine_   = false;
   bool has_inst_avionics_ = false;
-  bool has_inst_panel_    = false;
 
   // Sim frozen state
   bool sim_frozen_ = false;
@@ -695,11 +800,13 @@ private:
   sim_msgs::msg::EngineControls   last_published_engine_;
   sim_msgs::msg::AvionicsControls last_published_avionics_;
 
-  // Panel state (accumulated, on-change only)
+  // Panel state — per-switch force model (accumulated, on-change only)
   sim_msgs::msg::PanelControls current_panel_;
   sim_msgs::msg::PanelControls last_published_panel_;
-  std::map<std::string, bool>    switch_map_;
-  std::map<std::string, int32_t> selector_map_;
+  std::unordered_map<std::string, SwitchControlState> switch_controls_;
+  std::unordered_map<std::string, SelectorControlState> selector_controls_;
+  std::unordered_map<std::string, float> pot_map_;
+  std::unordered_map<std::string, int32_t> encoder_abs_map_;
 
   // Subscribers
   rclcpp::Subscription<sim_msgs::msg::RawFlightControls>::SharedPtr
