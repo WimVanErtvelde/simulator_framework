@@ -52,6 +52,11 @@ entity flicker (bug #0) proved this: the original hypothesis (JSBSim cache corru
 was wrong — the actual cause was a zombie process. Fixing the wrong thing wastes time
 and adds unnecessary code.
 
+### Git commit discipline
+
+Commit after every successfully building change. Never accumulate more than
+one logical change in uncommitted state. Use descriptive commit messages.
+
 ### What to check before finishing
 
 - [ ] `colcon build` passes (at minimum the affected packages)
@@ -401,12 +406,21 @@ VIRTUAL     → virtual panel fallback (/devices/virtual/)
 FROZEN      → hold last value
 ```
 
-Channels: `flight`, `engine`, `avionics`, `panel` (4 channels total).
+Channels: `flight`, `engine`, `avionics` — 3 continuous channels with sticky instructor takeover.
 
 Hardware timeout > 500ms → auto-fallback to VIRTUAL + alert on `/sim/controls/arbitration`.
 
-Instructor takeover is **sticky** — once instructor publishes on a channel, source stays INSTRUCTOR
-until node reconfigure. No auto-release, no timeout.
+Instructor takeover is **sticky** for flight/engine/avionics — once instructor publishes on a
+channel, source stays INSTRUCTOR until node reconfigure. No auto-release, no timeout.
+
+**Panel channel — per-switch force model (NOT sticky):**
+- Each switch/selector tracks its own force state independently
+- IOS sends `switch_forced: [true]` to force, `[false]` to release
+- IOS toggle without force flag = implicit force (backward compatible)
+- Virtual/hardware commands update their value but don't override forced switches
+- Effective value: forced > hardware (if healthy) > virtual
+- `ArbitrationState.forced_switch_ids[]` reports which switches are currently forced
+- Instructor forcing `sw_battery` does NOT lock out cockpit page's `sw_landing_lt`
 
 ---
 
@@ -422,9 +436,13 @@ until node reconfigure. No auto-release, no timeout.
 | Virtual cockpit avionics | `/devices/virtual/controls/avionics` | VIRTUAL | cockpit browser pages |
 | Physical hardware | `/devices/hardware/panel` | HARDWARE | microros_bridge |
 
-IOS A/C page switches are instructor-level by default — the act of the instructor touching
-a switch IS the force. No separate "Force" button needed. Amber styling on IOS switches
-communicates instructor authority visually.
+IOS A/C page switches are instructor-level. Each switch has a FORCE checkbox — ticking it
+locks the switch at its current value (cockpit/hardware cannot override). Unticking releases
+to cockpit/hardware control. Toggling a switch without the checkbox also implicitly forces.
+Amber styling on IOS switches communicates instructor authority visually.
+
+`PanelControls.msg` carries `switch_forced[]` and `selector_forced[]` arrays parallel to the
+ID arrays. Empty = normal command (cockpit/hardware). Populated = force/release (IOS).
 
 All panel UIs read displayed state from `/sim/controls/panel` (arbitrated output) — never
 from their own published commands. Single source of truth.
@@ -490,8 +508,19 @@ React + Zustand + WebSocket + React Router. Served by Vite dev server on port 51
 - `src/components/NavTabs.jsx` — 9 left-side navigation tabs (56px wide, monospace symbols)
 - `src/components/MapView.jsx` — Leaflet map, type-aware aircraft icon (color = sim state)
 - `src/components/panels/NodesPanel.jsx` — dynamic node discovery, lifecycle state, per-node controls
-- `src/components/panels/AircraftPanel.jsx` — fully dynamic A/C page, driven by navigation.yaml
+- `src/components/panels/AircraftPanel.jsx` — fully dynamic A/C page, driven by navigation.yaml + electrical.yaml
 - `src/components/cockpit/CockpitElectrical.jsx` — virtual cockpit electrical panel (VIRTUAL)
+
+**Config-driven panels:** ios_backend loads aircraft YAML configs and sends them as WS messages
+on connect and aircraft_id change. Frontend stores these and renders dynamically:
+- `avionics_config` — from navigation.yaml (radios, displays)
+- `engine_config` — from engine.yaml (engine type, limits)
+- `fuel_config` — from fuel.yaml (tanks, display units)
+- `failures_config` — from failures.yaml (failure catalog)
+- `electrical_config` — from electrical.yaml (sources, buses, switches, loads)
+
+The IOS AircraftPanel electrical section renders switches/sources/buses/loads/CBs from
+`electrical_config`. Each switch has a per-switch FORCE checkbox backed by `ArbitrationState.forced_switch_ids`.
 
 **Design palette:** bg `#0a0e17`, panel `#111827`, elevated `#1c2333`, borders `#1e293b`,
 text `#e2e8f0`, dim `#64748b`, accent `#00ff88`, cyan `#39d0d8`, danger `#ff3b30`.
