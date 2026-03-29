@@ -671,7 +671,7 @@ void ElectricalSolver::updateLoads(double dt) {
         ls.powered = bus.powered && cb_ok && switch_on && fault != "open";
 
         if (ld.id == "com1" || ld.id == "com2") {
-            std::cout << ld.id << ": bus=" << ld.bus
+            std::cerr << ld.id << ": bus=" << ld.bus
                       << " bus_powered=" << bus.powered
                       << " bus_v=" << bus.voltage
                       << " cb_closed=" << ls.cb_closed
