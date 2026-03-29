@@ -251,8 +251,8 @@ class IosBackendNode(Node):
             'freeze_position': bool(msg.freeze_position),
             'freeze_fuel': bool(msg.freeze_fuel),
             'aircraft_id': msg.aircraft_id,
-            'sim_time_sec': float(msg.sim_time_sec),
-            'time_scale': float(msg.time_scale),
+            'sim_time_sec': round(float(msg.sim_time_sec), 1),
+            'time_scale': round(float(msg.time_scale), 1),
         }
         with self._lock:
             self._latest['sim_state'] = data
