@@ -694,6 +694,7 @@ export const useSimStore = create((set, get) => ({
             break
 
           case 'arbitration_state':
+            console.log('ARB WS RECV:', JSON.stringify(msg))
             set({
               arbitration: {
                 flightSource: msg.flight_source ?? s.arbitration.flightSource,
