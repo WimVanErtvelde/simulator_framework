@@ -598,7 +598,6 @@ class IosBackendNode(Node):
 
     @_safe_callback
     def _on_arbitration_state(self, msg: ArbitrationState):
-        self.get_logger().info(f"ARB STATE: forced_switches={list(msg.forced_switch_ids)}")
         src_names = {0: 'FROZEN', 1: 'HARDWARE', 2: 'VIRTUAL', 3: 'INSTRUCTOR'}
         data = {
             'type': 'arbitration_state',
@@ -613,7 +612,6 @@ class IosBackendNode(Node):
             'forced_switch_ids': list(msg.forced_switch_ids),
             'forced_selector_ids': list(msg.forced_selector_ids),
         }
-        self.get_logger().info(f"ARB WS SEND: {data.get('forced_switch_ids', 'MISSING')}")
         with self._lock:
             self._latest['arbitration_state'] = data
 

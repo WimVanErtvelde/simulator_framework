@@ -468,17 +468,14 @@ private:
         if (has_force_flag && !msg.switch_forced[i]) {
           // RELEASE: give back to cockpit/hardware — don't touch value
           ctrl.forced = false;
-          RCLCPP_INFO(get_logger(), "Panel RELEASE: id=%s", id.c_str());
         } else if (has_force_flag && msg.switch_forced[i] && has_state) {
           // EXPLICIT FORCE: lock switch at this value
           ctrl.forced = true;
           ctrl.force_value = msg.switch_states[i];
-          RCLCPP_INFO(get_logger(), "Panel FORCE: id=%s state=%d", id.c_str(), (int)msg.switch_states[i]);
         } else if (!has_force_flag && has_state) {
           // No force flag: instructor sets value without forcing
           ctrl.has_virtual = true;
           ctrl.virtual_value = msg.switch_states[i];
-          RCLCPP_INFO(get_logger(), "Panel SET (no force): id=%s state=%d", id.c_str(), (int)msg.switch_states[i]);
         }
         changed = true;
       } else if (has_state) {
