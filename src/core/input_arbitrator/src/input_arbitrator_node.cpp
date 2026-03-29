@@ -465,6 +465,9 @@ private:
         bool has_force_flag = (i < msg.switch_forced.size());
         if (has_force_flag && !msg.switch_forced[i]) {
           // RELEASE: give back to cockpit/hardware
+          // Seed virtual with current force value so switch holds position
+          ctrl.has_virtual = true;
+          ctrl.virtual_value = ctrl.force_value;
           ctrl.forced = false;
         } else {
           // FORCE (explicit or implicit — IOS toggle = implicit force)
@@ -495,6 +498,8 @@ private:
       if (source == SOURCE_INSTRUCTOR) {
         bool has_force_flag = (i < msg.selector_forced.size());
         if (has_force_flag && !msg.selector_forced[i]) {
+          ctrl.has_virtual = true;
+          ctrl.virtual_value = ctrl.force_value;
           ctrl.forced = false;
         } else {
           ctrl.forced = true;
