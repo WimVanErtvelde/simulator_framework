@@ -58,13 +58,26 @@ export default function CockpitElectrical() {
     }))
   }
 
-  // Look up live switch state by ID from ElectricalState
   const swClosed = (id) => {
     const idx = electrical.switchIds?.indexOf(id)
     return idx >= 0 ? (electrical.switchClosed[idx] ?? false) : false
   }
 
   const cfg = electricalConfig
+
+  // Build combined switch list from source switches + load switches
+  const sourceSwitches = (cfg?.switches || [])
+    .filter(sw => sw.pilot_controllable !== false)
+  const loadSwitches = (cfg?.loads || [])
+    .filter(ld => ld.switch_id)
+    .map(ld => ({ id: ld.switch_id, label: ld.label }))
+  const allSwitches = [...sourceSwitches, ...loadSwitches]
+    .filter((sw, i, arr) => arr.findIndex(s => s.id === sw.id) === i)
+    .filter(sw => sw.id !== 'sw_starter_engage')
+
+  const masterIds = new Set(sourceSwitches.map(s => s.id))
+  const masterGroup = allSwitches.filter(sw => masterIds.has(sw.id))
+  const auxGroup = allSwitches.filter(sw => !masterIds.has(sw.id))
 
   return (
     <div style={{
@@ -75,7 +88,6 @@ export default function CockpitElectrical() {
       display: 'flex', flexDirection: 'column', alignItems: 'center',
       padding: 32,
     }}>
-      {/* Panel label */}
       <div style={{
         fontSize: 11, fontWeight: 700, letterSpacing: 3, color: '#475569',
         textTransform: 'uppercase', marginBottom: 32,
@@ -83,27 +95,58 @@ export default function CockpitElectrical() {
         {aircraftId.toUpperCase()} Electrical Panel — Virtual Cockpit
       </div>
 
-      {/* Switch panel — from electricalConfig */}
-      <div style={{
-        background: '#111827', border: '1px solid #1e293b', borderRadius: 8,
-        padding: '32px 48px', display: 'flex', gap: 32, alignItems: 'flex-start',
-        flexWrap: 'wrap', justifyContent: 'center',
-        boxShadow: '0 4px 24px rgba(0,0,0,0.5)',
-      }}>
-        {cfg ? (
-          cfg.switches?.filter(s => s.pilot_controllable !== false).map(sw => {
-            const on = swClosed(sw.id)
-            return (
-              <ToggleSwitch key={sw.id} label={sw.label} on={on}
-                onToggle={() => toggleVirtual(sw.id, on)} />
-            )
-          })
-        ) : (
-          <div style={{ color: '#64748b', fontSize: 13 }}>
-            Waiting for electrical config...
+      {!cfg ? (
+        <div style={{
+          background: '#111827', border: '1px solid #1e293b', borderRadius: 8,
+          padding: '32px 48px', color: '#64748b', fontSize: 13,
+        }}>
+          Waiting for electrical config...
+        </div>
+      ) : (
+        <>
+          {/* MASTER switches */}
+          <div style={{
+            background: '#111827', border: '1px solid #1e293b', borderRadius: 8,
+            padding: '32px 48px', boxShadow: '0 4px 24px rgba(0,0,0,0.5)',
+          }}>
+            <div style={{
+              fontSize: 10, fontWeight: 700, letterSpacing: 2, color: '#475569',
+              textTransform: 'uppercase', marginBottom: 16, textAlign: 'center',
+            }}>Master</div>
+            <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap', justifyContent: 'center' }}>
+              {masterGroup.map(sw => {
+                const on = swClosed(sw.id)
+                return (
+                  <ToggleSwitch key={sw.id} label={sw.label} on={on}
+                    onToggle={() => toggleVirtual(sw.id, on)} />
+                )
+              })}
+            </div>
           </div>
-        )}
-      </div>
+
+          {/* AUX switches (load switches: lights, fuel pump, pitot heat, etc.) */}
+          {auxGroup.length > 0 && (
+            <div style={{
+              marginTop: 16, background: '#111827', border: '1px solid #1e293b',
+              borderRadius: 8, padding: '32px 48px', boxShadow: '0 4px 24px rgba(0,0,0,0.5)',
+            }}>
+              <div style={{
+                fontSize: 10, fontWeight: 700, letterSpacing: 2, color: '#475569',
+                textTransform: 'uppercase', marginBottom: 16, textAlign: 'center',
+              }}>Switches</div>
+              <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap', justifyContent: 'center' }}>
+                {auxGroup.map(sw => {
+                  const on = swClosed(sw.id)
+                  return (
+                    <ToggleSwitch key={sw.id} label={sw.label} on={on}
+                      onToggle={() => toggleVirtual(sw.id, on)} />
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </>
+      )}
 
       {/* Sources */}
       {electrical.sourceNames?.length > 0 && (
@@ -167,28 +210,15 @@ export default function CockpitElectrical() {
         marginTop: 16, background: '#111827', border: '1px solid #1e293b',
         borderRadius: 8, padding: '16px 32px', minWidth: 300,
       }}>
-        <div style={{
-          display: 'flex', justifyContent: 'space-between',
-          padding: '4px 0', fontSize: 13,
-        }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13 }}>
           <span style={{ color: '#94a3b8' }}>Total Load</span>
-          <span style={{ color: '#e2e8f0', fontWeight: 700 }}>
-            {electrical.totalLoadAmps?.toFixed(1) ?? '--'} A
-          </span>
+          <span style={{ color: '#e2e8f0', fontWeight: 700 }}>{electrical.totalLoadAmps?.toFixed(1) ?? '--'} A</span>
         </div>
-        <div style={{
-          display: 'flex', justifyContent: 'space-between',
-          padding: '4px 0', fontSize: 13,
-        }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13 }}>
           <span style={{ color: '#94a3b8' }}>Battery SOC</span>
-          <span style={{ color: '#e2e8f0', fontWeight: 700 }}>
-            {electrical.batterySocPct?.toFixed(0) ?? '--'}%
-          </span>
+          <span style={{ color: '#e2e8f0', fontWeight: 700 }}>{electrical.batterySocPct?.toFixed(0) ?? '--'}%</span>
         </div>
-        <div style={{
-          display: 'flex', justifyContent: 'space-between',
-          padding: '4px 0', fontSize: 13,
-        }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13 }}>
           <span style={{ color: '#94a3b8' }}>Master Bus</span>
           <span style={{ color: voltageColor(electrical.masterBusVoltage ?? 0), fontWeight: 700 }}>
             {electrical.masterBusVoltage?.toFixed(1) ?? '--'} V
@@ -196,7 +226,6 @@ export default function CockpitElectrical() {
         </div>
       </div>
 
-      {/* Link back to IOS */}
       <a href="/" style={{
         marginTop: 32, fontSize: 11, color: '#475569', textDecoration: 'none',
       }}>← Back to IOS</a>

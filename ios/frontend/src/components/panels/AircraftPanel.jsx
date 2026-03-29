@@ -637,10 +637,21 @@ export default function AircraftPanel() {
         }
         const isForced = (id) => !!localForced[id]
 
-        return (
-          <>
-            {/* Switches (pilot_controllable only) */}
-            {cfg.switches?.filter(s => s.pilot_controllable !== false).map(sw => {
+        // Build combined switch list: source switches + load switches
+        const sourceSwitches = (cfg.switches || [])
+          .filter(sw => sw.pilot_controllable !== false)
+        const loadSwitches = (cfg.loads || [])
+          .filter(ld => ld.switch_id)
+          .map(ld => ({ id: ld.switch_id, label: ld.label, type: 'load_switch' }))
+        const allSwitches = [...sourceSwitches, ...loadSwitches]
+          .filter((sw, i, arr) => arr.findIndex(s => s.id === sw.id) === i)
+          .filter(sw => sw.id !== 'sw_starter_engage') // controlled by magneto START
+
+        const masterIds = new Set(sourceSwitches.map(s => s.id))
+        const masterSwitches = allSwitches.filter(sw => masterIds.has(sw.id))
+        const auxSwitches = allSwitches.filter(sw => !masterIds.has(sw.id))
+
+        const renderSwitchRow = (sw) => {
               const on = swClosed(sw.id)
               const forced = isForced(sw.id)
               return (
@@ -649,7 +660,7 @@ export default function AircraftPanel() {
                   alignItems: 'center', gap: 8,
                   padding: '4px 0', fontSize: 12, fontFamily: 'monospace',
                 }}>
-                  {/* Col 1: FRC checkbox — local state, no round-trip needed */}
+                  {/* Col 1: FRC checkbox */}
                   <input
                     type="checkbox"
                     checked={forced}
@@ -658,19 +669,14 @@ export default function AircraftPanel() {
                       const newForced = !forced
                       setLocalForced(prev => ({ ...prev, [sw.id]: newForced }))
                       if (newForced) {
-                        // ENGAGE force: send current state + forced=true
                         sendPanel([sw.id], [on], null, null, [true])
                       } else {
-                        // RELEASE force: no switch_states, just the release flag
                         sendPanel([sw.id], [], null, null, [false])
                       }
                     }}
                     onChange={() => {}}
                     title={forced ? 'Release force' : 'Force switch'}
-                    style={{
-                      width: 14, height: 14, cursor: 'pointer',
-                      accentColor: '#f59e0b',
-                    }}
+                    style={{ width: 14, height: 14, cursor: 'pointer', accentColor: '#f59e0b' }}
                   />
                   {/* Col 2: Label */}
                   <span style={{ color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -682,7 +688,7 @@ export default function AircraftPanel() {
                       }}>FORCED</span>
                     )}
                   </span>
-                  {/* Col 3: Toggle — forced: change forced value; unforced: normal command */}
+                  {/* Col 3: Toggle */}
                   <button
                     onClick={() => sendPanel([sw.id], [!on], null, null, forced ? [true] : undefined)}
                     style={{
@@ -700,7 +706,25 @@ export default function AircraftPanel() {
                   </button>
                 </div>
               )
-            })}
+            }
+
+        return (
+          <>
+            {/* MASTER switches group */}
+            <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace', marginBottom: 4 }}>
+              MASTER
+            </div>
+            {masterSwitches.map(renderSwitchRow)}
+
+            {/* Auxiliary switches group (load switches) */}
+            {auxSwitches.length > 0 && (
+              <>
+                <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace', marginTop: 8, marginBottom: 4 }}>
+                  SWITCHES
+                </div>
+                {auxSwitches.map(renderSwitchRow)}
+              </>
+            )}
 
             {/* Sources */}
             {electrical.sourceNames?.length > 0 && (
