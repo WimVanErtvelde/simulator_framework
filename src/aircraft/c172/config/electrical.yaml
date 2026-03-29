@@ -130,6 +130,7 @@ loads:
     bus: essential_bus
     type: avionics
     nominal_current: 2.5
+    switch_id: sw_com1
     circuit_breaker:
       id: cb_com1
       rating: 5.0
@@ -171,6 +172,7 @@ loads:
     bus: avionics_bus
     type: avionics
     nominal_current: 2.5
+    switch_id: sw_com2
     circuit_breaker:
       id: cb_com2
       rating: 5.0
