@@ -287,6 +287,27 @@ int main() {
     }
     PASS();
 
+    // T15 ── Motor inrush should NOT trip CB ──────────────────────────
+    TEST("Motor inrush should NOT trip CB (fuel pump 12A inrush, 7.5A CB)");
+    {
+        GraphSolver s = makeSolver();
+        powerBattery(s);
+        s.commandConnection("sw_fuel_pump", 1);
+        s.step(0.02); // first step — inrush active
+
+        CHECK(!s.getConnectionStates().at("cb_fuel_pump").tripped);
+        CHECK(s.getNodeStates().at("fuel_pump").powered);
+
+        // Run through full inrush duration (400ms = 20 steps at 20ms)
+        for (int i = 0; i < 20; ++i)
+            s.step(0.02);
+
+        // Still not tripped — inrush is transient, CB thermal model handles it
+        CHECK(!s.getConnectionStates().at("cb_fuel_pump").tripped);
+        CHECK(s.getNodeStates().at("fuel_pump").powered);
+    }
+    PASS();
+
     // ── Summary ─────────────────────────────────────────────────────
     std::cout << "\n" << tests_passed << "/" << tests_total
               << " tests passed." << std::endl;

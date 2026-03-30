@@ -74,6 +74,7 @@ struct ConnectionState {
     double pot_value = 0.0;
     int selector_position = 0;
     double current_through = 0.0;
+    double thermal_energy = 0.0; // CB inverse-time trip accumulator
     bool jammed = false;
     bool jammed_value = false;
 };

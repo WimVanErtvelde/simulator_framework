@@ -456,10 +456,17 @@ void GraphSolver::updateLoads(double dt) {
         auto& ns = node_states_[node.id];
         auto& lp = *node.load;
 
+        bool was_powered = (ns.current > 0.0);
+
         if (!ns.powered) {
             ns.current = 0.0;
+            ns.inrush_timer = 0.0;
             continue;
         }
+
+        // Start inrush timer on unpowered → powered transition
+        if (!was_powered && lp.load_type == "motor" && lp.inrush_duration_ms > 0.0)
+            ns.inrush_timer = lp.inrush_duration_ms / 1000.0;
 
         double draw = lp.nominal_current;
 
@@ -469,7 +476,7 @@ void GraphSolver::updateLoads(double dt) {
             draw *= mult;
         }
 
-        // Motor inrush
+        // Motor inrush: ramp from inrush_current down to nominal_current
         if (lp.load_type == "motor" && lp.inrush_current > 0.0 && ns.inrush_timer > 0.0) {
             double inrush_frac = ns.inrush_timer / (lp.inrush_duration_ms / 1000.0);
             draw = lp.nominal_current + (lp.inrush_current - lp.nominal_current) * inrush_frac;
@@ -486,7 +493,10 @@ void GraphSolver::updateLoads(double dt) {
 
         ns.current = draw;
 
-        // CB overcurrent check
+        // CB inverse-time thermal trip model
+        // Thermal energy accumulates as (I/rating)^2 - 1 per second.
+        // At rating: energy stays at zero. At 141%: ~1s to trip. At 10×: instant.
+        // Short transient inrush (e.g. 1.6× for 400ms) does not accumulate enough to trip.
         auto cb_it = load_cb_map_.find(node.id);
         if (cb_it != load_cb_map_.end()) {
             auto ci = conn_index_.find(cb_it->second);
@@ -495,11 +505,21 @@ void GraphSolver::updateLoads(double dt) {
                 auto& cb_cs = conn_states_[cb_it->second];
                 cb_cs.current_through += draw;
 
-                if (conn.rating > 0.0 && cb_cs.current_through > conn.rating * 1.3) {
-                    cb_cs.tripped = true;
-                    cb_cs.closed  = false;
-                    ns.powered = false;
-                    ns.current = 0.0;
+                if (conn.rating > 0.0) {
+                    double ratio = cb_cs.current_through / conn.rating;
+                    if (ratio > 1.0) {
+                        cb_cs.thermal_energy += (ratio * ratio - 1.0) * dt;
+                    } else {
+                        // Cool down when under rating
+                        cb_cs.thermal_energy = std::max(0.0, cb_cs.thermal_energy - dt);
+                    }
+
+                    if (cb_cs.thermal_energy >= 1.0) {
+                        cb_cs.tripped = true;
+                        cb_cs.closed  = false;
+                        ns.powered = false;
+                        ns.current = 0.0;
+                    }
                 }
             }
         }
@@ -631,9 +651,11 @@ void GraphSolver::commandConnection(const std::string& id, int cmd) {
     if (conn.type == ConnectionType::circuit_breaker) {
         switch (cmd) {
             case 0: cs.pulled = true;  cs.closed = false; break;
-            case 1: cs.closed = true;  cs.pulled = false; cs.tripped = false; break;
+            case 1: cs.closed = true;  cs.pulled = false; cs.tripped = false;
+                     cs.thermal_energy = 0.0; break;
             case 2:
-                if (cs.tripped) { cs.tripped = false; cs.closed = true; cs.pulled = false; }
+                if (cs.tripped) { cs.tripped = false; cs.closed = true; cs.pulled = false;
+                                  cs.thermal_energy = 0.0; }
                 else { cs.pulled = !cs.pulled; cs.closed = !cs.pulled; }
                 break;
         }
