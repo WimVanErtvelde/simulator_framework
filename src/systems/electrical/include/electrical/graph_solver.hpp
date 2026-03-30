@@ -58,7 +58,7 @@ private:
     void resetAllNodes();
     void propagate();
     void updateRelayCoils();
-    void updateLoads(double dt);
+    void updateLoads(double dt, const std::unordered_map<std::string, bool>& prev_powered);
     void updateBatterySoc(double dt);
     void evaluateCas();
 

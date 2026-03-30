@@ -277,13 +277,21 @@ void GraphSolver::reset() {
 void GraphSolver::step(double dt) {
     updateSources(dt);
 
+    // Snapshot load powered state before propagation resets it
+    // (used by updateLoads to detect unpowered→powered transitions for inrush)
+    std::unordered_map<std::string, bool> prev_powered;
+    for (auto& node : topology_.nodes) {
+        if (node.type == NodeType::load)
+            prev_powered[node.id] = node_states_[node.id].powered;
+    }
+
     for (int pass = 0; pass < topology_.propagation_passes; ++pass) {
         resetAllNodes();
         propagate();
         updateRelayCoils();
     }
 
-    updateLoads(dt);
+    updateLoads(dt, prev_powered);
     updateBatterySoc(dt);
     evaluateCas();
 
@@ -446,7 +454,8 @@ void GraphSolver::updateRelayCoils() {
 
 // ─── Load Updates ───────────────────────────────────────────────────
 
-void GraphSolver::updateLoads(double dt) {
+void GraphSolver::updateLoads(double dt,
+                              const std::unordered_map<std::string, bool>& prev_powered) {
     // Reset connection currents
     for (auto& [id, cs] : conn_states_)
         cs.current_through = 0.0;
@@ -456,7 +465,9 @@ void GraphSolver::updateLoads(double dt) {
         auto& ns = node_states_[node.id];
         auto& lp = *node.load;
 
-        bool was_powered = (ns.current > 0.0);
+        bool was_powered = false;
+        auto pp = prev_powered.find(node.id);
+        if (pp != prev_powered.end()) was_powered = pp->second;
 
         if (!ns.powered) {
             ns.current = 0.0;
