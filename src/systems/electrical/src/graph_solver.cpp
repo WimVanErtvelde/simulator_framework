@@ -134,10 +134,7 @@ bool GraphSolver::loadTopologyYaml(const std::string& path) {
             // Load params
             if (node.type == NodeType::load) {
                 LoadParams lp;
-                if (n["load_type"])          lp.load_type          = n["load_type"].as<std::string>();
-                if (n["nominal_current"])    lp.nominal_current    = n["nominal_current"].as<double>();
-                if (n["inrush_current"])     lp.inrush_current     = n["inrush_current"].as<double>();
-                if (n["inrush_duration_ms"]) lp.inrush_duration_ms = n["inrush_duration_ms"].as<double>();
+                if (n["nominal_current"]) lp.nominal_current = n["nominal_current"].as<double>();
                 node.load = lp;
             }
 
@@ -216,28 +213,6 @@ void GraphSolver::buildAdjacency() {
         }
     }
 
-    // Precompute protecting CB for each load (max 2 hops upstream)
-    load_cb_map_.clear();
-    for (auto& node : topology_.nodes) {
-        if (node.type != NodeType::load) continue;
-        size_t ni = node_index_[node.id];
-
-        for (auto& [ci, from_idx] : reverse_adj_[ni]) {
-            auto& conn = topology_.connections[ci];
-            if (conn.type == ConnectionType::circuit_breaker) {
-                load_cb_map_[node.id] = conn.id;
-                break;
-            }
-            // One more hop upstream (through a switch → junction → CB)
-            for (auto& [ci2, from_idx2] : reverse_adj_[from_idx]) {
-                if (topology_.connections[ci2].type == ConnectionType::circuit_breaker) {
-                    load_cb_map_[node.id] = topology_.connections[ci2].id;
-                    break;
-                }
-            }
-            if (load_cb_map_.count(node.id)) break;
-        }
-    }
 }
 
 // ─── Reset ──────────────────────────────────────────────────────────
@@ -277,21 +252,13 @@ void GraphSolver::reset() {
 void GraphSolver::step(double dt) {
     updateSources(dt);
 
-    // Snapshot load powered state before propagation resets it
-    // (used by updateLoads to detect unpowered→powered transitions for inrush)
-    std::unordered_map<std::string, bool> prev_powered;
-    for (auto& node : topology_.nodes) {
-        if (node.type == NodeType::load)
-            prev_powered[node.id] = node_states_[node.id].powered;
-    }
-
     for (int pass = 0; pass < topology_.propagation_passes; ++pass) {
         resetAllNodes();
         propagate();
         updateRelayCoils();
     }
 
-    updateLoads(dt, prev_powered);
+    updateLoads(dt);
     updateBatterySoc(dt);
     evaluateCas();
 
@@ -454,91 +421,17 @@ void GraphSolver::updateRelayCoils() {
 
 // ─── Load Updates ───────────────────────────────────────────────────
 
-void GraphSolver::updateLoads(double dt,
-                              const std::unordered_map<std::string, bool>& prev_powered) {
-    // Reset connection currents
-    for (auto& [id, cs] : conn_states_)
-        cs.current_through = 0.0;
-
+void GraphSolver::updateLoads(double /*dt*/) {
     for (auto& node : topology_.nodes) {
         if (node.type != NodeType::load || !node.load) continue;
         auto& ns = node_states_[node.id];
-        auto& lp = *node.load;
-
-        bool was_powered = false;
-        auto pp = prev_powered.find(node.id);
-        if (pp != prev_powered.end()) was_powered = pp->second;
 
         if (!ns.powered) {
             ns.current = 0.0;
-            ns.inrush_timer = 0.0;
             continue;
         }
 
-        // Start inrush timer on unpowered → powered transition
-        if (!was_powered && lp.load_type == "motor" && lp.inrush_duration_ms > 0.0)
-            ns.inrush_timer = lp.inrush_duration_ms / 1000.0;
-
-        double draw = lp.nominal_current;
-
-        // Failure: current multiplier (e.g. short circuit)
-        if (hasOverride(node.id, "current_multiplier")) {
-            double mult = std::stod(getOverride(node.id, "current_multiplier"));
-            draw *= mult;
-        }
-
-        // Motor inrush: ramp from inrush_current down to nominal_current
-        if (lp.load_type == "motor" && lp.inrush_current > 0.0 && ns.inrush_timer > 0.0) {
-            double inrush_frac = ns.inrush_timer / (lp.inrush_duration_ms / 1000.0);
-            draw = lp.nominal_current + (lp.inrush_current - lp.nominal_current) * inrush_frac;
-            ns.inrush_timer -= dt;
-            if (ns.inrush_timer < 0.0) ns.inrush_timer = 0.0;
-        }
-
-        // Resistive loads: I = V_actual / R, where R = V_nom / I_nom
-        if (lp.load_type == "resistive" && lp.nominal_current > 0.0) {
-            constexpr double V_NOM = 28.0;
-            double R = V_NOM / lp.nominal_current;
-            draw = ns.voltage / R;
-        }
-
-        ns.current = draw;
-
-        // CB inverse-time thermal trip model
-        // Thermal energy accumulates as (I/rating)^2 - 1 per second.
-        // At rating: energy stays at zero. At 141%: ~1s to trip. At 10×: instant.
-        // Short transient inrush (e.g. 1.6× for 400ms) does not accumulate enough to trip.
-        auto cb_it = load_cb_map_.find(node.id);
-        if (cb_it != load_cb_map_.end()) {
-            auto ci = conn_index_.find(cb_it->second);
-            if (ci != conn_index_.end()) {
-                auto& conn = topology_.connections[ci->second];
-                auto& cb_cs = conn_states_[cb_it->second];
-                cb_cs.current_through += draw;
-
-                if (conn.rating > 0.0) {
-                    double ratio = cb_cs.current_through / conn.rating;
-                    if (ratio > 1.0) {
-                        cb_cs.thermal_energy += (ratio * ratio - 1.0) * dt;
-                    } else {
-                        // Cool down when under rating
-                        cb_cs.thermal_energy = std::max(0.0, cb_cs.thermal_energy - dt);
-                    }
-
-                    if (cb_cs.thermal_energy >= 1.0) {
-                        std::cout << "[ElecSys] CB TRIP: " << cb_it->second
-                                  << " (rating " << conn.rating << "A) — load "
-                                  << node.id << " drawing " << cb_cs.current_through
-                                  << "A (" << static_cast<int>(ratio * 100) << "% of rating)"
-                                  << std::endl;
-                        cb_cs.tripped = true;
-                        cb_cs.closed  = false;
-                        ns.powered = false;
-                        ns.current = 0.0;
-                    }
-                }
-            }
-        }
+        ns.current = node.load->nominal_current;
     }
 }
 
@@ -667,11 +560,9 @@ void GraphSolver::commandConnection(const std::string& id, int cmd) {
     if (conn.type == ConnectionType::circuit_breaker) {
         switch (cmd) {
             case 0: cs.pulled = true;  cs.closed = false; break;
-            case 1: cs.closed = true;  cs.pulled = false; cs.tripped = false;
-                     cs.thermal_energy = 0.0; break;
+            case 1: cs.closed = true;  cs.pulled = false; cs.tripped = false; break;
             case 2:
-                if (cs.tripped) { cs.tripped = false; cs.closed = true; cs.pulled = false;
-                                  cs.thermal_energy = 0.0; }
+                if (cs.tripped) { cs.tripped = false; cs.closed = true; cs.pulled = false; }
                 else { cs.pulled = !cs.pulled; cs.closed = !cs.pulled; }
                 break;
         }
@@ -711,6 +602,16 @@ void GraphSolver::applyFailureEffect(const std::string& target, const std::strin
                 it->second.jammed_value = it->second.closed;
         }
     }
+
+    // Immediate state update for CB trip
+    if (property == "tripped") {
+        auto it = conn_states_.find(target);
+        if (it != conn_states_.end()) {
+            it->second.tripped = (value == "true");
+            if (it->second.tripped)
+                it->second.closed = false;
+        }
+    }
 }
 
 void GraphSolver::clearFailureEffect(const std::string& target, const std::string& property) {
@@ -720,6 +621,14 @@ void GraphSolver::clearFailureEffect(const std::string& target, const std::strin
         auto it = conn_states_.find(target);
         if (it != conn_states_.end())
             it->second.jammed = false;
+    }
+
+    if (property == "tripped") {
+        auto it = conn_states_.find(target);
+        if (it != conn_states_.end()) {
+            it->second.tripped = false;
+            it->second.closed = true;
+        }
     }
 }
 

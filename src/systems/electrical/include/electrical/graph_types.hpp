@@ -49,10 +49,7 @@ struct SourceParams {
 // ─── Load Parameters ────────────────────────────────────────────────
 
 struct LoadParams {
-    std::string load_type; // avionics, motor, resistive, constant_current
     double nominal_current = 1.0;
-    double inrush_current = 0.0;
-    double inrush_duration_ms = 0.0;
 };
 
 // ─── Node (topology definition) ─────────────────────────────────────
@@ -74,7 +71,6 @@ struct ConnectionState {
     double pot_value = 0.0;
     int selector_position = 0;
     double current_through = 0.0;
-    double thermal_energy = 0.0; // CB inverse-time trip accumulator
     bool jammed = false;
     bool jammed_value = false;
 };
@@ -107,8 +103,6 @@ struct NodeState {
     bool gcu_tripped = false;
     double gcu_trip_timer = 0.0;
 
-    // Load-specific runtime
-    double inrush_timer = 0.0;
 };
 
 // ─── FDM Inputs ─────────────────────────────────────────────────────

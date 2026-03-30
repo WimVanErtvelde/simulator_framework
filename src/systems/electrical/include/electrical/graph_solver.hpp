@@ -58,7 +58,7 @@ private:
     void resetAllNodes();
     void propagate();
     void updateRelayCoils();
-    void updateLoads(double dt, const std::unordered_map<std::string, bool>& prev_powered);
+    void updateLoads(double dt);
     void updateBatterySoc(double dt);
     void evaluateCas();
 
@@ -77,9 +77,6 @@ private:
     std::vector<std::vector<std::pair<size_t, size_t>>> adjacency_;
     // Reverse adjacency: node_idx → [(conn_idx, upstream_node_idx)]
     std::vector<std::vector<std::pair<size_t, size_t>>> reverse_adj_;
-
-    // Precomputed: load_id → protecting CB connection_id
-    std::unordered_map<std::string, std::string> load_cb_map_;
 
     // Runtime state keyed by element id
     std::unordered_map<std::string, NodeState> node_states_;

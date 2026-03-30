@@ -160,8 +160,8 @@ int main() {
     }
     PASS();
 
-    // T8 ── CB trip via overcurrent ──────────────────────────────────
-    TEST("CB trip: com1 current 20x -> cb_com1 trips -> com1 unpowered");
+    // T8 ── CB trip via failure effect ──────────────────────────────
+    TEST("Failure-driven CB trip -> com1 unpowered, clear -> restored");
     {
         GraphSolver s = makeSolver();
         powerBattery(s);
@@ -169,12 +169,17 @@ int main() {
         s.step(0.02);
         CHECK(s.getNodeStates().at("com1").powered);
 
-        // Inject 20× overcurrent
-        s.applyFailureEffect("com1", "set", "current_multiplier", "20.0");
+        // Trip CB via failure effect
+        s.applyFailureEffect("cb_com1", "set", "tripped", "true");
         s.step(0.02);
-
         CHECK(s.getConnectionStates().at("cb_com1").tripped);
         CHECK(!s.getNodeStates().at("com1").powered);
+
+        // Clear failure → CB resets, com1 powered again
+        s.clearFailureEffect("cb_com1", "tripped");
+        s.step(0.02);
+        CHECK(!s.getConnectionStates().at("cb_com1").tripped);
+        CHECK(s.getNodeStates().at("com1").powered);
     }
     PASS();
 
@@ -267,8 +272,8 @@ int main() {
     }
     PASS();
 
-    // T14 ── Battery SOC drain ───────────────────────────────────────
-    TEST("Battery SOC drains over time with loads");
+    // T14 ── Battery SOC drain (no spurious CB trips) ──────────────
+    TEST("Battery SOC drains over time with loads, no CB trips");
     {
         GraphSolver s = makeSolver();
         powerBattery(s);
@@ -284,27 +289,24 @@ int main() {
 
         double soc_after = s.getNodeStates().at("battery").battery_soc;
         CHECK(soc_after < soc_before);
+        // No CBs should have tripped — overcurrent physics removed
+        CHECK(!s.getConnectionStates().at("cb_flaps").tripped);
+        CHECK(!s.getConnectionStates().at("cb_com1").tripped);
+        CHECK(!s.getConnectionStates().at("cb_ldg_lt").tripped);
     }
     PASS();
 
-    // T15 ── Motor inrush should NOT trip CB ──────────────────────────
-    TEST("Motor inrush should NOT trip CB (fuel pump 12A inrush, 7.5A CB)");
+    // T15 ── No auto-trip: CBs only trip from failures/commands ──────
+    TEST("No auto-trip: high-current load does NOT trip CB");
     {
         GraphSolver s = makeSolver();
         powerBattery(s);
-        s.commandConnection("sw_fuel_pump", 1);
-        s.step(0.02); // first step — inrush active
-
-        CHECK(!s.getConnectionStates().at("cb_fuel_pump").tripped);
-        CHECK(s.getNodeStates().at("fuel_pump").powered);
-
-        // Run through full inrush duration (400ms = 20 steps at 20ms)
-        for (int i = 0; i < 20; ++i)
+        // Starter: 150A nominal on an 80A CB — would have tripped with old model
+        s.commandConnection("sw_starter_engage", 1);
+        for (int i = 0; i < 50; ++i)
             s.step(0.02);
-
-        // Still not tripped — inrush is transient, CB thermal model handles it
-        CHECK(!s.getConnectionStates().at("cb_fuel_pump").tripped);
-        CHECK(s.getNodeStates().at("fuel_pump").powered);
+        CHECK(!s.getConnectionStates().at("cb_starter").tripped);
+        CHECK(s.getNodeStates().at("starter").powered);
     }
     PASS();
 

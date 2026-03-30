@@ -115,136 +115,109 @@ nodes:
     type: load
     label: "COM 1"
     nominal_current: 2.5
-    load_type: avionics
 
   - id: nav1
     type: load
     label: "NAV 1"
     nominal_current: 1.5
-    load_type: avionics
 
   - id: pitot_heat
     type: load
     label: "PITOT HEAT"
     nominal_current: 4.0
-    load_type: resistive
 
   # Avionics bus loads
   - id: com2
     type: load
     label: "COM 2"
     nominal_current: 2.5
-    load_type: avionics
 
   - id: nav2
     type: load
     label: "NAV 2"
     nominal_current: 1.5
-    load_type: avionics
 
   - id: gps
     type: load
     label: "GPS"
     nominal_current: 2.0
-    load_type: avionics
 
   - id: transponder
     type: load
     label: "XPDR"
     nominal_current: 2.0
-    load_type: avionics
 
   - id: autopilot
     type: load
     label: "AUTOPILOT"
     nominal_current: 3.5
-    load_type: avionics
 
   - id: audio_panel
     type: load
     label: "AUDIO PNL"
     nominal_current: 0.5
-    load_type: avionics
 
   # Primary bus loads
   - id: fuel_pump
     type: load
     label: "FUEL PUMP"
     nominal_current: 4.0
-    inrush_current: 12.0
-    inrush_duration_ms: 400
-    load_type: motor
 
   - id: flaps
     type: load
     label: "FLAPS"
     nominal_current: 8.0
-    inrush_current: 20.0
-    inrush_duration_ms: 600
-    load_type: motor
 
   - id: turn_coord
     type: load
     label: "TURN COORD"
     nominal_current: 0.5
-    load_type: avionics
 
   - id: landing_lt
     type: load
     label: "LANDING LT"
     nominal_current: 8.0
-    load_type: resistive
 
   - id: taxi_lt
     type: load
     label: "TAXI LT"
     nominal_current: 3.5
-    load_type: resistive
 
   - id: nav_lt
     type: load
     label: "NAV LT"
     nominal_current: 2.0
-    load_type: resistive
 
   - id: strobe_lt
     type: load
     label: "STROBE LT"
     nominal_current: 2.0
-    load_type: resistive
 
   - id: beacon
     type: load
     label: "BEACON"
     nominal_current: 1.5
-    load_type: resistive
 
   - id: inst_lt
     type: load
     label: "INST LT"
     nominal_current: 1.5
-    load_type: resistive
 
   - id: starter
     type: load
     label: "STARTER"
     nominal_current: 150.0
-    inrush_current: 300.0
-    inrush_duration_ms: 2000
-    load_type: motor
 
   # Hot battery bus loads
   - id: clock
     type: load
     label: "CLOCK"
     nominal_current: 0.1
-    load_type: avionics
 
   - id: elt
     type: load
     label: "ELT"
     nominal_current: 0.05
-    load_type: avionics
 
 # ═══════════════════════════════════════════════════════════════════
 # CONNECTIONS — series elements between nodes
