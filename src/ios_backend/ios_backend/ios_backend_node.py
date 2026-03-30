@@ -705,15 +705,22 @@ class IosBackendNode(Node):
         try:
             with open(yaml_path) as f:
                 cfg = yaml.safe_load(f)
-            data = {
-                'type': 'electrical_config',
-                'aircraft_id': aircraft_id,
-                'sources': cfg.get('sources', []),
-                'buses': cfg.get('buses', []),
-                'switches': cfg.get('switches', []),
-                'loads': cfg.get('loads', []),
-                'direct_connections': cfg.get('direct_connections', []),
-            }
+
+            if 'nodes' in cfg:
+                # v2 graph format: nodes[] + connections[]
+                data = self._parse_electrical_v2(cfg, aircraft_id)
+            else:
+                # v1 flat format: sources/buses/switches/loads
+                data = {
+                    'type': 'electrical_config',
+                    'aircraft_id': aircraft_id,
+                    'sources': cfg.get('sources', []),
+                    'buses': cfg.get('buses', []),
+                    'switches': cfg.get('switches', []),
+                    'loads': cfg.get('loads', []),
+                    'direct_connections': cfg.get('direct_connections', []),
+                }
+
             with self._lock:
                 self._latest['electrical_config'] = data
             self.get_logger().info(
@@ -722,6 +729,45 @@ class IosBackendNode(Node):
                 f'{len(data["switches"])} switches, {len(data["loads"])} loads')
         except Exception as e:
             self.get_logger().error(f'Failed to load electrical config: {e}')
+
+    def _parse_electrical_v2(self, cfg, aircraft_id):
+        """Parse v2 graph topology (nodes + connections) into frontend format."""
+        nodes = cfg.get('nodes', [])
+        connections = cfg.get('connections', [])
+
+        sources = [n for n in nodes if n.get('type') == 'source']
+        buses = [n for n in nodes if n.get('type') == 'bus']
+        loads = [n for n in nodes if n.get('type') == 'load']
+
+        sw_types = {'switch', 'contactor', 'relay'}
+        switches = [
+            c for c in connections
+            if c.get('type') in sw_types and c.get('pilot_controllable', True)
+        ]
+        cbs = [
+            c for c in connections
+            if c.get('type') == 'circuit_breaker' and c.get('pilot_controllable', True)
+        ]
+
+        # Build load_id → gating switch id mapping from connections
+        switch_by_to = {}
+        for c in connections:
+            if c.get('type') in sw_types:
+                switch_by_to[c['to']] = c['id']
+
+        # Attach switch_id to loads (frontend uses this for load switch rendering)
+        for ld in loads:
+            ld['switch_id'] = switch_by_to.get(ld['id'], '')
+
+        return {
+            'type': 'electrical_config',
+            'aircraft_id': aircraft_id,
+            'sources': sources,
+            'buses': buses,
+            'switches': switches,
+            'loads': loads,
+            'cbs': cbs,
+        }
 
     def publish_failure_command(self, data: dict):
         """Publish a FailureCommand to /devices/instructor/failure_command."""
