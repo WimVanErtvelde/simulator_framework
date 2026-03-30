@@ -34,7 +34,7 @@
 - `atmosphere_node` — full ISA model, OAT deviation, QNH override
 - `cigi_bridge` — CIGI 3.3 host, multi-point HOT (3 gear points), IG Mode repositioning handshake, SOF parsing
 - `navaid_sim` — VOR/ILS/NDB/DME/Marker, terrain LOS, A424 + XP12 parsers. Airport/runway DB (SearchAirports/GetRunways/GetTerrainElevation services)
-- `sim_electrical` — pluginlib, ElectricalSolver, JSON topology. C172 + EC135 plugins. CB 3-state override (NORMAL/POPPED/LOCKED). Capability gating + writeback. **GraphSolver v2** (standalone library, BFS graph propagation, electrical_v2.yaml, 14/14 tests pass — not yet wired into live system).
+- `sim_electrical` — pluginlib, C172 on **GraphSolver v2** (BFS graph propagation, 15/15 tests), EC135 on legacy ElectricalSolver. CB 3-state override (NORMAL/POPPED/LOCKED). Capability gating + writeback.
 - `sim_engine_systems` — pluginlib → IEnginesModel. C172 piston + EC135 turboshaft plugins. EngineCommands published (zeros for current aircraft, pre-wired for turboprop/FADEC).
 - `sim_fuel` — pluginlib → IFuelModel. C172 plugin. Capability gating + writeback. FuelState arrays [8] (future graph solver).
 - `sim_failures` — failure catalog from YAML (ATA grouped), armed triggers (delay/condition), 3-topic routing (flight_model/electrical/navaid commands). params_override_json for runtime params.
@@ -2232,3 +2232,31 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
   11 junctions + 21 loads), 38 connections. Task card said 40 — off by one,
   actual YAML parse yields 39.
 - AFFECTS: test_graph_solver T1 assertion
+
+- DECIDED: CB model simplified — no automatic overcurrent trip, no thermal
+  model, no inrush physics. CBs behave as switches with tripped state
+  settable only by failure effects or commands. Loads draw flat
+  nominal_current when powered. load_type, inrush_current,
+  inrush_duration_ms removed from YAML.
+- REASON: Overcurrent physics introduced complex interactions (inrush vs
+  thermal trip timing, resistive V/R scaling) that added no training value.
+  CB state is driven by the failure injection system, not the solver.
+- AFFECTS: graph_types.hpp (LoadParams simplified), graph_solver.cpp
+  (updateLoads is 10 lines), electrical.yaml (loads carry only
+  nominal_current), test_graph_solver.cpp (T8 tests failure-driven trip)
+
+## 2026-03-30 — 23:54:35 - Claude Code
+- DECIDED: Phase 3a complete — C172 electrical_model.cpp swapped from
+  ElectricalSolver (elec_sys) to GraphSolver (elec_graph). EC135 stays
+  on old solver.
+- REASON: Graph solver is tested (15/15), simpler, and the v2 YAML captures
+  the C172 schematic more faithfully (CBs are connections, not embedded in loads).
+- AFFECTS: aircraft_c172/electrical_model.cpp, electrical.yaml (renamed from
+  electrical_v2.yaml), electrical_v1_backup.yaml (old format preserved)
+
+- DECIDED: Failure translation in C172 ElectricalModel: apply_failure()
+  detects whether target is a node (→ force online=false) or connection
+  (→ force tripped=true). Clear removes all known overrides for target.
+  No interface changes to IElectricalModel.
+- REASON: electrical_node.cpp always sends "component_id/fail" format.
+  Translation layer in the plugin keeps the node generic.
