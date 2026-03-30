@@ -34,7 +34,7 @@ nodes:
     label: "ALT"
     nominal_voltage: 28.5
     engine_index: 0
-    min_rpm_pct: 30.0
+    min_rpm_pct: 20.0
     gcu:
       overvolt_threshold: 32.0
       undervolt_threshold: 24.0
