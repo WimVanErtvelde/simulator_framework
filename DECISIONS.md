@@ -34,7 +34,7 @@
 - `atmosphere_node` — full ISA model, OAT deviation, QNH override
 - `cigi_bridge` — CIGI 3.3 host, multi-point HOT (3 gear points), IG Mode repositioning handshake, SOF parsing
 - `navaid_sim` — VOR/ILS/NDB/DME/Marker, terrain LOS, A424 + XP12 parsers. Airport/runway DB (SearchAirports/GetRunways/GetTerrainElevation services)
-- `sim_electrical` — pluginlib, ElectricalSolver, JSON topology. C172 + EC135 plugins. CB 3-state override (NORMAL/POPPED/LOCKED). Capability gating + writeback.
+- `sim_electrical` — pluginlib, ElectricalSolver, JSON topology. C172 + EC135 plugins. CB 3-state override (NORMAL/POPPED/LOCKED). Capability gating + writeback. **GraphSolver v2** (standalone library, BFS graph propagation, electrical_v2.yaml, 14/14 tests pass — not yet wired into live system).
 - `sim_engine_systems` — pluginlib → IEnginesModel. C172 piston + EC135 turboshaft plugins. EngineCommands published (zeros for current aircraft, pre-wired for turboprop/FADEC).
 - `sim_fuel` — pluginlib → IFuelModel. C172 plugin. Capability gating + writeback. FuelState arrays [8] (future graph solver).
 - `sim_failures` — failure catalog from YAML (ATA grouped), armed triggers (delay/condition), 3-topic routing (flight_model/electrical/navaid commands). params_override_json for runtime params.
@@ -2152,3 +2152,83 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 
 - DECIDED: max_engine_rpm removed from config.yaml. FMA now reads rpm_max from engine.yaml (engines[0]). Single source of truth for engine RPM limit. Aircraft without engine.yaml fall back to JSBSimAdapter default (2700).
 - AFFECTS: flight_model_adapter_node.cpp, c172 config.yaml, engine.yaml
+
+## 2026-03-30 — Claude Chat
+
+### Electrical solver v2: graph-based topology redesign
+
+- DECIDED: Electrical topology redesigned as a graph model. Two core sections:
+  `nodes` (sources, buses, junctions, loads) and `connections` (series elements
+  between nodes). Replaces the previous sources/buses/switches/loads split with
+  inline CBs and switch_id references.
+- REASON: Previous model had CBs embedded inside LoadDef with no command path
+  from IOS. Switch/CB/relay used separate code paths. Bus-level CBs (needed for
+  EC135 twin-generator topology) were not expressible. Graph model unifies all
+  series elements as connections with from→to, one solver walk.
+
+- DECIDED: Connection types: wire, switch, contactor, relay (coil_bus),
+  circuit_breaker (rating + auto-trip), potentiometer (analog 0-1), selector
+  (multi-position with per-position closes[] and spring_return map). Internally
+  normalized to common ConnectionState struct.
+- REASON: Covers C172 plus future needs (magneto selector, MOM-OFF-MOM trim,
+  panel dimming). Selector uses positions[].closes[] for multi-output routing —
+  "a bunch of switches in a rotary package."
+
+- DECIDED: Junction nodes represent net names (wires between CB and switch in
+  series load chains). Explicit in YAML, named jct_<load_id>.
+- REASON: Makes schematic-to-YAML translation mechanical. Every wire segment
+  between two component pins gets a name. Enables future graphical schematic editor.
+
+- DECIDED: panel_layout removed from electrical topology. Future separate config.
+- REASON: Layout is a rendering concern, not topology.
+
+- DECIDED: Removed unused fields from v2 schema: affected_systems (nothing
+  consumes), max_current on sources (no overload model), essential on loads
+  (no load shedding), contactor_delay_ms (switching instant in solver).
+- REASON: Dead data. Re-add when solver features exist to consume them.
+
+- DECIDED: Failure effects model — failures are property overrides on graph
+  elements, not custom-coded behaviors. Four actions: force (override value),
+  jam (force + ignore commands), disable (turn off solver behavior like
+  overcurrent_trip), multiply (scale numeric property). Each failure in
+  failures.yaml lists one or more effects with target/action/property/value.
+  No C++ per failure type.
+- REASON: Adding new electrical failures becomes pure YAML authoring. Solver
+  just applies active overrides before computing each element.
+
+- DECIDED: Three-phase implementation: (1) v2 YAML schema for C172 [done].
+  (2) Standalone graph solver with unit tests — no ROS2 dependency [done].
+  (3) Swap into live system.
+- AFFECTS: electrical_solver.hpp/cpp (full rewrite), electrical_v2.yaml (new
+  format), C172/EC135 electrical_model plugins, ElectricalState.msg (snapshot),
+  IOS electrical config forwarding, AircraftPanel.jsx CB rendering,
+  failures.yaml (effects model).
+
+## 2026-03-30 — 22:40:57 - Claude Code
+- DECIDED: GraphSolver implemented as standalone C++ library in sim_electrical
+  package, namespace `elec_graph` (separate from old `elec_sys`). No ROS2
+  dependency. Loads electrical_v2.yaml graph topology.
+- REASON: Phase 2 of electrical solver v2. Old solver stays untouched until
+  phase 3 swap. Graph solver uses BFS propagation from powered sources through
+  closed connections — cleaner and more correct than old flat iteration.
+- AFFECTS: graph_types.hpp, graph_solver.hpp, graph_solver.cpp,
+  test_graph_solver.cpp, CMakeLists.txt (sim_electrical)
+
+- DECIDED: Graph solver uses multi-pass BFS with full node reset between passes.
+  Each pass: reset non-source nodes → BFS from online sources → update relay
+  coils. propagation_passes=4 (configurable in YAML). Handles relay cascades
+  correctly — relay coil state re-evaluated after each BFS pass.
+- REASON: Old solver did not reset between passes, which could leave stale
+  power states when a relay opens. BFS is O(V+E) per pass, fast for small graphs.
+
+- DECIDED: Failure effects stored as map<(target_id, property), value>.
+  applyFailureEffect(target, action, property, value) → stores override.
+  updateSources checks "online" override. updateLoads checks "current_multiplier".
+  commandConnection checks jammed state. Jam captures current closed position.
+- REASON: Property-level overrides are more flexible than the old solver's
+  simple target→fault_type string map. New failures become YAML-only additions.
+
+- DECIDED: Node count for C172 v2 topology is 39 (3 sources + 4 buses +
+  11 junctions + 21 loads), 38 connections. Task card said 40 — off by one,
+  actual YAML parse yields 39.
+- AFFECTS: test_graph_solver T1 assertion

@@ -41,13 +41,33 @@ target_link_libraries(electrical_solver
   yaml-cpp
 )
 
+# ─── Graph Solver Library (v2) ───────────────────────────────────
+# Standalone library — no ROS2 dependency
+add_library(graph_solver SHARED
+  src/graph_solver.cpp
+)
+target_include_directories(graph_solver PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(graph_solver
+  yaml-cpp
+)
+
+# ─── Graph Solver Tests ─────────────────────────────────────────
+add_executable(test_graph_solver test/test_graph_solver.cpp)
+target_link_libraries(test_graph_solver graph_solver)
+target_compile_definitions(test_graph_solver PRIVATE
+  TEST_YAML_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../aircraft/c172/config/electrical_v2.yaml"
+)
+
 # ─── ROS2 Node ───────────────────────────────────────────────────
 add_executable(electrical_node src/electrical_node.cpp)
 ament_target_dependencies(electrical_node
   rclcpp rclcpp_lifecycle sim_msgs std_msgs pluginlib sim_interfaces ament_index_cpp)
 
 # ─── Install ─────────────────────────────────────────────────────
-install(TARGETS electrical_solver
+install(TARGETS electrical_solver graph_solver
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
@@ -61,7 +81,7 @@ install(DIRECTORY include/
 )
 
 ament_export_include_directories(include)
-ament_export_libraries(electrical_solver)
+ament_export_libraries(electrical_solver graph_solver)
 ament_export_dependencies(yaml-cpp)
 
 ament_package()
