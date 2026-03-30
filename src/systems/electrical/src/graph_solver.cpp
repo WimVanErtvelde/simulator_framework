@@ -515,6 +515,11 @@ void GraphSolver::updateLoads(double dt) {
                     }
 
                     if (cb_cs.thermal_energy >= 1.0) {
+                        std::cout << "[ElecSys] CB TRIP: " << cb_it->second
+                                  << " (rating " << conn.rating << "A) — load "
+                                  << node.id << " drawing " << cb_cs.current_through
+                                  << "A (" << static_cast<int>(ratio * 100) << "% of rating)"
+                                  << std::endl;
                         cb_cs.tripped = true;
                         cb_cs.closed  = false;
                         ns.powered = false;
