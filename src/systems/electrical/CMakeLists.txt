@@ -58,7 +58,7 @@ target_link_libraries(graph_solver
 add_executable(test_graph_solver test/test_graph_solver.cpp)
 target_link_libraries(test_graph_solver graph_solver)
 target_compile_definitions(test_graph_solver PRIVATE
-  TEST_YAML_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../aircraft/c172/config/electrical_v2.yaml"
+  TEST_YAML_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../aircraft/c172/config/electrical.yaml"
 )
 
 # ─── ROS2 Node ───────────────────────────────────────────────────

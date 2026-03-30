@@ -1,8 +1,7 @@
 #include <sim_interfaces/i_electrical_model.hpp>
-#include <electrical/electrical_solver.hpp>
+#include <electrical/graph_solver.hpp>
 #include <pluginlib/class_list_macros.hpp>
 #include <string>
-#include <unordered_set>
 
 namespace aircraft_c172
 {
@@ -22,21 +21,34 @@ public:
 
   void apply_failure(const std::string & failure_id, bool active) override
   {
+    // Parse "target/fault_type" format (electrical_node always sends "target/fail")
+    std::string target = failure_id;
     auto sep = failure_id.find('/');
-    if (sep == std::string::npos) {
-      if (active) solver_.injectFault(failure_id, "fail");
-      else        solver_.clearFault(failure_id);
-      return;
+    if (sep != std::string::npos)
+      target = failure_id.substr(0, sep);
+
+    if (active) {
+      // Determine element type and apply appropriate effect
+      auto& ns = solver_.getNodeStates();
+      auto& cs = solver_.getConnectionStates();
+      if (ns.count(target)) {
+        // Source node → force offline
+        solver_.applyFailureEffect(target, "set", "online", "false");
+      } else if (cs.count(target)) {
+        // Connection (CB, switch, etc.) → force tripped
+        solver_.applyFailureEffect(target, "set", "tripped", "true");
+      }
+    } else {
+      // Clear all known effects for this target
+      solver_.clearFailureEffect(target, "online");
+      solver_.clearFailureEffect(target, "tripped");
+      solver_.clearFailureEffect(target, "jammed");
     }
-    std::string target = failure_id.substr(0, sep);
-    std::string fault  = failure_id.substr(sep + 1);
-    if (active) solver_.injectFault(target, fault);
-    else        solver_.clearFault(target);
   }
 
   void command_switch(const std::string & id, int cmd) override
   {
-    solver_.commandSwitch(id, cmd);
+    solver_.commandConnection(id, cmd);
   }
 
   void set_engine_n2(const std::vector<double> & n2_pct) override
@@ -55,101 +67,77 @@ public:
   void reset() override
   {
     solver_.reset();
-    fdm_inputs_ = elec_sys::FdmInputs{};
+    fdm_inputs_ = elec_graph::FdmInputs{};
   }
 
   sim_interfaces::ElectricalSnapshot get_snapshot() const override
   {
     sim_interfaces::ElectricalSnapshot snap;
     const auto & topo = solver_.getTopology();
+    const auto & ns = solver_.getNodeStates();
+    const auto & cs = solver_.getConnectionStates();
 
-    // Buses — use id (machine-safe) as name, not label (may contain spaces)
-    for (const auto & [id, bs] : solver_.getBusStates()) {
-      snap.buses.push_back({id, (float)bs.voltage, bs.powered});
-    }
-
-    // Sources — use id as name
-    for (const auto & [id, ss] : solver_.getSourceStates()) {
-      snap.sources.push_back({id, ss.online, (float)ss.voltage,
-                               (float)ss.current, (float)ss.battery_soc});
-    }
-
-    // Source switches (from topology)
-    for (const auto & [id, sw] : solver_.getSwitchStates()) {
-      std::string label = id;
-      for (const auto & sd : topo.switches) {
-        if (sd.id == id) { label = sd.label; break; }
-      }
-      snap.switches.push_back({id, label, sw.closed});
-    }
-
-    // Load switches (from panel_switch_states_ — sw_landing_lt, sw_pitot_heat, etc.)
-    // These are switch_id fields on loads, tracked separately from source switches.
-    std::unordered_set<std::string> source_sw_ids;
-    for (const auto & [id, _] : solver_.getSwitchStates()) {
-      source_sw_ids.insert(id);
-    }
-    for (const auto & [id, on] : solver_.getPanelSwitchStates()) {
-      if (source_sw_ids.count(id)) continue;  // already in source switches
-      // Find label from load config
-      std::string label = id;
-      for (const auto & ld : topo.loads) {
-        if (ld.switch_id == id) { label = ld.label; break; }
-      }
-      snap.switches.push_back({id, label, on});
-    }
-
-    // Loads + CBs — use id as name
     float total_amps = 0.0f;
-    for (const auto & [id, ls] : solver_.getLoadStates()) {
-      std::string cb_id;
-      for (const auto & ld : topo.loads) {
-        if (ld.id == id) { cb_id = ld.cb.id; break; }
-      }
-      snap.loads.push_back({id, ls.powered, (float)ls.current});
-      if (!cb_id.empty()) {
-        snap.cbs.push_back({cb_id, ls.cb_closed, ls.cb_tripped});
-      }
-      if (ls.powered) total_amps += (float)ls.current;
-    }
-    snap.total_load_amps = total_amps;
 
-    // Battery SOC — find first battery source
-    for (const auto & [id, ss] : solver_.getSourceStates()) {
-      for (const auto & sd : topo.sources) {
-        if (sd.id == id && sd.type == "battery") {
-          snap.battery_soc_pct = (float)ss.battery_soc;
+    for (const auto & node : topo.nodes) {
+      auto it = ns.find(node.id);
+      if (it == ns.end()) continue;
+      const auto & s = it->second;
+
+      switch (node.type) {
+        case elec_graph::NodeType::bus:
+          snap.buses.push_back({node.id, static_cast<float>(s.voltage), s.powered});
+          if (node.id == "primary_bus")   snap.master_bus_voltage = static_cast<float>(s.voltage);
+          if (node.id == "avionics_bus")  snap.avionics_bus_powered = s.powered;
+          if (node.id == "essential_bus") snap.essential_bus_powered = s.powered;
           break;
-        }
+
+        case elec_graph::NodeType::source:
+          snap.sources.push_back({node.id, s.online, static_cast<float>(s.voltage),
+                                  static_cast<float>(s.current), static_cast<float>(s.battery_soc)});
+          if (node.source && node.source->subtype == "battery" && s.battery_soc >= 0)
+            snap.battery_soc_pct = static_cast<float>(s.battery_soc);
+          break;
+
+        case elec_graph::NodeType::load:
+          snap.loads.push_back({node.id, s.powered, static_cast<float>(s.current)});
+          if (s.powered) total_amps += static_cast<float>(s.current);
+          break;
+
+        default:
+          break;
       }
     }
 
-    // Master bus (primary_bus for C172)
-    auto bus_it = solver_.getBusStates().find("primary_bus");
-    if (bus_it != solver_.getBusStates().end()) {
-      snap.master_bus_voltage = (float)bus_it->second.voltage;
+    // Switches and CBs from connections
+    for (const auto & conn : topo.connections) {
+      auto it = cs.find(conn.id);
+      if (it == cs.end()) continue;
+      const auto & s = it->second;
+
+      switch (conn.type) {
+        case elec_graph::ConnectionType::switch_:
+        case elec_graph::ConnectionType::contactor:
+        case elec_graph::ConnectionType::relay:
+          snap.switches.push_back({conn.id, conn.label, s.closed});
+          break;
+
+        case elec_graph::ConnectionType::circuit_breaker:
+          snap.cbs.push_back({conn.id, s.closed && !s.pulled, s.tripped});
+          break;
+
+        default:
+          break;
+      }
     }
 
-    // Avionics bus
-    auto av_it = solver_.getBusStates().find("avionics_bus");
-    if (av_it != solver_.getBusStates().end()) {
-      snap.avionics_bus_powered = av_it->second.powered;
-    }
-
-    // Essential bus
-    auto es_it = solver_.getBusStates().find("essential_bus");
-    if (es_it != solver_.getBusStates().end()) {
-      snap.essential_bus_powered = es_it->second.powered;
-    }
-
+    snap.total_load_amps = total_amps;
     return snap;
   }
 
-  elec_sys::ElectricalSolver & solver() { return solver_; }
-
 private:
-  elec_sys::ElectricalSolver solver_;
-  elec_sys::FdmInputs fdm_inputs_;
+  elec_graph::GraphSolver solver_;
+  elec_graph::FdmInputs fdm_inputs_;
 };
 
 }  // namespace aircraft_c172

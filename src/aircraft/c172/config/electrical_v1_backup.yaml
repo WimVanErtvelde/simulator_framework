@@ -1,0 +1,455 @@
+# Cessna 172S Skyhawk — Electrical System Topology
+# Reference: C172S POH Section 7 (Airplane and Systems Descriptions)
+#
+# Single-engine 28V DC system:
+#   - 28V 60A belt-driven alternator
+#   - 24V 35Ah lead-acid battery
+#   - Split master switch (BATT | ALT)
+#   - Primary bus, avionics bus, essential bus, hot battery bus
+
+aircraft:
+  type: "Cessna 172S Skyhawk"
+  designation: "C172S"
+  revision: "1.0.0"
+
+solver:
+  rate_hz: 50
+  propagation_passes: 4
+  contactor_delay_ms: 80
+
+sources:
+  - id: alternator
+    type: dc_generator
+    label: "ALT"
+    nominal_voltage: 28.5
+    engine_index: 0
+    min_rpm_pct: 30.0
+    max_current: 60
+    gcu:
+      overvolt_threshold: 32.0
+      undervolt_threshold: 24.0
+      trip_delay_ms: 500
+      reset_mode: manual
+
+  - id: battery
+    type: battery
+    label: "BATT"
+    nominal_voltage: 24.0
+    battery:
+      capacity_ah: 35
+      internal_resistance_ohm: 0.04
+      charge_rate_max: 15
+      initial_soc: 95
+      soc_voltage_curve:
+        - [0, 18.0]
+        - [10, 20.0]
+        - [20, 21.5]
+        - [40, 22.8]
+        - [60, 23.5]
+        - [80, 24.0]
+        - [90, 24.2]
+        - [100, 24.5]
+
+  - id: ext_pwr
+    type: external_power
+    label: "EXT PWR"
+    nominal_voltage: 28.0
+    max_current: 100
+
+buses:
+  - id: primary_bus
+    label: "PRIMARY BUS"
+    type: dc
+    nominal_voltage: 28.0
+    shed_priority: 3
+
+  - id: avionics_bus
+    label: "AVIONICS BUS"
+    type: dc
+    nominal_voltage: 28.0
+    shed_priority: 2
+
+  - id: essential_bus
+    label: "ESSENTIAL BUS"
+    type: dc
+    nominal_voltage: 28.0
+    shed_priority: -1
+
+  - id: hot_batt_bus
+    label: "HOT BATT BUS"
+    type: dc
+    nominal_voltage: 24.0
+    shed_priority: -1
+
+switches:
+  - id: sw_alt
+    type: contactor
+    label: "ALT (master)"
+    source: alternator
+    target: primary_bus
+    default_closed: false
+    pilot_controllable: true
+
+  - id: sw_battery
+    type: switch
+    label: "BATT (master)"
+    source: battery
+    target: primary_bus
+    default_closed: false
+    pilot_controllable: true
+
+  - id: sw_ext_pwr
+    type: contactor
+    label: "EXT PWR"
+    source: ext_pwr
+    target: primary_bus
+    default_closed: false
+    pilot_controllable: true
+
+  - id: sw_avionics_master
+    type: switch
+    label: "AVIONICS MASTER"
+    source: primary_bus
+    target: avionics_bus
+    default_closed: false
+    pilot_controllable: true
+
+  - id: sw_ess_bus_tie
+    type: relay
+    label: "ESS BUS TIE"
+    source: primary_bus
+    target: essential_bus
+    default_closed: true
+    coil_bus: primary_bus
+    pilot_controllable: false
+
+loads:
+  # --- Essential bus loads ---
+  - id: com1
+    label: "COM 1"
+    bus: essential_bus
+    type: avionics
+    nominal_current: 2.5
+    switch_id: sw_com1
+    circuit_breaker:
+      id: cb_com1
+      rating: 5.0
+      trip_curve: thermal_magnetic
+      panel_location: "CB-ROW1-01"
+    essential: true
+    affected_systems: ["vhf_com1"]
+
+  - id: nav1
+    label: "NAV 1"
+    bus: essential_bus
+    type: avionics
+    nominal_current: 1.5
+    circuit_breaker:
+      id: cb_nav1
+      rating: 3.0
+      trip_curve: thermal_magnetic
+      panel_location: "CB-ROW1-02"
+    essential: true
+    affected_systems: ["vor_ils_1"]
+
+  - id: pitot_heat
+    label: "PITOT HEAT"
+    bus: essential_bus
+    type: resistive
+    nominal_current: 4.0
+    switch_id: sw_pitot_heat
+    circuit_breaker:
+      id: cb_pitot
+      rating: 7.5
+      trip_curve: thermal
+      panel_location: "CB-ROW1-03"
+    essential: true
+    affected_systems: ["pitot_static"]
+
+  # --- Avionics bus loads ---
+  - id: com2
+    label: "COM 2"
+    bus: avionics_bus
+    type: avionics
+    nominal_current: 2.5
+    switch_id: sw_com2
+    circuit_breaker:
+      id: cb_com2
+      rating: 5.0
+      trip_curve: thermal_magnetic
+      panel_location: "CB-ROW1-04"
+    essential: false
+    affected_systems: ["vhf_com2"]
+
+  - id: nav2
+    label: "NAV 2"
+    bus: avionics_bus
+    type: avionics
+    nominal_current: 1.5
+    circuit_breaker:
+      id: cb_nav2
+      rating: 3.0
+      trip_curve: thermal_magnetic
+      panel_location: "CB-ROW1-05"
+    essential: false
+    affected_systems: ["vor_ils_2"]
+
+  - id: gps
+    label: "GPS"
+    bus: avionics_bus
+    type: avionics
+    nominal_current: 2.0
+    circuit_breaker:
+      id: cb_gps
+      rating: 5.0
+      trip_curve: thermal
+      panel_location: "CB-ROW1-06"
+    essential: false
+    affected_systems: ["gps_nav"]
+
+  - id: transponder
+    label: "XPDR"
+    bus: avionics_bus
+    type: avionics
+    nominal_current: 2.0
+    circuit_breaker:
+      id: cb_xpdr
+      rating: 5.0
+      trip_curve: thermal_magnetic
+      panel_location: "CB-ROW1-07"
+    essential: false
+    affected_systems: ["transponder"]
+
+  - id: autopilot
+    label: "AUTOPILOT"
+    bus: avionics_bus
+    type: avionics
+    nominal_current: 3.5
+    circuit_breaker:
+      id: cb_ap
+      rating: 5.0
+      trip_curve: thermal_magnetic
+      panel_location: "CB-ROW1-08"
+    essential: false
+    affected_systems: ["afcs"]
+
+  - id: audio_panel
+    label: "AUDIO PNL"
+    bus: avionics_bus
+    type: avionics
+    nominal_current: 0.5
+    circuit_breaker:
+      id: cb_audio
+      rating: 2.0
+      trip_curve: thermal
+      panel_location: "CB-ROW2-01"
+    essential: false
+    affected_systems: ["audio_panel"]
+
+  # --- Primary bus loads ---
+  - id: fuel_pump
+    label: "FUEL PUMP"
+    bus: primary_bus
+    type: motor
+    nominal_current: 4.0
+    inrush_current: 12.0
+    inrush_duration_ms: 400
+    switch_id: sw_fuel_pump
+    circuit_breaker:
+      id: cb_fuel_pump
+      rating: 7.5
+      trip_curve: thermal_magnetic
+      panel_location: "CB-ROW2-02"
+    essential: true
+    affected_systems: ["fuel_boost"]
+
+  - id: flaps
+    label: "FLAPS"
+    bus: primary_bus
+    type: motor
+    nominal_current: 8.0
+    inrush_current: 20.0
+    inrush_duration_ms: 600
+    circuit_breaker:
+      id: cb_flaps
+      rating: 15.0
+      trip_curve: thermal_magnetic
+      panel_location: "CB-ROW2-03"
+    essential: false
+    affected_systems: ["flap_motor"]
+
+  - id: turn_coord
+    label: "TURN COORD"
+    bus: primary_bus
+    type: avionics
+    nominal_current: 0.5
+    circuit_breaker:
+      id: cb_turn
+      rating: 2.0
+      trip_curve: thermal
+      panel_location: "CB-ROW2-04"
+    essential: false
+    affected_systems: ["turn_coordinator"]
+
+  - id: landing_lt
+    label: "LANDING LT"
+    bus: primary_bus
+    type: resistive
+    nominal_current: 8.0
+    switch_id: sw_landing_lt
+    circuit_breaker:
+      id: cb_ldg_lt
+      rating: 15.0
+      trip_curve: thermal
+      panel_location: "CB-ROW2-05"
+    essential: false
+    affected_systems: ["external_lights"]
+
+  - id: taxi_lt
+    label: "TAXI LT"
+    bus: primary_bus
+    type: resistive
+    nominal_current: 3.5
+    switch_id: sw_taxi_lt
+    circuit_breaker:
+      id: cb_taxi_lt
+      rating: 5.0
+      trip_curve: thermal
+      panel_location: "CB-ROW2-06"
+    essential: false
+    affected_systems: ["external_lights"]
+
+  - id: nav_lt
+    label: "NAV LT"
+    bus: primary_bus
+    type: resistive
+    nominal_current: 2.0
+    switch_id: sw_nav_lt
+    circuit_breaker:
+      id: cb_nav_lt
+      rating: 5.0
+      trip_curve: thermal
+      panel_location: "CB-ROW2-07"
+    essential: false
+    affected_systems: ["external_lights"]
+
+  - id: strobe_lt
+    label: "STROBE LT"
+    bus: primary_bus
+    type: resistive
+    nominal_current: 2.0
+    switch_id: sw_strobe
+    circuit_breaker:
+      id: cb_strobe
+      rating: 5.0
+      trip_curve: thermal
+      panel_location: "CB-ROW2-08"
+    essential: false
+    affected_systems: ["external_lights"]
+
+  - id: beacon
+    label: "BEACON"
+    bus: primary_bus
+    type: resistive
+    nominal_current: 1.5
+    switch_id: sw_beacon
+    circuit_breaker:
+      id: cb_beacon
+      rating: 3.0
+      trip_curve: thermal
+      panel_location: "CB-ROW2-09"
+    essential: false
+    affected_systems: ["external_lights"]
+
+  - id: inst_lt
+    label: "INST LT"
+    bus: primary_bus
+    type: resistive
+    nominal_current: 1.5
+    switch_id: sw_inst_lt
+    circuit_breaker:
+      id: cb_inst_lt
+      rating: 3.0
+      trip_curve: thermal
+      panel_location: "CB-ROW2-10"
+    essential: false
+    affected_systems: ["panel_lighting"]
+
+  - id: starter
+    label: "STARTER"
+    bus: primary_bus
+    type: motor
+    nominal_current: 150.0
+    inrush_current: 300.0
+    inrush_duration_ms: 2000
+    switch_id: sw_starter_engage
+    circuit_breaker:
+      id: cb_starter
+      rating: 80.0
+      trip_curve: magnetic
+      panel_location: "DIRECT"
+    essential: false
+    affected_systems: ["engine_start"]
+
+  # --- Hot battery bus loads (always powered when battery connected) ---
+  - id: clock
+    label: "CLOCK"
+    bus: hot_batt_bus
+    type: avionics
+    nominal_current: 0.1
+    circuit_breaker:
+      id: cb_clock
+      rating: 1.0
+      trip_curve: thermal
+      panel_location: "CB-ROW3-01"
+    essential: true
+    affected_systems: ["clock"]
+
+  - id: elt
+    label: "ELT"
+    bus: hot_batt_bus
+    type: avionics
+    nominal_current: 0.05
+    circuit_breaker:
+      id: cb_elt
+      rating: 1.0
+      trip_curve: thermal
+      panel_location: "CB-ROW3-02"
+    essential: true
+    affected_systems: ["emergency_locator"]
+
+direct_connections:
+  - from: battery
+    to: hot_batt_bus
+
+cas_messages:
+  - id: alt_fail
+    text: "ALT FAIL"
+    level: warning
+    condition:
+      type: source_fail
+      target_id: alternator
+
+  - id: low_volts
+    text: "LOW VOLTS"
+    level: caution
+    condition:
+      type: low_voltage
+      target_id: primary_bus
+      threshold: 24.0
+
+  - id: batt_low
+    text: "BATT LOW"
+    level: caution
+    condition:
+      type: low_soc
+      target_id: battery
+      threshold: 25
+
+  - id: batt_depleted
+    text: "BATT DEPLETED"
+    level: warning
+    condition:
+      type: low_soc
+      target_id: battery
+      threshold: 5

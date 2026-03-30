@@ -1,30 +1,40 @@
-# Cessna 172S Skyhawk — Electrical System Topology
+# Cessna 172S Skyhawk — Electrical Graph Topology (v2)
 # Reference: C172S POH Section 7 (Airplane and Systems Descriptions)
+#
+# Graph model: nodes (voltage potentials) + connections (series elements)
+# Every connection has from → to, except selectors (from → positions[].closes[])
 #
 # Single-engine 28V DC system:
 #   - 28V 60A belt-driven alternator
 #   - 24V 35Ah lead-acid battery
 #   - Split master switch (BATT | ALT)
 #   - Primary bus, avionics bus, essential bus, hot battery bus
+#   - 21 loads, each protected by a circuit breaker
+#   - 12 loads with additional pilot switches
 
 aircraft:
   type: "Cessna 172S Skyhawk"
   designation: "C172S"
-  revision: "1.0.0"
+  revision: "2.0.0"
 
 solver:
   rate_hz: 50
   propagation_passes: 4
-  contactor_delay_ms: 80
 
-sources:
+# ═══════════════════════════════════════════════════════════════════
+# NODES — things that exist at a voltage potential
+# ═══════════════════════════════════════════════════════════════════
+
+nodes:
+
+  # ── Sources ───────────────────────────────────────────────────
   - id: alternator
-    type: dc_generator
+    type: source
+    subtype: dc_generator
     label: "ALT"
     nominal_voltage: 28.5
     engine_index: 0
     min_rpm_pct: 30.0
-    max_current: 60
     gcu:
       overvolt_threshold: 32.0
       undervolt_threshold: 24.0
@@ -32,7 +42,8 @@ sources:
       reset_mode: manual
 
   - id: battery
-    type: battery
+    type: source
+    subtype: battery
     label: "BATT"
     nominal_voltage: 24.0
     battery:
@@ -51,376 +62,487 @@ sources:
         - [100, 24.5]
 
   - id: ext_pwr
-    type: external_power
+    type: source
+    subtype: external_power
     label: "EXT PWR"
     nominal_voltage: 28.0
-    max_current: 100
 
-buses:
+  # ── Buses ─────────────────────────────────────────────────────
   - id: primary_bus
+    type: bus
     label: "PRIMARY BUS"
-    type: dc
-    nominal_voltage: 28.0
-    shed_priority: 3
 
   - id: avionics_bus
+    type: bus
     label: "AVIONICS BUS"
-    type: dc
-    nominal_voltage: 28.0
-    shed_priority: 2
 
   - id: essential_bus
+    type: bus
     label: "ESSENTIAL BUS"
-    type: dc
-    nominal_voltage: 28.0
-    shed_priority: -1
 
   - id: hot_batt_bus
+    type: bus
     label: "HOT BATT BUS"
-    type: dc
-    nominal_voltage: 24.0
-    shed_priority: -1
 
-switches:
+  # ── Junctions (net names: CB-to-switch boundary) ──────────────
+  # Only needed where a load has both a CB and a pilot switch
+  - id: jct_com1
+    type: junction
+  - id: jct_com2
+    type: junction
+  - id: jct_pitot
+    type: junction
+  - id: jct_fuel_pump
+    type: junction
+  - id: jct_landing_lt
+    type: junction
+  - id: jct_taxi_lt
+    type: junction
+  - id: jct_nav_lt
+    type: junction
+  - id: jct_strobe
+    type: junction
+  - id: jct_beacon
+    type: junction
+  - id: jct_inst_lt
+    type: junction
+  - id: jct_starter
+    type: junction
+
+  # ── Loads ─────────────────────────────────────────────────────
+  # Essential bus loads
+  - id: com1
+    type: load
+    label: "COM 1"
+    nominal_current: 2.5
+
+  - id: nav1
+    type: load
+    label: "NAV 1"
+    nominal_current: 1.5
+
+  - id: pitot_heat
+    type: load
+    label: "PITOT HEAT"
+    nominal_current: 4.0
+
+  # Avionics bus loads
+  - id: com2
+    type: load
+    label: "COM 2"
+    nominal_current: 2.5
+
+  - id: nav2
+    type: load
+    label: "NAV 2"
+    nominal_current: 1.5
+
+  - id: gps
+    type: load
+    label: "GPS"
+    nominal_current: 2.0
+
+  - id: transponder
+    type: load
+    label: "XPDR"
+    nominal_current: 2.0
+
+  - id: autopilot
+    type: load
+    label: "AUTOPILOT"
+    nominal_current: 3.5
+
+  - id: audio_panel
+    type: load
+    label: "AUDIO PNL"
+    nominal_current: 0.5
+
+  # Primary bus loads
+  - id: fuel_pump
+    type: load
+    label: "FUEL PUMP"
+    nominal_current: 4.0
+
+  - id: flaps
+    type: load
+    label: "FLAPS"
+    nominal_current: 8.0
+
+  - id: turn_coord
+    type: load
+    label: "TURN COORD"
+    nominal_current: 0.5
+
+  - id: landing_lt
+    type: load
+    label: "LANDING LT"
+    nominal_current: 8.0
+
+  - id: taxi_lt
+    type: load
+    label: "TAXI LT"
+    nominal_current: 3.5
+
+  - id: nav_lt
+    type: load
+    label: "NAV LT"
+    nominal_current: 2.0
+
+  - id: strobe_lt
+    type: load
+    label: "STROBE LT"
+    nominal_current: 2.0
+
+  - id: beacon
+    type: load
+    label: "BEACON"
+    nominal_current: 1.5
+
+  - id: inst_lt
+    type: load
+    label: "INST LT"
+    nominal_current: 1.5
+
+  - id: starter
+    type: load
+    label: "STARTER"
+    nominal_current: 150.0
+
+  # Hot battery bus loads
+  - id: clock
+    type: load
+    label: "CLOCK"
+    nominal_current: 0.1
+
+  - id: elt
+    type: load
+    label: "ELT"
+    nominal_current: 0.05
+
+# ═══════════════════════════════════════════════════════════════════
+# CONNECTIONS — series elements between nodes
+# ═══════════════════════════════════════════════════════════════════
+
+connections:
+
+  # ── Source → primary bus (through master switches) ────────────
   - id: sw_alt
     type: contactor
+    from: alternator
+    to: primary_bus
     label: "ALT (master)"
-    source: alternator
-    target: primary_bus
     default_closed: false
     pilot_controllable: true
 
   - id: sw_battery
     type: switch
+    from: battery
+    to: primary_bus
     label: "BATT (master)"
-    source: battery
-    target: primary_bus
     default_closed: false
     pilot_controllable: true
 
   - id: sw_ext_pwr
     type: contactor
+    from: ext_pwr
+    to: primary_bus
     label: "EXT PWR"
-    source: ext_pwr
-    target: primary_bus
     default_closed: false
     pilot_controllable: true
 
+  # ── Direct connection (always on, no switch) ──────────────────
+  - id: wire_batt_hot
+    type: wire
+    from: battery
+    to: hot_batt_bus
+
+  # ── Bus → bus ─────────────────────────────────────────────────
   - id: sw_avionics_master
     type: switch
+    from: primary_bus
+    to: avionics_bus
     label: "AVIONICS MASTER"
-    source: primary_bus
-    target: avionics_bus
     default_closed: false
     pilot_controllable: true
 
   - id: sw_ess_bus_tie
     type: relay
+    from: primary_bus
+    to: essential_bus
     label: "ESS BUS TIE"
-    source: primary_bus
-    target: essential_bus
     default_closed: true
     coil_bus: primary_bus
     pilot_controllable: false
 
-loads:
-  # --- Essential bus loads ---
-  - id: com1
+  # ── Essential bus load chains ─────────────────────────────────
+
+  # COM1: essential_bus → cb → jct → switch → load
+  - id: cb_com1
+    type: circuit_breaker
+    from: essential_bus
+    to: jct_com1
+    rating: 5.0
+    pilot_controllable: true
+
+  - id: sw_com1
+    type: switch
+    from: jct_com1
+    to: com1
     label: "COM 1"
-    bus: essential_bus
-    type: avionics
-    nominal_current: 2.5
-    switch_id: sw_com1
-    circuit_breaker:
-      id: cb_com1
-      rating: 5.0
-      trip_curve: thermal_magnetic
-      panel_location: "CB-ROW1-01"
-    essential: true
-    affected_systems: ["vhf_com1"]
+    default_closed: false
+    pilot_controllable: true
 
-  - id: nav1
-    label: "NAV 1"
-    bus: essential_bus
-    type: avionics
-    nominal_current: 1.5
-    circuit_breaker:
-      id: cb_nav1
-      rating: 3.0
-      trip_curve: thermal_magnetic
-      panel_location: "CB-ROW1-02"
-    essential: true
-    affected_systems: ["vor_ils_1"]
+  # NAV1: essential_bus → cb → load (no switch)
+  - id: cb_nav1
+    type: circuit_breaker
+    from: essential_bus
+    to: nav1
+    rating: 3.0
+    pilot_controllable: true
 
-  - id: pitot_heat
+  # PITOT HEAT: essential_bus → cb → jct → switch → load
+  - id: cb_pitot
+    type: circuit_breaker
+    from: essential_bus
+    to: jct_pitot
+    rating: 7.5
+    pilot_controllable: true
+
+  - id: sw_pitot_heat
+    type: switch
+    from: jct_pitot
+    to: pitot_heat
     label: "PITOT HEAT"
-    bus: essential_bus
-    type: resistive
-    nominal_current: 4.0
-    switch_id: sw_pitot_heat
-    circuit_breaker:
-      id: cb_pitot
-      rating: 7.5
-      trip_curve: thermal
-      panel_location: "CB-ROW1-03"
-    essential: true
-    affected_systems: ["pitot_static"]
+    default_closed: false
+    pilot_controllable: true
 
-  # --- Avionics bus loads ---
-  - id: com2
+  # ── Avionics bus load chains ──────────────────────────────────
+
+  # COM2: avionics_bus → cb → jct → switch → load
+  - id: cb_com2
+    type: circuit_breaker
+    from: avionics_bus
+    to: jct_com2
+    rating: 5.0
+    pilot_controllable: true
+
+  - id: sw_com2
+    type: switch
+    from: jct_com2
+    to: com2
     label: "COM 2"
-    bus: avionics_bus
-    type: avionics
-    nominal_current: 2.5
-    switch_id: sw_com2
-    circuit_breaker:
-      id: cb_com2
-      rating: 5.0
-      trip_curve: thermal_magnetic
-      panel_location: "CB-ROW1-04"
-    essential: false
-    affected_systems: ["vhf_com2"]
+    default_closed: false
+    pilot_controllable: true
 
-  - id: nav2
-    label: "NAV 2"
-    bus: avionics_bus
-    type: avionics
-    nominal_current: 1.5
-    circuit_breaker:
-      id: cb_nav2
-      rating: 3.0
-      trip_curve: thermal_magnetic
-      panel_location: "CB-ROW1-05"
-    essential: false
-    affected_systems: ["vor_ils_2"]
+  # NAV2: avionics_bus → cb → load (no switch)
+  - id: cb_nav2
+    type: circuit_breaker
+    from: avionics_bus
+    to: nav2
+    rating: 3.0
+    pilot_controllable: true
 
-  - id: gps
-    label: "GPS"
-    bus: avionics_bus
-    type: avionics
-    nominal_current: 2.0
-    circuit_breaker:
-      id: cb_gps
-      rating: 5.0
-      trip_curve: thermal
-      panel_location: "CB-ROW1-06"
-    essential: false
-    affected_systems: ["gps_nav"]
+  # GPS: avionics_bus → cb → load (no switch)
+  - id: cb_gps
+    type: circuit_breaker
+    from: avionics_bus
+    to: gps
+    rating: 5.0
+    pilot_controllable: true
 
-  - id: transponder
-    label: "XPDR"
-    bus: avionics_bus
-    type: avionics
-    nominal_current: 2.0
-    circuit_breaker:
-      id: cb_xpdr
-      rating: 5.0
-      trip_curve: thermal_magnetic
-      panel_location: "CB-ROW1-07"
-    essential: false
-    affected_systems: ["transponder"]
+  # XPDR: avionics_bus → cb → load (no switch)
+  - id: cb_xpdr
+    type: circuit_breaker
+    from: avionics_bus
+    to: transponder
+    rating: 5.0
+    pilot_controllable: true
 
-  - id: autopilot
-    label: "AUTOPILOT"
-    bus: avionics_bus
-    type: avionics
-    nominal_current: 3.5
-    circuit_breaker:
-      id: cb_ap
-      rating: 5.0
-      trip_curve: thermal_magnetic
-      panel_location: "CB-ROW1-08"
-    essential: false
-    affected_systems: ["afcs"]
+  # AUTOPILOT: avionics_bus → cb → load (no switch)
+  - id: cb_ap
+    type: circuit_breaker
+    from: avionics_bus
+    to: autopilot
+    rating: 5.0
+    pilot_controllable: true
 
-  - id: audio_panel
-    label: "AUDIO PNL"
-    bus: avionics_bus
-    type: avionics
-    nominal_current: 0.5
-    circuit_breaker:
-      id: cb_audio
-      rating: 2.0
-      trip_curve: thermal
-      panel_location: "CB-ROW2-01"
-    essential: false
-    affected_systems: ["audio_panel"]
+  # AUDIO PNL: avionics_bus → cb → load (no switch)
+  - id: cb_audio
+    type: circuit_breaker
+    from: avionics_bus
+    to: audio_panel
+    rating: 2.0
+    pilot_controllable: true
 
-  # --- Primary bus loads ---
-  - id: fuel_pump
+  # ── Primary bus load chains ───────────────────────────────────
+
+  # FUEL PUMP: primary_bus → cb → jct → switch → load
+  - id: cb_fuel_pump
+    type: circuit_breaker
+    from: primary_bus
+    to: jct_fuel_pump
+    rating: 7.5
+    pilot_controllable: true
+
+  - id: sw_fuel_pump
+    type: switch
+    from: jct_fuel_pump
+    to: fuel_pump
     label: "FUEL PUMP"
-    bus: primary_bus
-    type: motor
-    nominal_current: 4.0
-    inrush_current: 12.0
-    inrush_duration_ms: 400
-    switch_id: sw_fuel_pump
-    circuit_breaker:
-      id: cb_fuel_pump
-      rating: 7.5
-      trip_curve: thermal_magnetic
-      panel_location: "CB-ROW2-02"
-    essential: true
-    affected_systems: ["fuel_boost"]
+    default_closed: false
+    pilot_controllable: true
 
-  - id: flaps
-    label: "FLAPS"
-    bus: primary_bus
-    type: motor
-    nominal_current: 8.0
-    inrush_current: 20.0
-    inrush_duration_ms: 600
-    circuit_breaker:
-      id: cb_flaps
-      rating: 15.0
-      trip_curve: thermal_magnetic
-      panel_location: "CB-ROW2-03"
-    essential: false
-    affected_systems: ["flap_motor"]
+  # FLAPS: primary_bus → cb → load (no switch)
+  - id: cb_flaps
+    type: circuit_breaker
+    from: primary_bus
+    to: flaps
+    rating: 15.0
+    pilot_controllable: true
 
-  - id: turn_coord
-    label: "TURN COORD"
-    bus: primary_bus
-    type: avionics
-    nominal_current: 0.5
-    circuit_breaker:
-      id: cb_turn
-      rating: 2.0
-      trip_curve: thermal
-      panel_location: "CB-ROW2-04"
-    essential: false
-    affected_systems: ["turn_coordinator"]
+  # TURN COORD: primary_bus → cb → load (no switch)
+  - id: cb_turn
+    type: circuit_breaker
+    from: primary_bus
+    to: turn_coord
+    rating: 2.0
+    pilot_controllable: true
 
-  - id: landing_lt
+  # LANDING LT: primary_bus → cb → jct → switch → load
+  - id: cb_ldg_lt
+    type: circuit_breaker
+    from: primary_bus
+    to: jct_landing_lt
+    rating: 15.0
+    pilot_controllable: true
+
+  - id: sw_landing_lt
+    type: switch
+    from: jct_landing_lt
+    to: landing_lt
     label: "LANDING LT"
-    bus: primary_bus
-    type: resistive
-    nominal_current: 8.0
-    switch_id: sw_landing_lt
-    circuit_breaker:
-      id: cb_ldg_lt
-      rating: 15.0
-      trip_curve: thermal
-      panel_location: "CB-ROW2-05"
-    essential: false
-    affected_systems: ["external_lights"]
+    default_closed: false
+    pilot_controllable: true
 
-  - id: taxi_lt
+  # TAXI LT: primary_bus → cb → jct → switch → load
+  - id: cb_taxi_lt
+    type: circuit_breaker
+    from: primary_bus
+    to: jct_taxi_lt
+    rating: 5.0
+    pilot_controllable: true
+
+  - id: sw_taxi_lt
+    type: switch
+    from: jct_taxi_lt
+    to: taxi_lt
     label: "TAXI LT"
-    bus: primary_bus
-    type: resistive
-    nominal_current: 3.5
-    switch_id: sw_taxi_lt
-    circuit_breaker:
-      id: cb_taxi_lt
-      rating: 5.0
-      trip_curve: thermal
-      panel_location: "CB-ROW2-06"
-    essential: false
-    affected_systems: ["external_lights"]
+    default_closed: false
+    pilot_controllable: true
 
-  - id: nav_lt
+  # NAV LT: primary_bus → cb → jct → switch → load
+  - id: cb_nav_lt
+    type: circuit_breaker
+    from: primary_bus
+    to: jct_nav_lt
+    rating: 5.0
+    pilot_controllable: true
+
+  - id: sw_nav_lt
+    type: switch
+    from: jct_nav_lt
+    to: nav_lt
     label: "NAV LT"
-    bus: primary_bus
-    type: resistive
-    nominal_current: 2.0
-    switch_id: sw_nav_lt
-    circuit_breaker:
-      id: cb_nav_lt
-      rating: 5.0
-      trip_curve: thermal
-      panel_location: "CB-ROW2-07"
-    essential: false
-    affected_systems: ["external_lights"]
+    default_closed: false
+    pilot_controllable: true
 
-  - id: strobe_lt
-    label: "STROBE LT"
-    bus: primary_bus
-    type: resistive
-    nominal_current: 2.0
-    switch_id: sw_strobe
-    circuit_breaker:
-      id: cb_strobe
-      rating: 5.0
-      trip_curve: thermal
-      panel_location: "CB-ROW2-08"
-    essential: false
-    affected_systems: ["external_lights"]
+  # STROBE: primary_bus → cb → jct → switch → load
+  - id: cb_strobe
+    type: circuit_breaker
+    from: primary_bus
+    to: jct_strobe
+    rating: 5.0
+    pilot_controllable: true
 
-  - id: beacon
+  - id: sw_strobe
+    type: switch
+    from: jct_strobe
+    to: strobe_lt
+    label: "STROBE"
+    default_closed: false
+    pilot_controllable: true
+
+  # BEACON: primary_bus → cb → jct → switch → load
+  - id: cb_beacon
+    type: circuit_breaker
+    from: primary_bus
+    to: jct_beacon
+    rating: 3.0
+    pilot_controllable: true
+
+  - id: sw_beacon
+    type: switch
+    from: jct_beacon
+    to: beacon
     label: "BEACON"
-    bus: primary_bus
-    type: resistive
-    nominal_current: 1.5
-    switch_id: sw_beacon
-    circuit_breaker:
-      id: cb_beacon
-      rating: 3.0
-      trip_curve: thermal
-      panel_location: "CB-ROW2-09"
-    essential: false
-    affected_systems: ["external_lights"]
+    default_closed: false
+    pilot_controllable: true
 
-  - id: inst_lt
+  # INST LT: primary_bus → cb → jct → switch → load
+  - id: cb_inst_lt
+    type: circuit_breaker
+    from: primary_bus
+    to: jct_inst_lt
+    rating: 3.0
+    pilot_controllable: true
+
+  - id: sw_inst_lt
+    type: switch
+    from: jct_inst_lt
+    to: inst_lt
     label: "INST LT"
-    bus: primary_bus
-    type: resistive
-    nominal_current: 1.5
-    switch_id: sw_inst_lt
-    circuit_breaker:
-      id: cb_inst_lt
-      rating: 3.0
-      trip_curve: thermal
-      panel_location: "CB-ROW2-10"
-    essential: false
-    affected_systems: ["panel_lighting"]
+    default_closed: false
+    pilot_controllable: true
 
-  - id: starter
+  # STARTER: primary_bus → cb → jct → switch → load
+  # NOTE: sw_starter_engage is gated by engines plugin
+  # (bus_voltage > 20V AND magneto in START position)
+  - id: cb_starter
+    type: circuit_breaker
+    from: primary_bus
+    to: jct_starter
+    rating: 80.0
+    pilot_controllable: false    # not a panel CB — direct wired
+
+  - id: sw_starter_engage
+    type: switch
+    from: jct_starter
+    to: starter
     label: "STARTER"
-    bus: primary_bus
-    type: motor
-    nominal_current: 150.0
-    inrush_current: 300.0
-    inrush_duration_ms: 2000
-    switch_id: sw_starter_engage
-    circuit_breaker:
-      id: cb_starter
-      rating: 80.0
-      trip_curve: magnetic
-      panel_location: "DIRECT"
-    essential: false
-    affected_systems: ["engine_start"]
+    default_closed: false
+    pilot_controllable: false    # controlled by engines plugin, not pilot
 
-  # --- Hot battery bus loads (always powered when battery connected) ---
-  - id: clock
-    label: "CLOCK"
-    bus: hot_batt_bus
-    type: avionics
-    nominal_current: 0.1
-    circuit_breaker:
-      id: cb_clock
-      rating: 1.0
-      trip_curve: thermal
-      panel_location: "CB-ROW3-01"
-    essential: true
-    affected_systems: ["clock"]
+  # ── Hot battery bus load chains ───────────────────────────────
 
-  - id: elt
-    label: "ELT"
-    bus: hot_batt_bus
-    type: avionics
-    nominal_current: 0.05
-    circuit_breaker:
-      id: cb_elt
-      rating: 1.0
-      trip_curve: thermal
-      panel_location: "CB-ROW3-02"
-    essential: true
-    affected_systems: ["emergency_locator"]
+  # CLOCK: hot_batt_bus → cb → load (no switch)
+  - id: cb_clock
+    type: circuit_breaker
+    from: hot_batt_bus
+    to: clock
+    rating: 1.0
+    pilot_controllable: true
 
-direct_connections:
-  - from: battery
-    to: hot_batt_bus
+  # ELT: hot_batt_bus → cb → load (no switch)
+  - id: cb_elt
+    type: circuit_breaker
+    from: hot_batt_bus
+    to: elt
+    rating: 1.0
+    pilot_controllable: true
+
+# ═══════════════════════════════════════════════════════════════════
+# CAS MESSAGES — alerting rules based on graph state
+# ═══════════════════════════════════════════════════════════════════
 
 cas_messages:
   - id: alt_fail
