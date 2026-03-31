@@ -133,6 +133,44 @@ export default function C172Panel() {
         </div>
       </Section>
 
+      {/* ── CIRCUIT BREAKER PANEL (horizontal, like real C172) ───── */}
+      {electrical.cbNames?.length > 0 && (
+        <Section title="CIRCUIT BREAKERS">
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
+            {electrical.cbNames.map((name, i) => {
+              const closed = electrical.cbClosed?.[i]
+              const tripped = electrical.cbTripped?.[i]
+              const label = name.replace('cb_', '').replace(/_/g, ' ').toUpperCase()
+              return (
+                <div key={name}
+                  onClick={() => sendVirtualPanel([name], [!closed])}
+                  title={`${name}: ${tripped ? 'TRIPPED' : closed ? 'IN' : 'POPPED'} — click to ${closed ? 'pull' : 'reset'}`}
+                  style={{
+                    width: 40, textAlign: 'center', cursor: 'pointer', userSelect: 'none',
+                    padding: '4px 2px', borderRadius: 4,
+                    background: tripped ? '#3b1111' : '#0d1117',
+                    border: `1px solid ${tripped ? '#ff3b30' : closed ? '#1e293b' : '#f59e0b'}`,
+                  }}
+                >
+                  {/* CB dot indicator */}
+                  <div style={{
+                    width: 10, height: 10, borderRadius: '50%', margin: '0 auto 3px',
+                    background: tripped ? '#ff3b30' : closed ? '#00ff88' : '#f59e0b',
+                    boxShadow: `0 0 4px ${tripped ? '#ff3b30' : closed ? '#00ff8844' : '#f59e0b44'}`,
+                  }} />
+                  <div style={{
+                    fontSize: 7, fontFamily: FONT, color: '#94a3b8',
+                    lineHeight: 1.1, wordBreak: 'break-word',
+                  }}>
+                    {label}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </Section>
+      )}
+
       {/* ── MAIN PANEL ────────────────────────────────────────────── */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
 
