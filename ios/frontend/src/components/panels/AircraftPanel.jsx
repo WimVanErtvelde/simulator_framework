@@ -810,7 +810,7 @@ export default function AircraftPanel() {
               </>
             )}
 
-            {/* Circuit Breakers (collapsible) */}
+            {/* Circuit Breakers (interactive) */}
             {electrical.cbNames?.length > 0 && (
               <>
                 <div
@@ -822,19 +822,67 @@ export default function AircraftPanel() {
                 >
                   {showCBs ? '▾' : '▸'} CIRCUIT BREAKERS ({electrical.cbNames.length})
                 </div>
-                {showCBs && electrical.cbNames.map((name, i) => (
-                  <div key={name} style={{
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    padding: '1px 0 1px 12px', fontSize: 11, fontFamily: 'monospace',
-                  }}>
-                    <span style={{ color: electrical.cbTripped[i] ? '#ff3b30' : '#94a3b8' }}>{name}</span>
-                    <span style={{
-                      color: electrical.cbTripped[i] ? '#ff3b30' : electrical.cbClosed[i] ? '#00ff88' : '#475569',
+                {showCBs && electrical.cbNames.map((name, i) => {
+                  const closed = electrical.cbClosed[i]
+                  const tripped = electrical.cbTripped[i]
+                  const forced = isForced(name)
+                  // IN = closed, POPPED = tripped or pulled (!closed)
+                  const stateLabel = tripped ? 'TRIPPED' : closed ? 'IN' : 'POPPED'
+                  const stateColor = forced ? '#ff3b30' : tripped ? '#f59e0b' : closed ? '#00ff88' : '#f59e0b'
+                  return (
+                    <div key={name} style={{
+                      display: 'grid', gridTemplateColumns: '24px 1fr 56px',
+                      alignItems: 'center', gap: 8,
+                      padding: '4px 0', fontSize: 12, fontFamily: 'monospace',
                     }}>
-                      {electrical.cbTripped[i] ? 'TRIPPED' : electrical.cbClosed[i] ? 'OK' : 'OPEN'}
-                    </span>
-                  </div>
-                ))}
+                      {/* FORCE checkbox */}
+                      <input
+                        type="checkbox"
+                        checked={forced}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const newForced = !forced
+                          setLocalForced(prev => ({ ...prev, [name]: newForced }))
+                          if (newForced) {
+                            // Force at current state
+                            sendPanel([name], [closed], null, null, [true])
+                          } else {
+                            sendPanel([name], [], null, null, [false])
+                          }
+                        }}
+                        onChange={() => {}}
+                        title={forced ? 'Release force' : 'Force CB'}
+                        style={{ width: 14, height: 14, cursor: 'pointer', accentColor: '#f59e0b' }}
+                      />
+                      {/* Label */}
+                      <span style={{ color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {name.replace('cb_', '').toUpperCase()}
+                        {forced && (
+                          <span style={{
+                            fontSize: 8, fontWeight: 700, color: '#f59e0b', marginLeft: 6,
+                            letterSpacing: 1, verticalAlign: 'super',
+                          }}>LOCKED</span>
+                        )}
+                      </span>
+                      {/* Pull/Reset button */}
+                      <button
+                        onClick={() => {
+                          // Toggle: if closed → pull (send false), if open → reset (send true)
+                          sendPanel([name], [!closed], null, null, forced ? [true] : undefined)
+                        }}
+                        style={{
+                          width: 56, height: 22, borderRadius: 4, cursor: 'pointer',
+                          border: '1px solid ' + (forced ? '#ff3b30' : stateColor),
+                          background: closed ? '#1c2333' : (forced ? '#3b1111' : '#332200'),
+                          color: stateColor, fontSize: 10, fontWeight: 600,
+                          fontFamily: 'monospace',
+                        }}
+                      >
+                        {stateLabel}
+                      </button>
+                    </div>
+                  )
+                })}
               </>
             )}
           </>
