@@ -6,7 +6,7 @@ failures:
     injection:
       handler: electrical
       method: set_electrical_component_failed
-      params: {component_id: ALT1}
+      params: {component_id: alternator}
 
   - id: ata24_battery_failure
     ata: 24
@@ -15,7 +15,7 @@ failures:
     injection:
       handler: electrical
       method: set_electrical_component_failed
-      params: {component_id: BAT1}
+      params: {component_id: battery}
 
   - id: ata24_cb_fuel_pump
     ata: 24
@@ -24,7 +24,7 @@ failures:
     injection:
       handler: electrical
       method: set_circuit_breaker_state
-      params: {component_id: CB_FUEL_PUMP, state: popped}
+      params: {component_id: cb_fuel_pump, state: popped}
 
   - id: ata26_engine_fire
     ata: 26
