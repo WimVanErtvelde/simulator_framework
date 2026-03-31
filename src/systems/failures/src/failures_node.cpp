@@ -147,6 +147,8 @@ public:
 
   CallbackReturn on_configure(const rclcpp_lifecycle::State &) override
   {
+    RCLCPP_INFO(this->get_logger(), "on_configure() entered");
+
     // Diagnostics publishers (rclcpp::Publisher — publish in ALL states)
     heartbeat_pub_ = this->create_publisher<std_msgs::msg::String>(
       "/sim/diagnostics/heartbeat", 10);
@@ -228,7 +230,7 @@ public:
     failed_instruments_.clear();
 
     publish_lifecycle_state("inactive");
-    RCLCPP_INFO(this->get_logger(), "sim_failures configured");
+    RCLCPP_INFO(this->get_logger(), "on_configure() completed OK — %zu failures loaded", catalog_.size());
     return CallbackReturn::SUCCESS;
   }
 
@@ -251,7 +253,8 @@ public:
       });
 
     publish_lifecycle_state("active");
-    RCLCPP_INFO(this->get_logger(), "sim_failures activated");
+    RCLCPP_INFO(this->get_logger(), "on_activate() entered — publishers ready, state=%d",
+      this->get_current_state().id());
     return CallbackReturn::SUCCESS;
   }
 
@@ -481,19 +484,28 @@ private:
 
   void route_injection(const sim_msgs::msg::FailureInjection & inj)
   {
+    const char * topic = "unknown";
     if (inj.handler == "flight_model") {
+      topic = "/sim/failure/flight_model_commands";
       fdm_cmd_pub_->publish(inj);
     } else if (inj.handler == "electrical") {
+      topic = "/sim/failure/electrical_commands";
       elec_cmd_pub_->publish(inj);
     } else if (inj.handler == "navaid_sim") {
+      topic = "/sim/failure/navaid_commands";
       navaid_cmd_pub_->publish(inj);
     } else if (inj.handler == "air_data") {
+      topic = "/sim/failure/air_data_commands";
       air_data_cmd_pub_->publish(inj);
     } else {
       RCLCPP_WARN(this->get_logger(),
         "Unknown handler '%s' for failure '%s'",
         inj.handler.c_str(), inj.failure_id.c_str());
+      return;
     }
+    RCLCPP_INFO(this->get_logger(),
+      "route_injection: state=%d, failure=%s, active=%d → %s",
+      this->get_current_state().id(), inj.failure_id.c_str(), inj.active, topic);
   }
 
   // ─── 10 Hz timer: evaluate armed queue + publish state ──────────────────
