@@ -9,7 +9,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 ## CURRENT STATE
-<!-- Last updated: 2026-03-23 — This section is editable -->
+<!-- Last updated: 2026-03-31 — This section is editable -->
 
 ### Architecture
 - **Middleware:** ROS2 Jazzy (LTS), all nodes use sim time (`/clock` + `use_sim_time`)
@@ -2260,3 +2260,71 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
   No interface changes to IElectricalModel.
 - REASON: electrical_node.cpp always sends "component_id/fail" format.
   Translation layer in the plugin keeps the node generic.
+
+## 2026-03-31 — 22:26:43 - Claude Code (from Claude Chat design session)
+
+### Electrical solver v2: Phase 3 — live system swap
+
+- DECIDED: C172 electrical_model plugin swapped from ElectricalSolver to
+  GraphSolver. Old electrical.yaml renamed to electrical_v1_backup.yaml.
+  v2 format is now electrical.yaml. EC135 stays on old solver (no v2 YAML
+  yet, not runnable).
+- REASON: Phase 2 graph solver passed all 15 unit tests. Plugin interface
+  (IElectricalModel) unchanged — electrical_node.cpp required no changes.
+- AFFECTS: c172/electrical_model.cpp, c172/config/electrical.yaml
+
+- DECIDED: CB overcurrent physics removed entirely. No thermal model, no
+  inrush, no automatic trip. CBs are switches that only trip via failure
+  effects or IOS commands. Loads draw flat nominal_current when powered.
+- REASON: In training sim, CBs only trip when instructor says so.
+  Overcurrent physics caused false trips from YAML typos (hard to debug)
+  and inrush interactions with freeze mode (dt=0 stalls timers). No FNPT
+  II training scenario requires automatic CB trip.
+- AFFECTS: graph_solver.cpp, graph_types.hpp, electrical.yaml (removed
+  inrush_current, inrush_duration_ms, load_type fields from loads)
+
+- DECIDED: Removed unused YAML fields from v2 schema: affected_systems,
+  max_current on sources, essential on loads, contactor_delay_ms,
+  inrush_current, inrush_duration_ms, load_type. Load nodes now carry
+  only: id, type, label, nominal_current.
+- REASON: Dead data. Solver never consumed these fields. Re-add when
+  features exist.
+
+- DECIDED: commandConnection() does not gate on pilot_controllable. That
+  field is metadata for the frontend (which controls to render as
+  interactive). The solver accepts all commands unconditionally. System
+  nodes (engines plugin) need to command connections that aren't
+  pilot-accessible.
+- REASON: sw_starter_engage has pilot_controllable: false (controlled by
+  engines plugin via magneto + voltage check, not by pilot switch).
+  Gating on pilot_controllable in the solver prevented engine start.
+- AFFECTS: graph_solver.cpp
+
+- DECIDED: Alternator min_rpm_pct lowered from 30% to 20%. Starter
+  voltage threshold lowered from 20V to 14V.
+- REASON: At idle (~650 RPM), n1_pct ≈ 24% (propeller RPM / max_rpm).
+  30% threshold required 10% throttle for alternator. 20% brings
+  alternator online at idle. Battery sags to ~17V under 150A starter
+  load — 20V threshold prevented cranking.
+- AFFECTS: c172/config/electrical.yaml (min_rpm_pct),
+  c172/engines_model.cpp (voltage check)
+
+- DECIDED: ios_backend electrical config parser updated for v2 YAML
+  format. Reads nodes + connections instead of old
+  sources/buses/switches/loads sections. Builds same WS message field
+  names so frontend doesn't need changes.
+- REASON: v2 YAML has no switches: or loads: top-level sections.
+  ios_backend parsing returned empty config, IOS showed no electrical
+  controls.
+- AFFECTS: ios_backend_node.py
+
+- DECIDED: CBs interactive on IOS and virtual cockpit. Same command path
+  as switches — cb_ IDs flow through switch_ids[] in PanelControls. No
+  message changes needed. IOS: 3-column grid with FORCE checkbox, label,
+  pull/reset button. 3-state display: IN (green), POPPED (orange),
+  LOCKED (red). Virtual cockpit: horizontal CB row with colored dots,
+  pull/reset on click, VIRTUAL priority.
+- REASON: Completes the EURAMEC 3-state CB model (OFF/ON/ON&LOCKED).
+  Instructor forces from IOS override cockpit resets. Unified command
+  path means no new plumbing.
+- AFFECTS: AircraftPanel.jsx (CB section), C172Panel.jsx (CB row)
