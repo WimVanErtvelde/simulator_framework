@@ -238,6 +238,15 @@ public:
 
   CallbackReturn on_activate(const rclcpp_lifecycle::State &) override
   {
+    // Explicitly activate LifecyclePublishers — required when configure
+    // and activate are triggered in rapid succession from the same callback
+    // (auto-start timer). Without this, publishers silently drop messages.
+    if (failure_state_pub_) failure_state_pub_->on_activate();
+    if (fdm_cmd_pub_)      fdm_cmd_pub_->on_activate();
+    if (elec_cmd_pub_)     elec_cmd_pub_->on_activate();
+    if (navaid_cmd_pub_)   navaid_cmd_pub_->on_activate();
+    if (air_data_cmd_pub_) air_data_cmd_pub_->on_activate();
+
     // 10 Hz timer — evaluate armed queue and publish FailureState
     eval_timer_ = this->create_wall_timer(
       std::chrono::milliseconds(100),
