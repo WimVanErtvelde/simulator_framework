@@ -9,7 +9,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 ## CURRENT STATE
-<!-- Last updated: 2026-03-31 — This section is editable -->
+<!-- Last updated: 2026-04-01 — This section is editable -->
 
 ### Architecture
 - **Middleware:** ROS2 Jazzy (LTS), all nodes use sim time (`/clock` + `use_sim_time`)
@@ -17,9 +17,11 @@
 - **Input Arbitrator** sole subscriber to `/devices/`. Priority: INSTRUCTOR > HARDWARE > VIRTUAL > FROZEN. 4 channels: flight, engine, avionics, panel. Hardware timeout 500ms → auto-fallback.
 - **Flight Model Adapter** abstract C++ interface (`IFlightModelAdapter`). Implementations: JSBSimAdapter, XPlaneUDPAdapter, HelisimUDPAdapter. Publishes `/sim/flight_model/state` + `/sim/flight_model/capabilities` (transient_local). CapabilityMode tri-state: FDM_NATIVE / EXTERNAL_COUPLED / EXTERNAL_DECOUPLED. Subscribes to writeback topics for coupled subsystems. Terrain refinement: runway DB altitude → CIGI HOT via `refine_terrain_altitude` (RunIC with cockpit save/restore). `pending_ic_` gates stepping during terrain wait (30s timeout).
 - **Systems nodes** (C++) subscribe to `/sim/flight_model/state` + `/sim/failures/active` + `/sim/world/*`, publish own `/sim/<s>/state`. Aircraft-specific logic via pluginlib plugins. Never talk to each other directly.
+- **Electrical solver** — GraphSolver (`graph_solver.hpp/cpp`, namespace `elec_graph`). Graph-based topology: nodes (sources, buses, junctions, loads) + connections (wire, switch, contactor, relay, circuit_breaker). YAML v2 format at `aircraft/<type>/config/electrical.yaml`. BFS power propagation with multi-pass relay coil updates (`propagation_passes=4`). CB trips only via failure effects or IOS commands — no automatic overcurrent. `commandConnection()` does not gate on `pilot_controllable` (metadata for frontend only). Old `ElectricalSolver` (`elec_sys`) kept for EC135.
+- **Failure effects** — property overrides on graph elements via generic actions (force, jam, disable, multiply). `failures.yaml` references graph element IDs directly (e.g. `alternator`, `cb_fuel_pump`). No per-failure C++ code — adding new electrical failures is pure YAML authoring. Solver applies active overrides before computing each element.
 - **CIGI bridge** — raw CIGI 3.3 big-endian encoding (no CCL). Entity Control + IG Control at 60 Hz. HOT terrain requests rate-gated by AGL (50Hz <10m, 10Hz 10-100m, off above). Repositioning handshake: IG Mode Reset for one frame on `reposition_active` rising edge, clear HAT tracker, then Operate. HOT responses gated by SOF IG Status=Operate.
-- **IOS Backend** (FastAPI + rclpy) bridges ROS2 ↔ WebSocket. Run manually, not in launch file.
-- **IOS Frontend** (React + Zustand + WebSocket). URL routing: `/` = IOS app, `/cockpit/c172/*` = virtual cockpit panels. Dynamic A/C page and StatusStrip radio row driven by aircraft `navigation.yaml`.
+- **IOS Backend** (FastAPI + rclpy) bridges ROS2 ↔ WebSocket. Run manually, not in launch file. Electrical config parser supports both v1 (flat sections) and v2 (nodes + connections) YAML formats.
+- **IOS Frontend** (React + Zustand + WebSocket). URL routing: `/` = IOS app, `/cockpit/c172/*` = virtual cockpit panels. Dynamic A/C page and StatusStrip radio row driven by aircraft `navigation.yaml`. Interactive CBs on IOS (3-state: IN/POPPED/LOCKED with FORCE checkbox) and virtual cockpit (horizontal CB row). CBs flow through same `switch_ids[]` command path as switches.
 
 ### Avionics message conventions
 - **Three tiers:** RawAvionicsControls → AvionicsControls → NavigationState
@@ -34,15 +36,15 @@
 - `atmosphere_node` — full ISA model, OAT deviation, QNH override
 - `cigi_bridge` — CIGI 3.3 host, multi-point HOT (3 gear points), IG Mode repositioning handshake, SOF parsing
 - `navaid_sim` — VOR/ILS/NDB/DME/Marker, terrain LOS, A424 + XP12 parsers. Airport/runway DB (SearchAirports/GetRunways/GetTerrainElevation services)
-- `sim_electrical` — pluginlib, C172 on **GraphSolver v2** (BFS graph propagation, 15/15 tests), EC135 on legacy ElectricalSolver. CB 3-state override (NORMAL/POPPED/LOCKED). Capability gating + writeback.
+- `sim_electrical` — pluginlib. C172 on **GraphSolver v2**: graph topology (39 nodes, 38 connections), unified connection model (CBs, switches, relays all in connections section), failure effects model (force/jam/disable/multiply), interactive CBs on IOS + cockpit, 15 standalone unit tests (no ROS2). EC135 on legacy ElectricalSolver until v2 YAML written. Capability gating + writeback.
 - `sim_engine_systems` — pluginlib → IEnginesModel. C172 piston + EC135 turboshaft plugins. EngineCommands published (zeros for current aircraft, pre-wired for turboprop/FADEC).
 - `sim_fuel` — pluginlib → IFuelModel. C172 plugin. Capability gating + writeback. FuelState arrays [8] (future graph solver).
-- `sim_failures` — failure catalog from YAML (ATA grouped), armed triggers (delay/condition), 3-topic routing (flight_model/electrical/navaid commands). params_override_json for runtime params.
+- `sim_failures` — failure catalog from YAML (ATA grouped), armed triggers (delay/condition), 4-topic routing (flight_model/electrical/navaid/air_data commands). params_override_json for runtime params. LifecyclePublisher activation fix applied (Bug #9).
 - `sim_navigation` — GPS/VOR/ILS/ADF/DME, CDI/TO-FROM, DME source selection, failure gating. No pluginlib.
 - `sim_gear` — pluginlib → IGearModel. C172 fixed-tricycle. WoW per leg, nosewheel angle, brake echo.
 - `sim_air_data` — pluginlib → IAirDataModel. Pitot-static with icing, turbulence noise, alternate static. C172 plugin.
-- `ios_backend` — dynamic node discovery, FDM/fuel/nav/electrical/sim state WS forwarding. Panel + avionics commands. Failure catalog + injection/clear/clear_all. Navaid search API.
-- `ios_frontend` — map, status strip (dynamic radio row), 9 panel tabs, action bar. Electrical switches (FORCE), ground services (tri-state), radio tuning. Failure panel with ATA grouping + navaid search. REPOSITIONING badge + button lockout. Dynamic A/C page from navigation.yaml. Virtual cockpit electrical page.
+- `ios_backend` — dynamic node discovery, FDM/fuel/nav/electrical/sim state WS forwarding. Panel + avionics commands. Failure catalog + injection/clear/clear_all. Navaid search API. Electrical config parser supports v1 + v2 YAML formats.
+- `ios_frontend` — map, status strip (dynamic radio row), 9 panel tabs, action bar. Electrical switches (FORCE), ground services (tri-state), radio tuning. Failure panel with ATA grouping + navaid search. REPOSITIONING badge + button lockout. Dynamic A/C page from navigation.yaml. CB pull/reset/lock on IOS A/C page and virtual cockpit panel.
 - `xplanecigi plugin` — raw CIGI 3.3 IG plugin for X-Plane 12. Entity Control + HOT Response. IG Mode-driven terrain probing (4×0.5s stability). SOF Standby→Normal reporting.
 
 ### Stub / scaffold only
@@ -51,7 +53,7 @@
 - Virtual cockpit avionics page — placeholder
 
 ### Known bugs (see bugs.md, ARCHITECTURE_AUDIT.md)
-Architecture audit complete (2026-03-25). All Batch 1/2/3 bugs fixed. Remaining items are documented inconsistencies for opportunistic cleanup.
+Architecture audit complete (2026-03-25). All Batch 1/2/3 bugs fixed. Bug #9 (failures_node publisher activation) resolved 2026-03-31. Bug #8 (FORCE checkbox return path) still open — workaround via local React state. Remaining items are documented inconsistencies for opportunistic cleanup.
 
 ### Not yet implemented
 - IOS: COM/NAV freq entry, flight departure/arrival graphs, freeze pos/fuel toggles, debrief
@@ -60,7 +62,7 @@ Architecture audit complete (2026-03-25). All Batch 1/2/3 bugs fixed. Remaining 
 - Audio system (RPi5/libpd architecture decided, not started)
 - Remaining systems: hydraulic, ice_protection, pressurization (stubs exist)
 - micro-ROS hardware bridge
-- Integration test suite
+- Electrical: selector + potentiometer connection types (designed, not in solver). YAML validation on load (orphan/missing reference detection). Ammeter reads total bus current instead of alternator output.
 
 ### Open decisions
 - [ ] CIGI library: raw encoding (current) or cigicl?
@@ -68,6 +70,7 @@ Architecture audit complete (2026-03-25). All Batch 1/2/3 bugs fixed. Remaining 
 - [ ] IOS auth: single-user or multi-role?
 - [ ] Scenario file format: custom YAML or standard?
 - [ ] IG manager: lifecycle node on remote hardware?
+- [ ] EC135 electrical v2 YAML (blocked on Helisim license)
 
 ### Architecture
 - **Middleware:** ROS2 Jazzy (LTS), all nodes use sim time (`/clock` + `use_sim_time`)
