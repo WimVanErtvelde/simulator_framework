@@ -2261,70 +2261,87 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - REASON: electrical_node.cpp always sends "component_id/fail" format.
   Translation layer in the plugin keeps the node generic.
 
-## 2026-03-31 — 22:26:43 - Claude Code (from Claude Chat design session)
+## 2026-03-31 — Claude Chat + Claude Code
 
-### Electrical solver v2: Phase 3 — live system swap
+### Electrical solver v2: graph-based topology redesign + live swap
 
-- DECIDED: C172 electrical_model plugin swapped from ElectricalSolver to
-  GraphSolver. Old electrical.yaml renamed to electrical_v1_backup.yaml.
-  v2 format is now electrical.yaml. EC135 stays on old solver (no v2 YAML
-  yet, not runnable).
-- REASON: Phase 2 graph solver passed all 15 unit tests. Plugin interface
-  (IElectricalModel) unchanged — electrical_node.cpp required no changes.
-- AFFECTS: c172/electrical_model.cpp, c172/config/electrical.yaml
+- DECIDED: Electrical topology redesigned as a graph model. Two core sections:
+  `nodes` (sources, buses, junctions, loads) and `connections` (series elements
+  between nodes). Replaces the previous sources/buses/switches/loads split with
+  inline CBs and switch_id references. C172 topology: 39 nodes, 38 connections.
+- REASON: Previous model had CBs embedded inside LoadDef with no command path
+  from IOS. Switch/CB/relay used separate code paths. Bus-level CBs (needed for
+  EC135 twin-generator topology) were not expressible. Graph model unifies all
+  series elements as connections with from→to, one solver walk.
 
-- DECIDED: CB overcurrent physics removed entirely. No thermal model, no
-  inrush, no automatic trip. CBs are switches that only trip via failure
-  effects or IOS commands. Loads draw flat nominal_current when powered.
-- REASON: In training sim, CBs only trip when instructor says so.
-  Overcurrent physics caused false trips from YAML typos (hard to debug)
-  and inrush interactions with freeze mode (dt=0 stalls timers). No FNPT
-  II training scenario requires automatic CB trip.
-- AFFECTS: graph_solver.cpp, graph_types.hpp, electrical.yaml (removed
-  inrush_current, inrush_duration_ms, load_type fields from loads)
+- DECIDED: Connection types: wire, switch, contactor, relay (coil_bus),
+  circuit_breaker (rating, instructor-trip only), potentiometer (analog 0-1,
+  not yet implemented), selector (multi-position with per-position closes[] and
+  spring_return map, not yet implemented). Internally normalized to common
+  ConnectionState struct.
+- REASON: Covers C172 plus future needs (magneto selector, MOM-OFF-MOM trim,
+  panel dimming). Selector uses positions[].closes[] for multi-output routing.
 
-- DECIDED: Removed unused YAML fields from v2 schema: affected_systems,
-  max_current on sources, essential on loads, contactor_delay_ms,
-  inrush_current, inrush_duration_ms, load_type. Load nodes now carry
-  only: id, type, label, nominal_current.
-- REASON: Dead data. Solver never consumed these fields. Re-add when
-  features exist.
+- DECIDED: Junction nodes represent net names (wires between CB and switch in
+  series load chains). Explicit in YAML, named jct_<load_id>. Only needed where
+  a load has both a CB and a pilot switch in series.
+- REASON: Makes schematic-to-YAML translation mechanical. Every wire segment
+  between two component pins gets a name. Enables future graphical schematic editor.
 
-- DECIDED: commandConnection() does not gate on pilot_controllable. That
-  field is metadata for the frontend (which controls to render as
-  interactive). The solver accepts all commands unconditionally. System
-  nodes (engines plugin) need to command connections that aren't
-  pilot-accessible.
-- REASON: sw_starter_engage has pilot_controllable: false (controlled by
-  engines plugin via magneto + voltage check, not by pilot switch).
-  Gating on pilot_controllable in the solver prevented engine start.
-- AFFECTS: graph_solver.cpp
+- DECIDED: CB overcurrent physics removed entirely. No thermal model, no inrush,
+  no automatic trip. CBs are switches that only trip via failure effects or IOS
+  commands. Loads draw flat nominal_current when powered.
+- REASON: In training sim, CBs only trip when instructor says so. Overcurrent
+  physics caused false trips from YAML typos (hard to debug with thermal
+  accumulation) and inrush timers break in freeze mode (dt=0). No FNPT II
+  training scenario requires automatic CB trip.
 
-- DECIDED: Alternator min_rpm_pct lowered from 30% to 20%. Starter
-  voltage threshold lowered from 20V to 14V.
-- REASON: At idle (~650 RPM), n1_pct ≈ 24% (propeller RPM / max_rpm).
-  30% threshold required 10% throttle for alternator. 20% brings
-  alternator online at idle. Battery sags to ~17V under 150A starter
-  load — 20V threshold prevented cranking.
-- AFFECTS: c172/config/electrical.yaml (min_rpm_pct),
-  c172/engines_model.cpp (voltage check)
+- DECIDED: Removed unused YAML fields from v2 schema: affected_systems (nothing
+  consumes), max_current on sources (no overload model), essential on loads (no
+  load shedding), contactor_delay_ms (switching instant), inrush_current,
+  inrush_duration_ms, load_type (no behavioral difference without inrush/resistive
+  scaling). Load nodes carry: id, type, label, nominal_current.
+- REASON: Dead data confirmed by code audit. Re-add when features exist.
 
-- DECIDED: ios_backend electrical config parser updated for v2 YAML
-  format. Reads nodes + connections instead of old
-  sources/buses/switches/loads sections. Builds same WS message field
-  names so frontend doesn't need changes.
-- REASON: v2 YAML has no switches: or loads: top-level sections.
-  ios_backend parsing returned empty config, IOS showed no electrical
-  controls.
-- AFFECTS: ios_backend_node.py
+- DECIDED: panel_layout removed from electrical topology. Future separate config
+  file (panels.yaml) will define IOS and cockpit panel layouts.
+- REASON: Layout is a rendering concern, not topology. Decouples panel
+  rearrangement from electrical behavior changes.
 
-- DECIDED: CBs interactive on IOS and virtual cockpit. Same command path
-  as switches — cb_ IDs flow through switch_ids[] in PanelControls. No
-  message changes needed. IOS: 3-column grid with FORCE checkbox, label,
-  pull/reset button. 3-state display: IN (green), POPPED (orange),
-  LOCKED (red). Virtual cockpit: horizontal CB row with colored dots,
-  pull/reset on click, VIRTUAL priority.
-- REASON: Completes the EURAMEC 3-state CB model (OFF/ON/ON&LOCKED).
-  Instructor forces from IOS override cockpit resets. Unified command
-  path means no new plumbing.
-- AFFECTS: AircraftPanel.jsx (CB section), C172Panel.jsx (CB row)
+- DECIDED: Failure effects model — failures are property overrides on graph
+  elements. Four generic actions: force (override value), jam (force + ignore
+  commands), disable (turn off solver behavior), multiply (scale numeric property).
+  failures.yaml references graph element IDs directly. No per-failure C++ code.
+- REASON: Adding new electrical failures is pure YAML authoring. Solver applies
+  active overrides before computing each element.
+
+- DECIDED: commandConnection() does not gate on pilot_controllable. That field is
+  metadata for the frontend (which controls to render as interactive). Solver
+  accepts all commands unconditionally.
+- REASON: sw_starter_engage has pilot_controllable: false (controlled by engines
+  plugin). Gating in solver prevented engine start.
+
+- DECIDED: Alternator min_rpm_pct lowered from 30% to 20%. Starter voltage
+  threshold lowered from 20V to 14V.
+- REASON: At idle (~650 RPM), n1_pct ≈ 24%. 30% threshold required throttle for
+  alternator. Battery sags to ~17V under 150A starter load — 20V prevented crank.
+
+- DECIDED: CBs interactive on IOS and virtual cockpit. Same command path as
+  switches — cb_ IDs flow through switch_ids[] in PanelControls. No message
+  changes. IOS: 3-column grid with FORCE checkbox, 3-state (IN/POPPED/LOCKED).
+  Virtual cockpit: horizontal CB row with colored dots.
+- REASON: Completes EURAMEC 3-state model. Unified command path, no new plumbing.
+
+- DECIDED: ios_backend electrical config parser updated for v2 YAML format.
+  Reads nodes + connections instead of old format sections.
+- REASON: v2 YAML has no switches: or loads: top-level keys. Old parser returned
+  empty config, IOS showed no controls.
+
+- DECIDED: Three-phase implementation completed:
+  Phase 1: v2 YAML schema for C172 (39 nodes, 38 connections) [done]
+  Phase 2: Standalone graph solver, 15 unit tests, no ROS2 dependency [done]
+  Phase 3: Live swap — C172 plugin, ios_backend parser, interactive CBs [done]
+- AFFECTS: graph_types.hpp, graph_solver.hpp/cpp (new), electrical_v2.yaml→
+  electrical.yaml, c172/electrical_model.cpp, ios_backend_node.py,
+  AircraftPanel.jsx, C172Panel.jsx, failures_node.cpp,
+  c172/engines_model.cpp. Old solver files kept for EC135.

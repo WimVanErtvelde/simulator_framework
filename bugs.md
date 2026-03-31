@@ -30,6 +30,17 @@
 - nominal_current: 25 (typo, should be 2.5) caused instant CB trip (25A > 5A * 1.3)
 - FIX: Corrected to 2.5 in electrical.yaml
 
+### Bug #9: failures_node publisher not activated
+- FailureInjection messages to routing topics silently dropped
+- Console: "publisher is not activated" despite node state ACTIVE (3)
+- ROOT CAUSE: 5 routing LifecyclePublishers created in on_configure() but
+  missing explicit on_activate() calls. All other system nodes had this
+  pattern — failures_node was the outlier.
+- FIX: Added on_activate() calls for all 5 routing publishers.
+- NOTE: Secondary issue — failures.yaml target IDs (ALT1, BAT1, CB_FUEL_PUMP)
+  didn't match v2 graph element IDs (alternator, battery, cb_fuel_pump).
+  Updated failures.yaml component_ids to match graph node/connection IDs.
+
 ## Open
 
 ### Bug #8: FORCE checkbox return path incomplete
