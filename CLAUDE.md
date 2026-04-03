@@ -146,7 +146,7 @@ validation output (QTG) need to meet authority requirements.
 1. **Swappable Flight Model** — the flight model is behind an adapter interface. The rest of the sim never calls flight model code directly.
 2. **Swappable IG** — visual system is decoupled via CIGI. Any CIGI-compliant IG can be used.
 3. **ROS2 as the backbone** — all systems communicate via ROS2 topics. No direct cross-node function calls.
-4. **Systems nodes never talk to each other directly** — they subscribe to `/sim/flight_model/state` and publish their own output. Coupling goes through the Flight Model Adapter or the Sim Manager only.
+4. **Systems nodes do not cross-subscribe** except for documented physical dependencies (engines→electrical for bus voltage, engines→fuel for fuel available, air_data→electrical for pitot heat). All other coupling goes through `/sim/flight_model/state`, `/sim/failure/<handler>_commands`, or `/sim/world/`.
 5. **Input arbitration** — all control inputs (hardware, virtual panels, instructor override) are arbitrated by the Input Arbitrator node before reaching the sim. No sim node ever reads device topics directly. The arbitrator is the single source of truth for all control inputs, with per-channel source selection configurable at runtime via IOS.
 6. **Aircraft config drives everything** — which nodes load, which Flight Model Adapter runs, which instrument panels show, all driven by YAML config per aircraft type.
 7. **IOS is purely a control surface** — it injects commands via ROS2 topics. It has no privileged access to sim internals.
@@ -194,7 +194,7 @@ simulator_framework/
 │   │   ├── cigi_bridge/             ← ROS2 node: CIGI host implementation
 │   │   └── sim_interfaces/          ← headers-only: shared C++ interfaces (no node)
 │   ├── systems/
-│   │   ├── electrical/              ← ROS2 node: DC/AC buses, breakers (pluginlib, ElectricalSolver)
+│   │   ├── electrical/              ← ROS2 node: DC/AC buses, breakers (pluginlib, GraphSolver)
 │   │   ├── fuel/                    ← ROS2 node: tanks, feed, transfer, CG
 │   │   ├── engine_systems/          ← ROS2 node: N1/N2, EGT, torque, start sequence
 │   │   ├── gear/                    ← ROS2 node: WoW, position, brakes, nosewheel (pluginlib)
@@ -318,7 +318,8 @@ SimSnapshot rule: save topics matching `*/state` or `*_state`, plus `/sim/contro
 
 Acknowledged exceptions:
 - `/sim/command` — IOS publishes SimCommand directly to /sim/ (no arbitration for operational commands)
-- sim_engine_systems subscribes to /sim/electrical/state and /sim/fuel/state (physical coupling)
+- sim_engine_systems subscribes to /sim/electrical/state (bus voltage for starter) and /sim/fuel/state (fuel available) — physical coupling
+- sim_air_data subscribes to /sim/electrical/state (pitot heat powered) — physical coupling
 
 All topics use `snake_case`. No abbreviations unless universally understood (e.g. `flight_model`, `cigi`).
 
@@ -362,7 +363,6 @@ All topics use `snake_case`. No abbreviations unless universally understood (e.g
 | `/sim/failure_state` | FailureState | sim_failures | Active failure IDs (status tracking + IOS) |
 | `/sim/failure/flight_model_commands` | FailureInjection | sim_failures | Routed to flight_model_adapter |
 | `/sim/failure/electrical_commands` | FailureInjection | sim_failures | Routed to sim_electrical |
-| `/sim/failure/navaid_commands` | FailureInjection | sim_failures | Routed to navaid_sim |
 | `/sim/failure/air_data_commands` | FailureInjection | sim_failures | Routed to sim_air_data |
 | `/sim/failure/gear_commands` | FailureInjection | sim_failures | Routed to sim_gear |
 | `/sim/alerts` | SimAlert | any node | SEVERITY_INFO/WARN/CRITICAL alerts to IOS |
@@ -485,11 +485,13 @@ CMD_REPOSITION      = 11  # payload: IC fields — triggers FROZEN + terrain wai
 ```
 
 **Topic subscriptions:** `/sim/flight_model/state`, `/sim/state`, `/sim/fuel/state`, `/sim/navigation/state`,
-`/sim/controls/avionics`, `/sim/electrical/state`, `/sim/alerts`, `/sim/diagnostics/heartbeat`,
-`/sim/diagnostics/lifecycle_state`
+`/sim/controls/avionics`, `/sim/electrical/state`, `/sim/alerts`, `/sim/engines/state`,
+`/sim/air_data/state`, `/sim/gear/state`, `/sim/failure_state`, `/sim/controls/arbitration`,
+`/sim/terrain/source`, `/sim/diagnostics/heartbeat`, `/sim/diagnostics/lifecycle_state`
 
 **Topic publishers:** `/devices/instructor/panel`, `/devices/instructor/controls/avionics`,
-`/devices/virtual/panel` (for cockpit pages via separate WS handler)
+`/devices/virtual/panel` (for cockpit pages via separate WS handler),
+`/devices/instructor/failure_command` (failure inject/clear → sim_failures)
 
 ---
 
@@ -536,7 +538,7 @@ Each system node follows this pattern:
 - Uses ROS2 sim time (`use_sim_time: true`) — timer driven by `/clock`
 - Implemented as `rclcpp_lifecycle::LifecycleNode`
 - Auto-activates on startup via `trigger_transition()` in a 100ms timer
-- Subscribes to `/sim/flight_model/state`, `/sim/failures/active`, relevant `/sim/controls/` and `/sim/world/` topics
+- Subscribes to `/sim/flight_model/state`, relevant `/sim/controls/` and `/sim/world/` topics, and `/sim/failure/<handler>_commands` for failure injection
 - Publishes its `/sim/<system>/state` topic
 - Publishes heartbeat to `/sim/diagnostics/heartbeat` at 1 Hz (node name as String data)
 - Publishes lifecycle transitions to `/sim/diagnostics/lifecycle_state` ("name:state" format)
@@ -588,10 +590,25 @@ Pitot-static instrument model. Computes instrument IAS, altitude, VSI from truth
 
 Landing gear system. Reads FDM gear contact data, publishes aggregated gear state.
 
-- Subscribes to `/sim/flight_model/state` (WoW, gear position, steering), `/sim/controls/flight` (gear handle, brakes), `/sim/failures/active`, `/sim/failure/gear_commands`
+- Subscribes to `/sim/flight_model/state` (WoW, gear position, steering), `/sim/controls/flight` (gear handle, brakes), `/sim/failure/gear_commands`
 - Publishes `/sim/gear/state` (GearState) at 50Hz
 - C172 plugin: fixed tricycle, position always 1.0, WoW from FDM, nosewheel angle, brake echo
 - Supports gear_unsafe_indication failure for warning light test
+- GearState: ios_backend subscriber added per aircraft type. C172 fixed gear = no IOS consumer.
+
+---
+
+## Failure Routing
+
+Failures are cataloged in `failures.yaml` per aircraft. `sim_failures` routes injections to
+handler-specific topics: `flight_model_commands`, `electrical_commands`, `air_data_commands`,
+`gear_commands`. Handler `sim_failures` handles nav receiver/instrument failures internally.
+
+**Ground station failures** (VOR/ILS/NDB off air) are world conditions, not aircraft equipment
+failures. Will be implemented as IOS→navaid_sim direct command via `/sim/world/navaid_command`.
+NOT routed through sim_failures.
+
+**ScenarioEvent** — placeholder message for future scenario/CGF engine. Not yet implemented.
 
 ---
 
@@ -679,7 +696,7 @@ Each aircraft: `src/aircraft/<type>/` — contains `package.xml`, `CMakeLists.tx
 
 Config files per aircraft:
 - `config/config.yaml` — metadata, required nodes, Flight Model Adapter, limits, default IC, gear_points
-- `config/electrical.yaml` — bus topology, sources, loads, switch IDs
+- `config/electrical.yaml` — v2 graph format: nodes (sources, buses, junctions, loads) + connections (switches, CBs, relays)
 - `config/fuel.yaml` — tanks, selectors, pumps
 - `config/engine.yaml` — engine type, count, panel control IDs
 - `config/gear.yaml` — gear type, retractable flag, leg names
@@ -763,7 +780,7 @@ source install/setup.bash
 
 - Never call flight model code directly from a systems node — always go through `/sim/flight_model/state`
 - Never hard-code aircraft parameters in node code — always read from aircraft YAML config
-- Never let system nodes subscribe to each other — all coupling via `/sim/flight_model/state`, `/sim/failure/<handler>_commands`, or `/sim/world/`
+- Systems nodes do not cross-subscribe except for documented physical dependencies: engines→electrical (starter bus voltage), engines→fuel (fuel available), air_data→electrical (pitot heat). All others require design review
 - Never subscribe to `/sim/failures/active` (FailureList) — this topic does not exist. Failure broadcast uses `/sim/failure_state` (FailureState). Failure injection uses `/sim/failure/<handler>_commands` (FailureInjection).
 - Never let any sim node subscribe to `/devices/` topics — only input_arbitrator reads device topics
 - IOS backend publishes inputs to `/devices/instructor/` and operational commands to `/sim/command`. IOS backend NEVER publishes to `/sim/*/state` topics.

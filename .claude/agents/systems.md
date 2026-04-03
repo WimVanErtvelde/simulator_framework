@@ -30,7 +30,7 @@ You are working on the aircraft systems simulation layer under `src/systems/`.
 
 | Package | Path | Plugin interface | Status |
 |---|---|---|---|
-| electrical | `src/systems/electrical/` | IElectricalModel (pluginlib) | Functional — ElectricalSolver, JSON topology, CB 3-state |
+| electrical | `src/systems/electrical/` | IElectricalModel (pluginlib) | Functional — GraphSolver (elec_graph), v2 YAML, BFS, interactive CBs, failure effects. EC135 stubbed. |
 | fuel | `src/systems/fuel/` | IFuelModel (pluginlib) | Functional — C172 plugin, capability gating + writeback |
 | engine_systems | `src/systems/engine_systems/` | IEnginesModel (pluginlib) | Functional — C172 piston + EC135 turboshaft |
 | gear | `src/systems/gear/` | IGearModel (pluginlib) | Functional — C172 fixed-tricycle, WoW, brakes |
@@ -67,7 +67,7 @@ class FooNode : public rclcpp_lifecycle::LifecycleNode {
 
 - `/sim/state` — controls update behavior per sim state
 - `/sim/flight_model/state` — aircraft state
-- `/sim/failures/active` — active failure broadcast
+- `/sim/failure/<handler>_commands` — failure injection (per handler)
 - `/sim/controls/panel` — switch commands (nodes with switches)
 - `/sim/flight_model/capabilities` (transient_local) — gate solver
 

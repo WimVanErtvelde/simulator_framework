@@ -46,11 +46,13 @@ python3 -m uvicorn ios_backend.ios_backend_node:app --host 0.0.0.0 --port 8080
 ### Topic subscriptions
 `/sim/flight_model/state`, `/sim/state`, `/sim/fuel/state`, `/sim/navigation/state`,
 `/sim/controls/avionics`, `/sim/electrical/state`, `/sim/alerts`, `/sim/engines/state`,
-`/sim/diagnostics/heartbeat`, `/sim/diagnostics/lifecycle_state`, `/sim/failure_state`
+`/sim/air_data/state`, `/sim/gear/state`, `/sim/failure_state`, `/sim/controls/arbitration`,
+`/sim/terrain/source`, `/sim/diagnostics/heartbeat`, `/sim/diagnostics/lifecycle_state`
 
 ### Topic publishers
 - `/devices/instructor/panel` — IOS switch overrides (INSTRUCTOR priority, with switch_forced[])
 - `/devices/instructor/controls/avionics` — IOS frequency tuning
+- `/devices/instructor/failure_command` — failure inject/clear → sim_failures
 - `/devices/virtual/panel` — cockpit page switches (VIRTUAL priority, no force flags)
 
 **NEVER publish to `/sim/` topics from ios_backend.** Always `/devices/instructor/` or `/devices/virtual/`.
@@ -60,7 +62,8 @@ python3 -m uvicorn ios_backend.ios_backend_node:app --host 0.0.0.0 --port 8080
 - `engine_config` — engine type, limits from engine.yaml
 - `fuel_config` — tanks, display units from fuel.yaml
 - `failures_config` — failure catalog from failures.yaml
-- `electrical_config` — sources, buses, switches, loads from electrical.yaml
+- `electrical_config` — sources, buses, switches, loads, CBs from electrical.yaml (supports v1 flat + v2 graph YAML)
+- `arbitration_state` — per-channel source, `forced_switch_ids[]` / `forced_selector_ids[]` from ArbitrationState
 
 ### WS command: set_panel
 ```json

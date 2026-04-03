@@ -16,8 +16,8 @@
 - **Sim Manager** owns `/clock` (50 Hz), state machine (INIT→READY→RUNNING↔FROZEN→RESETTING→READY). Heartbeat monitoring (2s timeout). CMD_REPOSITION=11 triggers FROZEN + `reposition_active` flag + IC broadcast + terrain wait + return to previous state. No separate REPOSITIONING sim state.
 - **Input Arbitrator** sole subscriber to `/devices/`. Priority: INSTRUCTOR > HARDWARE > VIRTUAL > FROZEN. 4 channels: flight, engine, avionics, panel. Hardware timeout 500ms → auto-fallback.
 - **Flight Model Adapter** abstract C++ interface (`IFlightModelAdapter`). Implementations: JSBSimAdapter, XPlaneUDPAdapter, HelisimUDPAdapter. Publishes `/sim/flight_model/state` + `/sim/flight_model/capabilities` (transient_local). CapabilityMode tri-state: FDM_NATIVE / EXTERNAL_COUPLED / EXTERNAL_DECOUPLED. Subscribes to writeback topics for coupled subsystems. Terrain refinement: runway DB altitude → CIGI HOT via `refine_terrain_altitude` (RunIC with cockpit save/restore). `pending_ic_` gates stepping during terrain wait (30s timeout).
-- **Systems nodes** (C++) subscribe to `/sim/flight_model/state` + `/sim/failures/active` + `/sim/world/*`, publish own `/sim/<s>/state`. Aircraft-specific logic via pluginlib plugins. Never talk to each other directly.
-- **Electrical solver** — GraphSolver (`graph_solver.hpp/cpp`, namespace `elec_graph`). Graph-based topology: nodes (sources, buses, junctions, loads) + connections (wire, switch, contactor, relay, circuit_breaker). YAML v2 format at `aircraft/<type>/config/electrical.yaml`. BFS power propagation with multi-pass relay coil updates (`propagation_passes=4`). CB trips only via failure effects or IOS commands — no automatic overcurrent. `commandConnection()` does not gate on `pilot_controllable` (metadata for frontend only). Old `ElectricalSolver` (`elec_sys`) kept for EC135.
+- **Systems nodes** (C++) subscribe to `/sim/flight_model/state` + `/sim/failure/<handler>_commands` + `/sim/world/*`, publish own `/sim/<s>/state`. Aircraft-specific logic via pluginlib plugins. Cross-subscriptions allowed only for documented physical coupling (engines→electrical, engines→fuel, air_data→electrical).
+- **Electrical solver** — GraphSolver (`graph_solver.hpp/cpp`, namespace `elec_graph`). Graph-based topology: nodes (sources, buses, junctions, loads) + connections (wire, switch, contactor, relay, circuit_breaker). V2 YAML format. BFS power propagation with multi-pass relay coil updates. CB trips only via failure effects or IOS commands. YAML validation on load (duplicate IDs, dangling from/to/coil_bus, orphaned loads, CAS target checks). Old `ElectricalSolver` (`elec_sys`) deleted. EC135 electrical plugin stubbed until v2 YAML written.
 - **Failure effects** — property overrides on graph elements via generic actions (force, jam, disable, multiply). `failures.yaml` references graph element IDs directly (e.g. `alternator`, `cb_fuel_pump`). No per-failure C++ code — adding new electrical failures is pure YAML authoring. Solver applies active overrides before computing each element.
 - **CIGI bridge** — raw CIGI 3.3 big-endian encoding (no CCL). Entity Control + IG Control at 60 Hz. HOT terrain requests rate-gated by AGL (50Hz <10m, 10Hz 10-100m, off above). Repositioning handshake: IG Mode Reset for one frame on `reposition_active` rising edge, clear HAT tracker, then Operate. HOT responses gated by SOF IG Status=Operate.
 - **IOS Backend** (FastAPI + rclpy) bridges ROS2 ↔ WebSocket. Run manually, not in launch file. Electrical config parser supports both v1 (flat sections) and v2 (nodes + connections) YAML formats.
@@ -36,10 +36,10 @@
 - `atmosphere_node` — full ISA model, OAT deviation, QNH override
 - `cigi_bridge` — CIGI 3.3 host, multi-point HOT (3 gear points), IG Mode repositioning handshake, SOF parsing
 - `navaid_sim` — VOR/ILS/NDB/DME/Marker, terrain LOS, A424 + XP12 parsers. Airport/runway DB (SearchAirports/GetRunways/GetTerrainElevation services)
-- `sim_electrical` — pluginlib. C172 on **GraphSolver v2**: graph topology (39 nodes, 38 connections), unified connection model (CBs, switches, relays all in connections section), failure effects model (force/jam/disable/multiply), interactive CBs on IOS + cockpit, 15 standalone unit tests (no ROS2). EC135 on legacy ElectricalSolver until v2 YAML written. Capability gating + writeback.
+- `sim_electrical` — pluginlib. C172 on **GraphSolver** (elec_graph): graph topology (39 nodes, 38 connections), unified connection model, failure effects (force/jam/disable/multiply), YAML validation, interactive CBs on IOS + cockpit, 15 standalone unit tests. EC135 stubbed (no-op, awaiting v2 YAML). Old ElectricalSolver deleted. Capability gating + writeback.
 - `sim_engine_systems` — pluginlib → IEnginesModel. C172 piston + EC135 turboshaft plugins. EngineCommands published (zeros for current aircraft, pre-wired for turboprop/FADEC).
 - `sim_fuel` — pluginlib → IFuelModel. C172 plugin. Capability gating + writeback. FuelState arrays [8] (future graph solver).
-- `sim_failures` — failure catalog from YAML (ATA grouped), armed triggers (delay/condition), 4-topic routing (flight_model/electrical/navaid/air_data commands). params_override_json for runtime params. LifecyclePublisher activation fix applied (Bug #9).
+- `sim_failures` — failure catalog from YAML (ATA grouped), armed triggers (delay/condition), 3-topic routing (flight_model/electrical/air_data commands). params_override_json for runtime params. navaid_commands removed (ground station failures are world conditions, not aircraft failures).
 - `sim_navigation` — GPS/VOR/ILS/ADF/DME, CDI/TO-FROM, DME source selection, failure gating. No pluginlib.
 - `sim_gear` — pluginlib → IGearModel. C172 fixed-tricycle. WoW per leg, nosewheel angle, brake echo.
 - `sim_air_data` — pluginlib → IAirDataModel. Pitot-static with icing, turbulence noise, alternate static. C172 plugin.
@@ -52,8 +52,8 @@
 - `sim_hydraulic`, `sim_ice_protection`, `sim_pressurization` — heartbeat only, no solver
 - Virtual cockpit avionics page — placeholder
 
-### Known bugs (see bugs.md, ARCHITECTURE_AUDIT.md)
-Architecture audit complete (2026-03-25). All Batch 1/2/3 bugs fixed. Bug #9 (failures_node publisher activation) resolved 2026-03-31. Bug #8 (FORCE checkbox return path) still open — workaround via local React state. Remaining items are documented inconsistencies for opportunistic cleanup.
+### Known bugs (see bugs.md)
+Architecture audit complete (2026-03-25). All bugs resolved (#1–#9). Bug #8 (FORCE checkbox) fixed — AircraftPanel now reads `forcedSwitchIds` from ArbitrationState round-trip instead of local React state. Dead wiring cleanup complete: removed 5 dead `/sim/failures/active` subscriptions, removed `/sim/failure/navaid_commands` publisher, removed unused `InitialConditions` import from ios_backend.
 
 ### Not yet implemented
 - IOS: COM/NAV freq entry, flight departure/arrival graphs, freeze pos/fuel toggles, debrief
@@ -62,7 +62,8 @@ Architecture audit complete (2026-03-25). All Batch 1/2/3 bugs fixed. Bug #9 (fa
 - Audio system (RPi5/libpd architecture decided, not started)
 - Remaining systems: hydraulic, ice_protection, pressurization (stubs exist)
 - micro-ROS hardware bridge
-- Electrical: selector + potentiometer connection types (designed, not in solver). YAML validation on load (orphan/missing reference detection). Ammeter reads total bus current instead of alternator output.
+- Electrical: selector + potentiometer connection types (designed, not in solver). Ammeter reads total bus current instead of alternator output.
+- Ground station failure commands (IOS→navaid_sim via `/sim/world/navaid_command`)
 
 ### Open decisions
 - [ ] CIGI library: raw encoding (current) or cigicl?
@@ -71,55 +72,6 @@ Architecture audit complete (2026-03-25). All Batch 1/2/3 bugs fixed. Bug #9 (fa
 - [ ] Scenario file format: custom YAML or standard?
 - [ ] IG manager: lifecycle node on remote hardware?
 - [ ] EC135 electrical v2 YAML (blocked on Helisim license)
-
-### Architecture
-- **Middleware:** ROS2 Jazzy (LTS), all nodes use sim time (`/clock` + `use_sim_time`)
-- **Sim Manager** owns `/clock` (50 Hz), state machine (INIT→READY→RUNNING↔FROZEN→REPLAY), lifecycle mgmt
-- **Input Arbitrator** is the sole subscriber to `/devices/` topics. Priority: INSTRUCTOR > HARDWARE > VIRTUAL > FROZEN. Channels: flight, engine, avionics, panel. Hardware timeout 500ms → auto-fallback.
-- **Flight Model Adapter** abstract C++ interface (`IFlightModelAdapter`). Implementations: JSBSimAdapter, XPlaneUDPAdapter, HelisimUDPAdapter. Publishes `/sim/flight_model/state` (FlightModelState) and `/sim/flight_model/capabilities` (FlightModelCapabilities, transient_local). CapabilityMode tri-state: FDM_NATIVE / EXTERNAL_COUPLED / EXTERNAL_DECOUPLED. Subscribes to `/sim/writeback/electrical` and `/sim/writeback/fuel` for coupled write-back to FDM.
-- **Systems nodes** (C++) subscribe to `/sim/flight_model/state` + `/sim/failures/active` + `/sim/world/*`, publish own `/sim/<system>/state`. Never talk to each other directly. Aircraft-specific logic via pluginlib plugins loaded from `src/aircraft/<type>/`.
-- **IOS commands** publish to `/devices/instructor/` topics (highest priority): panel → `/devices/instructor/panel`, avionics → `/devices/instructor/controls/avionics`. Virtual cockpit pages publish to `/devices/virtual/` (lower priority, overridden by hardware and instructor). Hardware MCU → `/devices/hardware/`. All arbitrated by input_arbitrator.
-- **NavSignalTable** published by `navaid_sim` on `/sim/world/nav_signals`. Supports A424 (euramec.pc) and X-Plane (earth_nav.dat + WMM.COF) databases. SRTM terrain LOS checks on all VHF receivers.
-- **IOS Backend** (FastAPI + rclpy) bridges ROS2 ↔ WebSocket. Run manually, not in launch file.
-- **IOS Frontend** (React + Zustand + WebSocket). URL routing: `/` = IOS app, `/cockpit/c172/*` = virtual cockpit panels. A/C page and StatusStrip radio row are fully dynamic — driven by aircraft `navigation.yaml` config.
-
-### Avionics message conventions
-- **Three tiers:** RawAvionicsControls (device input) → AvionicsControls (arbitrated, adds constants) → NavigationState (computed receiver outputs)
-- **Frequency naming:** `_freq_mhz` for MHz, `_freq_khz` for kHz — no bare `_freq` suffix
-- **NavigationState types:** float64 for lat/lon only, float32 for all other numerics, bool for flags, string for idents
-- **Numbering:** GPS1/GPS2 (not GPS/GPS2), ADF1/ADF2 (not ADF/ADF2) — consistent `1`/`2` suffix pattern
-- **Frequency echoes:** NavigationState includes com1/2/3_freq_mhz and adf1/2_freq_khz echoed from AvionicsControls for IOS display convenience
-- **Wire keys** (backend↔frontend WS): `com1_mhz`, `com2_mhz`, `com3_mhz`, `nav1_mhz`, `nav2_mhz`, `adf1_khz`, `adf2_khz`
-- **Store keys** (Zustand camelCase): `com1Mhz`, `com2Mhz`, `com3Mhz`, `nav1Mhz`, `nav2Mhz`, `adf1Khz`, `adf2Khz`
-
-### Implemented (functional)
-- `sim_manager` — clock, state machine, heartbeat monitoring, IC/scenario handling
-- `input_arbitrator` — full 4-channel arbitration (flight, engine, avionics, panel)
-- `flight_model_adapter` — JSBSim adapter with abstract interface, CapabilityMode, writeback
-- `atmosphere_node` — full ISA model (troposphere/stratosphere), OAT deviation, QNH override, density/pressure altitude
-- `cigi_bridge` — CIGI 3.3 host implementation, big-endian wire protocol, HAT/HOT request tracking, UDP network layer, cigi_ig_interface library
-- `navaid_sim` — VOR/ILS/NDB/DME/Marker receivers, terrain LOS, A424 + XP810/XP12 parser
-- `sim_electrical` — lifecycle node + pluginlib → ElectricalSolver. C172 + EC135 plugins. Full solver with capability gating and writeback.
-- `sim_engine_systems` — lifecycle node + pluginlib → IEnginesModel. C172 piston + EC135 turboshaft plugins.
-- `sim_fuel` — lifecycle node + pluginlib → IFuelModel. C172 plugin with tank selector, pump logic, fuel flow integration, CG calculation. Capability gating and writeback.
-- `sim_failures` — full failure catalog from YAML, armed triggers with delay/condition, per-target routing to flight_model/electrical/navaid commands
-- `sim_navigation` — GPS/VOR/ILS/ADF/DME processing, CDI/TO-FROM computation, DME source selection, failure gating. Aircraft-agnostic, no pluginlib.
-- `sim_gear` — lifecycle node + pluginlib → IGearModel. C172 fixed-tricycle plugin. Capability gating, WoW per leg, nosewheel angle, brake echo, gear_unsafe failure injection.
-- `sim_air_data` — lifecycle node + pluginlib → IAirDataModel. Pitot-static instrument model with icing, turbulence noise, alternate static. C172 plugin.
-- `ios_backend` — FDM, fuel, sim state, nav state, avionics, electrical state forwarding. Panel commands to `/devices/instructor/panel`, avionics to `/devices/instructor/controls/avionics`. Cockpit pages to `/devices/virtual/panel`.
-- `ios_frontend` — map, status strip (dynamic radio row), 9 panel tabs, action bar, electrical switches (FORCE), ground services (tri-state), radio tuning, nav receiver display. Dynamic A/C page driven by aircraft navigation.yaml config. React Router for cockpit pages.
-
-### Stub / scaffold only
-- `microros_bridge` — skeleton lifecycle node
-- `sim_hydraulic`, `sim_ice_protection`, `sim_pressurization` — heartbeat only, no solver
-- Virtual cockpit avionics page — placeholder
-
-### Open decisions
-- [ ] Virtual panel rendering: web (React), OpenGL native, VR (OpenXR), or multiple?
-- [ ] micro-ROS transport: serial UART or CAN?
-- [ ] IOS auth: single-user or multi-role (instructor / examiner / admin)?
-- [ ] Scenario file format: custom YAML or existing standard?
-- [ ] Terrain service: separate node or merged into navaid_sim?
 
 ---
 

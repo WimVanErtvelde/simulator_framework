@@ -15,3 +15,5 @@ bool  hardware_flight_healthy
 bool  hardware_engine_healthy
 bool  hardware_avionics_healthy
 bool  hardware_panel_healthy
+string[] forced_switch_ids    # switch IDs currently forced by instructor
+string[] forced_selector_ids  # selector IDs currently forced by instructor

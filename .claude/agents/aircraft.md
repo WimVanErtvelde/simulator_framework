@@ -52,8 +52,8 @@ src/aircraft/<type>/
 
 | Aircraft | Path | FDM | Plugins |
 |---|---|---|---|
-| C172 | `src/aircraft/c172/` | JSBSim (c172p) | Electrical, Fuel, Engines, Gear, AirData |
-| EC135 | `src/aircraft/ec135/` | Helisim 6.0 (future) | Electrical, Engines (fuel stub) |
+| C172 | `src/aircraft/c172/` | JSBSim (c172p) | Electrical (GraphSolver, v2 YAML), Fuel, Engines, Gear, AirData |
+| EC135 | `src/aircraft/ec135/` | Helisim 6.0 (future) | Electrical (stubbed no-op, awaiting v2 YAML), Engines (fuel stub) |
 
 ## Config conventions
 

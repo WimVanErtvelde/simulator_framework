@@ -11,7 +11,7 @@ description: >
 
 1. Read `~/simulator_framework/CLAUDE.md` — workflow rules first, then reference as needed
 2. Read `~/simulator_framework/DECISIONS.md` — CURRENT STATE section
-3. Check `~/simulator_framework/BUGS.md` for any open issues in files you're touching
+3. Check `~/simulator_framework/bugs.md` for any open issues in files you're touching
 4. If a task card was provided, follow it literally — do not expand scope
 5. Before ANY code change, state your plan (files, current behavior, new behavior, risks) and WAIT
 
@@ -66,10 +66,11 @@ Key invariants:
 - flight_model_adapter uses wall timer for 50Hz update
 - CapabilityMode tri-state: FDM_NATIVE / EXTERNAL_COUPLED / EXTERNAL_DECOUPLED
 - Writeback: system nodes → `/sim/writeback/<system>` → flight_model_adapter
-- input_arbitrator is the ONLY node that reads `/devices/` topics
+- input_arbitrator is the ONLY node that reads `/devices/` topics (except `/devices/instructor/failure_command` read by sim_failures)
+- input_arbitrator publishes `/sim/controls/arbitration` (ArbitrationState) with per-switch force state
 - All core nodes are `rclcpp_lifecycle::LifecycleNode` with 100ms auto-activate
 
-## Known bugs (see BUGS.md)
+## Known bugs (see bugs.md)
 
 No open bugs in core packages.
 
