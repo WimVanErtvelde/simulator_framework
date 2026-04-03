@@ -6,6 +6,7 @@
 #include <cmath>
 #include <iostream>
 #include <queue>
+#include <unordered_set>
 
 namespace elec_graph {
 
@@ -19,6 +20,10 @@ static NodeType parseNodeType(const std::string& s) {
     return NodeType::junction;
 }
 
+static const std::unordered_set<std::string> valid_conn_types = {
+    "wire", "switch", "contactor", "relay", "circuit_breaker", "potentiometer", "selector"
+};
+
 static ConnectionType parseConnectionType(const std::string& s) {
     if (s == "wire")            return ConnectionType::wire;
     if (s == "switch")          return ConnectionType::switch_;
@@ -29,6 +34,10 @@ static ConnectionType parseConnectionType(const std::string& s) {
     if (s == "selector")        return ConnectionType::selector;
     return ConnectionType::wire;
 }
+
+static const std::unordered_set<std::string> valid_source_subtypes = {
+    "battery", "dc_generator", "ac_generator", "starter_generator", "apu_generator", "external_power"
+};
 
 static bool typeDefaultClosed(ConnectionType type) {
     return type == ConnectionType::wire || type == ConnectionType::circuit_breaker;
@@ -147,7 +156,13 @@ bool GraphSolver::loadTopologyYaml(const std::string& path) {
         for (const auto& c : root["connections"]) {
             Connection conn;
             conn.id   = c["id"].as<std::string>();
-            conn.type = parseConnectionType(c["type"].as<std::string>());
+            std::string conn_type_str = c["type"].as<std::string>();
+            if (valid_conn_types.find(conn_type_str) == valid_conn_types.end()) {
+                std::cerr << "[GraphSolver] VALIDATION ERROR: connection '" << conn.id
+                          << "' has unknown type '" << conn_type_str << "'" << std::endl;
+                return false;
+            }
+            conn.type = parseConnectionType(conn_type_str);
             conn.from = c["from"].as<std::string>();
             conn.to   = c["to"].as<std::string>();
 
@@ -183,9 +198,90 @@ bool GraphSolver::loadTopologyYaml(const std::string& path) {
               << " | " << topology_.nodes.size() << " nodes, "
               << topology_.connections.size() << " connections" << std::endl;
 
+    if (!validateTopology()) return false;
+
     buildAdjacency();
     reset();
     return true;
+}
+
+// ─── Topology Validation ───────────────────────────────────────────
+
+bool GraphSolver::validateTopology() const {
+    bool ok = true;
+    auto err = [&](const std::string& msg) {
+        std::cerr << "[GraphSolver] VALIDATION ERROR: " << msg << std::endl;
+        ok = false;
+    };
+
+    // Build node ID set + check duplicates
+    std::unordered_map<std::string, NodeType> node_ids;
+    for (auto& n : topology_.nodes) {
+        if (!node_ids.emplace(n.id, n.type).second)
+            err("duplicate node id '" + n.id + "'");
+        // Source subtype validation
+        if (n.type == NodeType::source) {
+            std::string subtype = n.source ? n.source->subtype : "";
+            if (subtype.empty() || valid_source_subtypes.find(subtype) == valid_source_subtypes.end())
+                err("source node '" + n.id + "' has unknown subtype '" + subtype + "'");
+        }
+    }
+
+    // Check connection duplicates + from/to/coil_bus references
+    std::unordered_set<std::string> conn_ids;
+    for (auto& c : topology_.connections) {
+        if (!conn_ids.insert(c.id).second)
+            err("duplicate connection id '" + c.id + "'");
+        if (node_ids.find(c.from) == node_ids.end())
+            err("connection '" + c.id + "' from '" + c.from + "' — node not found");
+        if (node_ids.find(c.to) == node_ids.end())
+            err("connection '" + c.id + "' to '" + c.to + "' — node not found");
+        if (!c.coil_bus.empty()) {
+            auto it = node_ids.find(c.coil_bus);
+            if (it == node_ids.end())
+                err("connection '" + c.id + "' coil_bus '" + c.coil_bus + "' — node not found");
+            else if (it->second != NodeType::bus)
+                err("connection '" + c.id + "' coil_bus '" + c.coil_bus + "' — not a bus node");
+        }
+    }
+
+    // CAS target_id must reference a node or connection
+    for (auto& cm : topology_.cas_messages) {
+        if (!cm.target_id.empty() &&
+            node_ids.find(cm.target_id) == node_ids.end() &&
+            conn_ids.find(cm.target_id) == conn_ids.end())
+            err("cas_message '" + cm.id + "' target_id '" + cm.target_id + "' — not found");
+    }
+
+    // Load reachability: BFS from all sources through topology (ignoring switch state)
+    // Build adjacency on node IDs for this check
+    std::unordered_map<std::string, std::vector<std::string>> adj;
+    for (auto& c : topology_.connections) {
+        adj[c.from].push_back(c.to);
+        adj[c.to].push_back(c.from);  // bidirectional — power can flow either way
+    }
+    std::unordered_set<std::string> reachable;
+    std::queue<std::string> q;
+    for (auto& n : topology_.nodes) {
+        if (n.type == NodeType::source) {
+            reachable.insert(n.id);
+            q.push(n.id);
+        }
+    }
+    while (!q.empty()) {
+        auto cur = q.front(); q.pop();
+        for (auto& neighbor : adj[cur]) {
+            if (reachable.insert(neighbor).second)
+                q.push(neighbor);
+        }
+    }
+    for (auto& n : topology_.nodes) {
+        if (n.type == NodeType::load && reachable.find(n.id) == reachable.end())
+            std::cout << "[GraphSolver] WARNING: load '" << n.id
+                      << "' has no connection path from any source" << std::endl;
+    }
+
+    return ok;
 }
 
 // ─── Build Adjacency Lists ─────────────────────────────────────────

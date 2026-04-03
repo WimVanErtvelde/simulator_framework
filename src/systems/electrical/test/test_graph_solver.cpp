@@ -2,6 +2,8 @@
 
 #include <cassert>
 #include <cmath>
+#include <cstdio>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -45,6 +47,18 @@ static int tests_total  = 0;
     } while (0)
 
 // ─── Helpers ────────────────────────────────────────────────────────
+
+/// Write yaml content to a temp file, try to load it, clean up. Returns loadTopologyYaml result.
+static bool loadFromString(GraphSolver& s, const std::string& yaml) {
+    const char* path = "/tmp/test_graph_solver_tmp.yaml";
+    {
+        std::ofstream f(path);
+        f << yaml;
+    }
+    bool result = s.loadTopologyYaml(path);
+    std::remove(path);
+    return result;
+}
 
 static GraphSolver makeSolver() {
     GraphSolver s;
@@ -307,6 +321,139 @@ int main() {
             s.step(0.02);
         CHECK(!s.getConnectionStates().at("cb_starter").tripped);
         CHECK(s.getNodeStates().at("starter").powered);
+    }
+    PASS();
+
+    // T16 ── Duplicate node ID → load fails ────────────────────────
+    TEST("Duplicate node ID → loadTopology returns false");
+    {
+        GraphSolver s;
+        bool ok = loadFromString(s, R"(
+nodes:
+  - id: bat1
+    type: source
+    subtype: battery
+    nominal_voltage: 24.0
+    battery: { capacity_ah: 35, initial_soc: 100 }
+  - id: bat1
+    type: bus
+    label: "Duplicate"
+connections: []
+)");
+        CHECK(!ok);
+    }
+    PASS();
+
+    // T17 ── Connection references nonexistent node → load fails ──
+    TEST("Connection references nonexistent node → returns false");
+    {
+        GraphSolver s;
+        bool ok = loadFromString(s, R"(
+nodes:
+  - id: bat1
+    type: source
+    subtype: battery
+    nominal_voltage: 24.0
+    battery: { capacity_ah: 35, initial_soc: 100 }
+connections:
+  - id: sw1
+    type: switch
+    from: bat1
+    to: nonexistent_bus
+)");
+        CHECK(!ok);
+    }
+    PASS();
+
+    // T18 ── Relay coil_bus references nonexistent bus → load fails
+    TEST("Relay coil_bus references nonexistent bus → returns false");
+    {
+        GraphSolver s;
+        bool ok = loadFromString(s, R"(
+nodes:
+  - id: bat1
+    type: source
+    subtype: battery
+    nominal_voltage: 24.0
+    battery: { capacity_ah: 35, initial_soc: 100 }
+  - id: bus1
+    type: bus
+  - id: bus2
+    type: bus
+connections:
+  - id: relay1
+    type: relay
+    from: bus1
+    to: bus2
+    coil_bus: ghost_bus
+)");
+        CHECK(!ok);
+    }
+    PASS();
+
+    // T19 ── Unknown source subtype → load fails ─────────────────
+    TEST("Unknown source subtype → returns false");
+    {
+        GraphSolver s;
+        bool ok = loadFromString(s, R"(
+nodes:
+  - id: src1
+    type: source
+    subtype: nuclear_reactor
+    nominal_voltage: 28.0
+connections: []
+)");
+        CHECK(!ok);
+    }
+    PASS();
+
+    // T20 ── Unknown connection type → load fails ────────────────
+    TEST("Unknown connection type → returns false");
+    {
+        GraphSolver s;
+        bool ok = loadFromString(s, R"(
+nodes:
+  - id: bat1
+    type: source
+    subtype: battery
+    nominal_voltage: 24.0
+    battery: { capacity_ah: 35, initial_soc: 100 }
+  - id: bus1
+    type: bus
+connections:
+  - id: c1
+    type: magical_bridge
+    from: bat1
+    to: bus1
+)");
+        CHECK(!ok);
+    }
+    PASS();
+
+    // T21 ── Dangling load → loads true + warning (not fatal) ────
+    TEST("Dangling load (no path from source) → returns true + warning");
+    {
+        GraphSolver s;
+        bool ok = loadFromString(s, R"(
+nodes:
+  - id: bat1
+    type: source
+    subtype: battery
+    nominal_voltage: 24.0
+    battery: { capacity_ah: 35, initial_soc: 100 }
+  - id: bus1
+    type: bus
+  - id: orphan_load
+    type: load
+    nominal_current: 1.0
+connections:
+  - id: w1
+    type: wire
+    from: bat1
+    to: bus1
+)");
+        CHECK(ok);  // warning only, not fatal
+        CHECK(!s.getNodeStates().at("orphan_load").powered);
     }
     PASS();
 

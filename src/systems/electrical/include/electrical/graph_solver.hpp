@@ -53,6 +53,7 @@ public:
     const Topology& getTopology() const { return topology_; }
 
 private:
+    bool validateTopology() const;
     void buildAdjacency();
     void updateSources(double dt);
     void resetAllNodes();
