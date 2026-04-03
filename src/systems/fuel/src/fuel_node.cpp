@@ -52,15 +52,15 @@ public:
     heartbeat_pub_ = this->create_publisher<std_msgs::msg::String>(
       "/sim/diagnostics/heartbeat", 10);
     lifecycle_state_pub_ = this->create_publisher<std_msgs::msg::String>(
-      "/sim/diagnostics/lifecycle_state", 10);
+      "/sim/diagnostics/lifecycle", 10);
     alert_pub_ = this->create_publisher<sim_msgs::msg::SimAlert>(
       "/sim/alerts", 10);
     fuel_state_pub_ = this->create_publisher<sim_msgs::msg::FuelState>(
-      "/sim/fuel/state", 10);
+      "/aircraft/fuel/state", 10);
 
     // Subscriptions
     flight_model_sub_ = this->create_subscription<sim_msgs::msg::FlightModelState>(
-      "/sim/flight_model/state", 10,
+      "/aircraft/fdm/state", 10,
       [this](sim_msgs::msg::FlightModelState::SharedPtr msg) {
         latest_flight_model_state_ = *msg;
         flight_model_received_ = true;
@@ -84,7 +84,7 @@ public:
       });
 
     panel_sub_ = this->create_subscription<sim_msgs::msg::PanelControls>(
-      "/sim/controls/panel", 10,
+      "/aircraft/controls/panel", 10,
       [this](sim_msgs::msg::PanelControls::SharedPtr msg) {
         latest_panel_ = *msg;
       });
@@ -101,7 +101,7 @@ public:
     // Capabilities subscription (transient_local to receive latched message)
     auto caps_qos = rclcpp::QoS(1).transient_local().reliable();
     caps_sub_ = this->create_subscription<sim_msgs::msg::FlightModelCapabilities>(
-      "/sim/flight_model/capabilities", caps_qos,
+      "/aircraft/fdm/capabilities", caps_qos,
       [this](const sim_msgs::msg::FlightModelCapabilities::SharedPtr msg) {
         latest_caps_ = msg;
         RCLCPP_INFO(this->get_logger(), "Received FDM capabilities: fuel_quantities=%u", msg->fuel_quantities);
@@ -109,7 +109,7 @@ public:
 
     // Writeback publisher — used when fuel mode is EXTERNAL_COUPLED
     fuel_writeback_pub_ = this->create_publisher<sim_msgs::msg::FuelState>(
-      "/sim/writeback/fuel", 10);
+      "/aircraft/writeback/fuel", 10);
 
     // Load aircraft-specific plugin + YAML config
     auto aircraft_id = this->get_parameter("aircraft_id").as_string();

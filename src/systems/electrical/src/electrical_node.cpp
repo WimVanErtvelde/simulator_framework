@@ -75,11 +75,11 @@ public:
     heartbeat_pub_ = this->create_publisher<std_msgs::msg::String>(
       "/sim/diagnostics/heartbeat", 10);
     lifecycle_state_pub_ = this->create_publisher<std_msgs::msg::String>(
-      "/sim/diagnostics/lifecycle_state", 10);
+      "/sim/diagnostics/lifecycle", 10);
     alert_pub_ = this->create_publisher<sim_msgs::msg::SimAlert>(
       "/sim/alerts", 10);
     elec_state_pub_ = this->create_publisher<sim_msgs::msg::ElectricalState>(
-      "/sim/electrical/state", 10);
+      "/aircraft/electrical/state", 10);
 
     // Subscriptions
     sim_state_sub_ = this->create_subscription<sim_msgs::msg::SimState>(
@@ -99,7 +99,7 @@ public:
       });
 
     panel_sub_ = this->create_subscription<sim_msgs::msg::PanelControls>(
-      "/sim/controls/panel", 10,
+      "/aircraft/controls/panel", 10,
       [this](const sim_msgs::msg::PanelControls::SharedPtr msg) {
         if (!model_) return;
         for (size_t i = 0; i < msg->switch_ids.size() && i < msg->switch_states.size(); ++i) {
@@ -120,7 +120,7 @@ public:
       });
 
     flight_model_sub_ = this->create_subscription<sim_msgs::msg::FlightModelState>(
-      "/sim/flight_model/state", 10,
+      "/aircraft/fdm/state", 10,
       [this](const sim_msgs::msg::FlightModelState::SharedPtr msg) {
         on_ground_ = msg->on_ground;
         update_ground_state();
@@ -136,7 +136,7 @@ public:
 
     // Failure injection commands from sim_failures
     failure_injection_sub_ = this->create_subscription<sim_msgs::msg::FailureInjection>(
-      "/sim/failure/electrical_commands",
+      "/sim/failures/route/electrical",
       rclcpp::QoS(10).reliable(),
       [this](const sim_msgs::msg::FailureInjection::SharedPtr msg) {
         if (!model_) return;
@@ -146,7 +146,7 @@ public:
     // Capabilities subscription (transient_local to receive latched message)
     auto caps_qos = rclcpp::QoS(1).transient_local().reliable();
     caps_sub_ = this->create_subscription<sim_msgs::msg::FlightModelCapabilities>(
-      "/sim/flight_model/capabilities", caps_qos,
+      "/aircraft/fdm/capabilities", caps_qos,
       [this](const sim_msgs::msg::FlightModelCapabilities::SharedPtr msg) {
         latest_caps_ = msg;
         RCLCPP_INFO(this->get_logger(), "Received FDM capabilities: electrical=%u", msg->electrical);
@@ -154,7 +154,7 @@ public:
 
     // Writeback publisher — used when electrical mode is EXTERNAL_COUPLED
     elec_writeback_pub_ = this->create_publisher<sim_msgs::msg::ElectricalState>(
-      "/sim/writeback/electrical", 10);
+      "/aircraft/writeback/electrical", 10);
 
     // Load aircraft-specific plugin + YAML config
     auto aircraft_id = this->get_parameter("aircraft_id").as_string();

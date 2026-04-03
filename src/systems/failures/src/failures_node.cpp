@@ -153,27 +153,27 @@ public:
     heartbeat_pub_ = this->create_publisher<std_msgs::msg::String>(
       "/sim/diagnostics/heartbeat", 10);
     lifecycle_state_pub_ = this->create_publisher<std_msgs::msg::String>(
-      "/sim/diagnostics/lifecycle_state", 10);
+      "/sim/diagnostics/lifecycle", 10);
     alert_pub_ = this->create_publisher<sim_msgs::msg::SimAlert>(
       "/sim/alerts", 10);
 
     // FailureState and FailureInjection routing publishers
     failure_state_pub_ = this->create_publisher<sim_msgs::msg::FailureState>(
-      "/sim/failure_state", 10);
+      "/sim/failures/state", 10);
     fdm_cmd_pub_ = this->create_publisher<sim_msgs::msg::FailureInjection>(
-      "/sim/failure/flight_model_commands", 10);
+      "/sim/failures/route/flight_model", 10);
     elec_cmd_pub_ = this->create_publisher<sim_msgs::msg::FailureInjection>(
-      "/sim/failure/electrical_commands", 10);
+      "/sim/failures/route/electrical", 10);
     air_data_cmd_pub_ = this->create_publisher<sim_msgs::msg::FailureInjection>(
-      "/sim/failure/air_data_commands", 10);
+      "/sim/failures/route/air_data", 10);
 
     // Subscriptions
     cmd_sub_ = this->create_subscription<sim_msgs::msg::FailureCommand>(
-      "/devices/instructor/failure_command", 10,
+      "/aircraft/devices/instructor/failure_command", 10,
       std::bind(&FailuresNode::on_failure_command, this, std::placeholders::_1));
 
     fdm_sub_ = this->create_subscription<sim_msgs::msg::FlightModelState>(
-      "/sim/flight_model/state", 10,
+      "/aircraft/fdm/state", 10,
       [this](sim_msgs::msg::FlightModelState::SharedPtr msg) {
         latest_fdm_state_ = *msg;
         have_fdm_state_ = true;
@@ -490,13 +490,13 @@ private:
   {
     const char * topic = "unknown";
     if (inj.handler == "flight_model") {
-      topic = "/sim/failure/flight_model_commands";
+      topic = "/sim/failures/route/flight_model";
       fdm_cmd_pub_->publish(inj);
     } else if (inj.handler == "electrical") {
-      topic = "/sim/failure/electrical_commands";
+      topic = "/sim/failures/route/electrical";
       elec_cmd_pub_->publish(inj);
     } else if (inj.handler == "air_data") {
-      topic = "/sim/failure/air_data_commands";
+      topic = "/sim/failures/route/air_data";
       air_data_cmd_pub_->publish(inj);
     } else {
       RCLCPP_WARN(this->get_logger(),

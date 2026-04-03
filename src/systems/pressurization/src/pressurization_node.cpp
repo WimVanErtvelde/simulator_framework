@@ -35,7 +35,7 @@ public:
     heartbeat_pub_ = this->create_publisher<std_msgs::msg::String>(
       "/sim/diagnostics/heartbeat", 10);
     lifecycle_state_pub_ = this->create_publisher<std_msgs::msg::String>(
-      "/sim/diagnostics/lifecycle_state", 10);
+      "/sim/diagnostics/lifecycle", 10);
     RCLCPP_INFO(this->get_logger(), "sim_pressurization configured");
     publish_lifecycle_state("inactive");
     return CallbackReturn::SUCCESS;

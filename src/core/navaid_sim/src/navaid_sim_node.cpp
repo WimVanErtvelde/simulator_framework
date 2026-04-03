@@ -70,22 +70,22 @@ public:
     heartbeat_pub_ = this->create_publisher<std_msgs::msg::String>(
       "/sim/diagnostics/heartbeat", 10);
     lifecycle_state_pub_ = this->create_publisher<std_msgs::msg::String>(
-      "/sim/diagnostics/lifecycle_state", 10);
+      "/sim/diagnostics/lifecycle", 10);
     nav_signals_pub_ = this->create_publisher<sim_msgs::msg::NavSignalTable>(
-      "/sim/world/nav_signals", 10);
+      "/world/nav_signals", 10);
     mag_var_pub_ = this->create_publisher<std_msgs::msg::Float32>(
-      "/sim/world/magnetic_variation_deg", 10);
+      "/world/magnetic_variation_deg", 10);
 
     // Subscriptions
     flight_model_sub_ = this->create_subscription<sim_msgs::msg::FlightModelState>(
-      "/sim/flight_model/state", 10,
+      "/aircraft/fdm/state", 10,
       [this](const sim_msgs::msg::FlightModelState::SharedPtr msg) {
         last_flight_model_state_ = *msg;
         flight_model_received_ = true;
       });
 
     avionics_sub_ = this->create_subscription<sim_msgs::msg::AvionicsControls>(
-      "/sim/controls/avionics", 10,
+      "/aircraft/controls/avionics", 10,
       [this](const sim_msgs::msg::AvionicsControls::SharedPtr msg) {
         last_avionics_ = *msg;
       });
@@ -93,7 +93,7 @@ public:
     // Failure injection subscription (reliable QoS)
     auto reliable_qos = rclcpp::QoS(10).reliable();
     failure_injection_sub_ = this->create_subscription<sim_msgs::msg::FailureInjection>(
-      "/sim/failure/navaid_commands", reliable_qos,
+      "/sim/failures/route/navaid", reliable_qos,
       [this](const sim_msgs::msg::FailureInjection::SharedPtr msg) {
         on_failure_injection(msg);
       });

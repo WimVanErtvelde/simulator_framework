@@ -107,17 +107,17 @@ public:
 
     // --- Subscriptions: flight controls ---
     sub_hw_flight_ = this->create_subscription<sim_msgs::msg::RawFlightControls>(
-      "/devices/hardware/controls/flight", qos,
+      "/aircraft/devices/hardware/controls/flight", qos,
       [this](sim_msgs::msg::RawFlightControls::SharedPtr msg) {
         latest_hw_flight_ = *msg;
       });
     sub_virt_flight_ = this->create_subscription<sim_msgs::msg::RawFlightControls>(
-      "/devices/virtual/controls/flight", qos,
+      "/aircraft/devices/virtual/controls/flight", qos,
       [this](sim_msgs::msg::RawFlightControls::SharedPtr msg) {
         latest_virt_flight_ = *msg;
       });
     sub_inst_flight_ = this->create_subscription<sim_msgs::msg::RawFlightControls>(
-      "/devices/instructor/controls/flight", qos,
+      "/aircraft/devices/instructor/controls/flight", qos,
       [this](sim_msgs::msg::RawFlightControls::SharedPtr msg) {
         latest_inst_flight_ = *msg;
         has_inst_flight_ = true;
@@ -125,17 +125,17 @@ public:
 
     // --- Subscriptions: engine controls ---
     sub_hw_engine_ = this->create_subscription<sim_msgs::msg::RawEngineControls>(
-      "/devices/hardware/controls/engine", qos,
+      "/aircraft/devices/hardware/controls/engine", qos,
       [this](sim_msgs::msg::RawEngineControls::SharedPtr msg) {
         latest_hw_engine_ = *msg;
       });
     sub_virt_engine_ = this->create_subscription<sim_msgs::msg::RawEngineControls>(
-      "/devices/virtual/controls/engine", qos,
+      "/aircraft/devices/virtual/controls/engine", qos,
       [this](sim_msgs::msg::RawEngineControls::SharedPtr msg) {
         latest_virt_engine_ = *msg;
       });
     sub_inst_engine_ = this->create_subscription<sim_msgs::msg::RawEngineControls>(
-      "/devices/instructor/controls/engine", qos,
+      "/aircraft/devices/instructor/controls/engine", qos,
       [this](sim_msgs::msg::RawEngineControls::SharedPtr msg) {
         latest_inst_engine_ = *msg;
         has_inst_engine_ = true;
@@ -143,17 +143,17 @@ public:
 
     // --- Subscriptions: avionics controls ---
     sub_hw_avionics_ = this->create_subscription<sim_msgs::msg::RawAvionicsControls>(
-      "/devices/hardware/controls/avionics", qos,
+      "/aircraft/devices/hardware/controls/avionics", qos,
       [this](sim_msgs::msg::RawAvionicsControls::SharedPtr msg) {
         latest_hw_avionics_ = *msg;
       });
     sub_virt_avionics_ = this->create_subscription<sim_msgs::msg::RawAvionicsControls>(
-      "/devices/virtual/controls/avionics", qos,
+      "/aircraft/devices/virtual/controls/avionics", qos,
       [this](sim_msgs::msg::RawAvionicsControls::SharedPtr msg) {
         latest_virt_avionics_ = *msg;
       });
     sub_inst_avionics_ = this->create_subscription<sim_msgs::msg::RawAvionicsControls>(
-      "/devices/instructor/controls/avionics", qos,
+      "/aircraft/devices/instructor/controls/avionics", qos,
       [this](sim_msgs::msg::RawAvionicsControls::SharedPtr msg) {
         latest_inst_avionics_ = *msg;
         has_inst_avionics_ = true;
@@ -161,24 +161,24 @@ public:
 
     // --- Subscriptions: panel controls ---
     sub_hw_panel_ = this->create_subscription<sim_msgs::msg::PanelControls>(
-      "/devices/hardware/panel", qos,
+      "/aircraft/devices/hardware/panel", qos,
       [this](sim_msgs::msg::PanelControls::SharedPtr msg) {
         on_panel_received(*msg, SOURCE_HARDWARE);
       });
     sub_virt_panel_ = this->create_subscription<sim_msgs::msg::PanelControls>(
-      "/devices/virtual/panel", qos,
+      "/aircraft/devices/virtual/panel", qos,
       [this](sim_msgs::msg::PanelControls::SharedPtr msg) {
         on_panel_received(*msg, SOURCE_VIRTUAL);
       });
     sub_inst_panel_ = this->create_subscription<sim_msgs::msg::PanelControls>(
-      "/devices/instructor/panel", qos,
+      "/aircraft/devices/instructor/panel", qos,
       [this](sim_msgs::msg::PanelControls::SharedPtr msg) {
         on_panel_received(*msg, SOURCE_INSTRUCTOR);
       });
 
     // --- Subscription: hardware heartbeat ---
     sub_heartbeat_ = this->create_subscription<sim_msgs::msg::DeviceHeartbeat>(
-      "/devices/hardware/heartbeat", qos,
+      "/aircraft/devices/hardware/heartbeat", qos,
       [this](sim_msgs::msg::DeviceHeartbeat::SharedPtr msg) {
         on_heartbeat(*msg);
       });
@@ -192,21 +192,21 @@ public:
 
     // --- Publishers ---
     pub_flight_ = this->create_publisher<sim_msgs::msg::FlightControls>(
-      "/sim/controls/flight", 10);
+      "/aircraft/controls/flight", 10);
     pub_engine_ = this->create_publisher<sim_msgs::msg::EngineControls>(
-      "/sim/controls/engine", 10);
+      "/aircraft/controls/engine", 10);
     pub_avionics_ = this->create_publisher<sim_msgs::msg::AvionicsControls>(
-      "/sim/controls/avionics", 10);
+      "/aircraft/controls/avionics", 10);
     pub_panel_ = this->create_publisher<sim_msgs::msg::PanelControls>(
-      "/sim/controls/panel", 10);
+      "/aircraft/controls/panel", 10);
     pub_arbitration_ = this->create_publisher<sim_msgs::msg::ArbitrationState>(
-      "/sim/controls/arbitration", 10);
+      "/aircraft/controls/arbitration", 10);
     pub_alert_ = this->create_publisher<sim_msgs::msg::SimAlert>(
       "/sim/alerts", 10);
     heartbeat_pub_ = this->create_publisher<std_msgs::msg::String>(
       "/sim/diagnostics/heartbeat", 10);
     lifecycle_state_pub_ = this->create_publisher<std_msgs::msg::String>(
-      "/sim/diagnostics/lifecycle_state", 10);
+      "/sim/diagnostics/lifecycle", 10);
 
     RCLCPP_INFO(this->get_logger(), "input_arbitrator configured (timeout=%dms, rate=%dHz)",
       hardware_timeout_ms_, update_rate_hz_);

@@ -61,21 +61,21 @@ public:
   {
     // Publishers
     atmo_pub_ = this->create_publisher<sim_msgs::msg::AtmosphereState>(
-      "/sim/world/atmosphere", 10);
+      "/world/atmosphere", 10);
     heartbeat_pub_ = this->create_publisher<std_msgs::msg::String>(
       "/sim/diagnostics/heartbeat", 10);
     lifecycle_state_pub_ = this->create_publisher<std_msgs::msg::String>(
-      "/sim/diagnostics/lifecycle_state", 10);
+      "/sim/diagnostics/lifecycle", 10);
 
     // Subscriptions
     flight_model_sub_ = this->create_subscription<sim_msgs::msg::FlightModelState>(
-      "/sim/flight_model/state", 10,
+      "/aircraft/fdm/state", 10,
       [this](sim_msgs::msg::FlightModelState::ConstSharedPtr msg) {
         altitude_msl_m_ = msg->altitude_msl_m;
       });
 
     weather_sub_ = this->create_subscription<sim_msgs::msg::WeatherState>(
-      "/sim/world/weather", 10,
+      "/world/weather", 10,
       [this](sim_msgs::msg::WeatherState::ConstSharedPtr msg) {
         oat_deviation_k_ = msg->oat_deviation_k;
         qnh_pa_ = msg->qnh_pa;

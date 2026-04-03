@@ -57,29 +57,29 @@ public:
     heartbeat_pub_ = this->create_publisher<std_msgs::msg::String>(
       "/sim/diagnostics/heartbeat", 10);
     lifecycle_state_pub_ = this->create_publisher<std_msgs::msg::String>(
-      "/sim/diagnostics/lifecycle_state", 10);
+      "/sim/diagnostics/lifecycle", 10);
     alert_pub_ = this->create_publisher<sim_msgs::msg::SimAlert>(
       "/sim/alerts", 10);
     nav_state_pub_ = this->create_publisher<sim_msgs::msg::NavigationState>(
-      "/sim/navigation/state", 10);
+      "/aircraft/navigation/state", 10);
 
     // Subscriptions
     flight_model_sub_ = this->create_subscription<sim_msgs::msg::FlightModelState>(
-      "/sim/flight_model/state", 10,
+      "/aircraft/fdm/state", 10,
       [this](const sim_msgs::msg::FlightModelState::SharedPtr msg) {
         last_flight_model_state_ = *msg;
         flight_model_received_ = true;
       });
 
     nav_signals_sub_ = this->create_subscription<sim_msgs::msg::NavSignalTable>(
-      "/sim/world/nav_signals", 10,
+      "/world/nav_signals", 10,
       [this](const sim_msgs::msg::NavSignalTable::SharedPtr msg) {
         last_nav_signals_ = *msg;
         nav_signals_received_ = true;
       });
 
     avionics_sub_ = this->create_subscription<sim_msgs::msg::AvionicsControls>(
-      "/sim/controls/avionics", 10,
+      "/aircraft/controls/avionics", 10,
       [this](const sim_msgs::msg::AvionicsControls::SharedPtr msg) {
         last_avionics_ = *msg;
       });
@@ -100,13 +100,13 @@ public:
 
     // Magnetic variation from navaid_sim (WMM, 1 Hz)
     mag_var_sub_ = this->create_subscription<std_msgs::msg::Float32>(
-      "/sim/world/magnetic_variation_deg", 10,
+      "/world/magnetic_variation_deg", 10,
       [this](const std_msgs::msg::Float32::SharedPtr msg) {
         mag_variation_deg_ = msg->data;
       });
 
     failure_state_sub_ = this->create_subscription<sim_msgs::msg::FailureState>(
-      "/sim/failure_state",
+      "/sim/failures/state",
       rclcpp::QoS(10).reliable(),
       [this](const sim_msgs::msg::FailureState::SharedPtr msg) {
         latest_failure_state_ = msg;

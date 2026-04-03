@@ -52,11 +52,11 @@ public:
     heartbeat_pub_ = this->create_publisher<std_msgs::msg::String>(
       "/sim/diagnostics/heartbeat", 10);
     lifecycle_state_pub_ = this->create_publisher<std_msgs::msg::String>(
-      "/sim/diagnostics/lifecycle_state", 10);
+      "/sim/diagnostics/lifecycle", 10);
     alert_pub_ = this->create_publisher<sim_msgs::msg::SimAlert>(
       "/sim/alerts", 10);
     gear_state_pub_ = this->create_publisher<sim_msgs::msg::GearState>(
-      "/sim/gear/state", 10);
+      "/aircraft/gear/state", 10);
 
     // Subscriptions
     sim_state_sub_ = this->create_subscription<sim_msgs::msg::SimState>(
@@ -76,20 +76,20 @@ public:
       });
 
     flight_model_sub_ = this->create_subscription<sim_msgs::msg::FlightModelState>(
-      "/sim/flight_model/state", 10,
+      "/aircraft/fdm/state", 10,
       [this](const sim_msgs::msg::FlightModelState::SharedPtr msg) {
         latest_fms_ = msg;
       });
 
     flight_controls_sub_ = this->create_subscription<sim_msgs::msg::FlightControls>(
-      "/sim/controls/flight", 10,
+      "/aircraft/controls/flight", 10,
       [this](const sim_msgs::msg::FlightControls::SharedPtr msg) {
         latest_controls_ = msg;
       });
 
     // Failure injection commands from sim_failures
     failure_injection_sub_ = this->create_subscription<sim_msgs::msg::FailureInjection>(
-      "/sim/failure/gear_commands",
+      "/sim/failures/route/gear",
       rclcpp::QoS(10).reliable(),
       [this](const sim_msgs::msg::FailureInjection::SharedPtr msg) {
         if (!model_) return;
@@ -101,7 +101,7 @@ public:
     // Capabilities subscription (transient_local to receive latched message)
     auto caps_qos = rclcpp::QoS(1).transient_local().reliable();
     caps_sub_ = this->create_subscription<sim_msgs::msg::FlightModelCapabilities>(
-      "/sim/flight_model/capabilities", caps_qos,
+      "/aircraft/fdm/capabilities", caps_qos,
       [this](const sim_msgs::msg::FlightModelCapabilities::SharedPtr msg) {
         latest_caps_ = msg;
         RCLCPP_INFO(this->get_logger(), "Received FDM capabilities: gear_retract=%u",

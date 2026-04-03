@@ -55,13 +55,13 @@ public:
     heartbeat_pub_ = this->create_publisher<std_msgs::msg::String>(
       "/sim/diagnostics/heartbeat", 10);
     lifecycle_state_pub_ = this->create_publisher<std_msgs::msg::String>(
-      "/sim/diagnostics/lifecycle_state", 10);
+      "/sim/diagnostics/lifecycle", 10);
     alert_pub_ = this->create_publisher<sim_msgs::msg::SimAlert>(
       "/sim/alerts", 10);
     engine_state_pub_ = this->create_publisher<sim_msgs::msg::EngineState>(
-      "/sim/engines/state", 10);
+      "/aircraft/engines/state", 10);
     engine_commands_pub_ = this->create_publisher<sim_msgs::msg::EngineCommands>(
-      "/sim/engines/commands", 10);
+      "/aircraft/engines/commands", 10);
 
     // Subscriptions
     sim_state_sub_ = this->create_subscription<sim_msgs::msg::SimState>(
@@ -80,35 +80,35 @@ public:
       });
 
     flight_model_sub_ = this->create_subscription<sim_msgs::msg::FlightModelState>(
-      "/sim/flight_model/state", 10,
+      "/aircraft/fdm/state", 10,
       [this](const sim_msgs::msg::FlightModelState::SharedPtr msg) {
         latest_fdm_ = *msg;
         fdm_received_ = true;
       });
 
     panel_sub_ = this->create_subscription<sim_msgs::msg::PanelControls>(
-      "/sim/controls/panel", 10,
+      "/aircraft/controls/panel", 10,
       [this](const sim_msgs::msg::PanelControls::SharedPtr msg) {
         latest_panel_ = *msg;
         panel_dirty_ = true;
       });
 
     engine_controls_sub_ = this->create_subscription<sim_msgs::msg::EngineControls>(
-      "/sim/controls/engine", 10,
+      "/aircraft/controls/engine", 10,
       [this](const sim_msgs::msg::EngineControls::SharedPtr msg) {
         latest_engine_controls_ = *msg;
       });
 
     // Electrical state for bus_voltage coupling
     electrical_sub_ = this->create_subscription<sim_msgs::msg::ElectricalState>(
-      "/sim/electrical/state", 10,
+      "/aircraft/electrical/state", 10,
       [this](const sim_msgs::msg::ElectricalState::SharedPtr msg) {
         latest_bus_voltage_ = msg->master_bus_voltage_v;
       });
 
     // Fuel state for fuel_available coupling
     fuel_sub_ = this->create_subscription<sim_msgs::msg::FuelState>(
-      "/sim/fuel/state", 10,
+      "/aircraft/fuel/state", 10,
       [this](const sim_msgs::msg::FuelState::SharedPtr msg) {
         // Fuel is available per engine if total fuel > 0 and pressure is adequate
         for (int i = 0; i < 4; ++i) {

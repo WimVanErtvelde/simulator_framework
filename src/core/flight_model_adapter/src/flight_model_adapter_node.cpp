@@ -69,9 +69,9 @@ public:
     heartbeat_pub_ = this->create_publisher<std_msgs::msg::String>(
       "/sim/diagnostics/heartbeat", 10);
     lifecycle_state_pub_ = this->create_publisher<std_msgs::msg::String>(
-      "/sim/diagnostics/lifecycle_state", 10);
+      "/sim/diagnostics/lifecycle", 10);
     flight_model_state_pub_ = this->create_publisher<sim_msgs::msg::FlightModelState>(
-      "/sim/flight_model/state", 10);
+      "/aircraft/fdm/state", 10);
     terrain_source_pub_ = this->create_publisher<sim_msgs::msg::TerrainSource>(
       "/sim/terrain/source", 10);
     terrain_ready_pub_ = this->create_publisher<std_msgs::msg::Bool>(
@@ -105,7 +105,7 @@ public:
     // Capabilities topic — transient_local so late joiners get it
     auto caps_qos = rclcpp::QoS(1).transient_local().reliable();
     caps_pub_ = this->create_publisher<sim_msgs::msg::FlightModelCapabilities>(
-      "/sim/flight_model/capabilities", caps_qos);
+      "/aircraft/fdm/capabilities", caps_qos);
 
     // Sim state subscription
     sim_state_sub_ = this->create_subscription<sim_msgs::msg::SimState>(
@@ -148,27 +148,27 @@ public:
 
     // Engine commands subscription (write-back from sim_engine_systems)
     engine_commands_sub_ = this->create_subscription<sim_msgs::msg::EngineCommands>(
-      "/sim/engines/commands", 10,
+      "/aircraft/engines/commands", 10,
       [this](const sim_msgs::msg::EngineCommands::SharedPtr msg) {
         if (adapter_) adapter_->apply_engine_commands(*msg);
       });
 
     // Failure injection subscription (from sim_failures)
     failure_injection_sub_ = this->create_subscription<sim_msgs::msg::FailureInjection>(
-      "/sim/failure/flight_model_commands", 10,
+      "/sim/failures/route/flight_model", 10,
       [this](const sim_msgs::msg::FailureInjection::SharedPtr msg) {
         if (adapter_) adapter_->apply_failure(msg->method, msg->params_json, msg->active);
       });
 
     // Arbitrated controls subscriptions
     flight_controls_sub_ = this->create_subscription<sim_msgs::msg::FlightControls>(
-      "/sim/controls/flight", 10,
+      "/aircraft/controls/flight", 10,
       [this](const sim_msgs::msg::FlightControls::SharedPtr msg) {
         latest_flight_controls_ = msg;
       });
 
     engine_controls_sub_ = this->create_subscription<sim_msgs::msg::EngineControls>(
-      "/sim/controls/engine", 10,
+      "/aircraft/controls/engine", 10,
       [this](const sim_msgs::msg::EngineControls::SharedPtr msg) {
         latest_engine_controls_ = msg;
       });
@@ -304,13 +304,13 @@ public:
 
     // Writeback subscriptions
     elec_writeback_sub_ = this->create_subscription<sim_msgs::msg::ElectricalState>(
-      "/sim/writeback/electrical", 10,
+      "/aircraft/writeback/electrical", 10,
       [this](const sim_msgs::msg::ElectricalState::SharedPtr msg) {
         if (adapter_) adapter_->write_back_electrical(*msg);
       });
 
     fuel_writeback_sub_ = this->create_subscription<sim_msgs::msg::FuelState>(
-      "/sim/writeback/fuel", 10,
+      "/aircraft/writeback/fuel", 10,
       [this](const sim_msgs::msg::FuelState::SharedPtr msg) {
         if (adapter_) adapter_->write_back_fuel(*msg);
       });

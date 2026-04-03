@@ -90,7 +90,7 @@ public:
     scenario_event_pub_ = this->create_publisher<sim_msgs::msg::ScenarioEvent>(
       "/sim/scenario/event", 10);
     lifecycle_state_pub_ = this->create_publisher<std_msgs::msg::String>(
-      "/sim/diagnostics/lifecycle_state", 10);
+      "/sim/diagnostics/lifecycle", 10);
     diagnostics_heartbeat_pub_ = this->create_publisher<std_msgs::msg::String>(
       "/sim/diagnostics/heartbeat", 10);
 

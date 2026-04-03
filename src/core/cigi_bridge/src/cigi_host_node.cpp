@@ -96,7 +96,7 @@ CallbackReturn CigiHostNode::on_configure(const rclcpp_lifecycle::State &)
     aircraft_config_path_ = get_parameter("aircraft_config_path").as_string();
 
     heartbeat_pub_  = create_publisher<std_msgs::msg::String>("/sim/diagnostics/heartbeat", 10);
-    lifecycle_pub_  = create_publisher<std_msgs::msg::String>("/sim/diagnostics/lifecycle_state", 10);
+    lifecycle_pub_  = create_publisher<std_msgs::msg::String>("/sim/diagnostics/lifecycle", 10);
     hat_pub_        = create_publisher<sim_msgs::msg::HatHotResponse>("/sim/cigi/hat_responses", 10);
     ig_status_pub_  = create_publisher<std_msgs::msg::UInt8>("/sim/cigi/ig_status", 10);
     alert_pub_      = create_publisher<sim_msgs::msg::SimAlert>("/sim/alerts", 10);
@@ -126,7 +126,7 @@ CallbackReturn CigiHostNode::on_activate(const rclcpp_lifecycle::State &)
     hat_pub_->on_activate();
 
     fms_sub_ = create_subscription<sim_msgs::msg::FlightModelState>(
-        "/sim/flight_model/state", 10,
+        "/aircraft/fdm/state", 10,
         [this](sim_msgs::msg::FlightModelState::SharedPtr msg) {
             std::lock_guard<std::mutex> lk(fms_mutex_);
             latest_fms_ = msg;
