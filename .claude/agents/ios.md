@@ -44,18 +44,18 @@ python3 -m uvicorn ios_backend.ios_backend_node:app --host 0.0.0.0 --port 8080
 - No hardcoded node list
 
 ### Topic subscriptions
-`/sim/flight_model/state`, `/sim/state`, `/sim/fuel/state`, `/sim/navigation/state`,
-`/sim/controls/avionics`, `/sim/electrical/state`, `/sim/alerts`, `/sim/engines/state`,
-`/sim/air_data/state`, `/sim/gear/state`, `/sim/failure_state`, `/sim/controls/arbitration`,
-`/sim/terrain/source`, `/sim/diagnostics/heartbeat`, `/sim/diagnostics/lifecycle_state`
+`/aircraft/fdm/state`, `/sim/state`, `/aircraft/fuel/state`, `/aircraft/navigation/state`,
+`/aircraft/controls/avionics`, `/aircraft/electrical/state`, `/sim/alerts`, `/aircraft/engines/state`,
+`/aircraft/air_data/state`, `/aircraft/gear/state`, `/sim/failures/state`, `/aircraft/controls/arbitration`,
+`/sim/terrain/source`, `/sim/diagnostics/heartbeat`, `/sim/diagnostics/lifecycle`
 
 ### Topic publishers
-- `/devices/instructor/panel` — IOS switch overrides (INSTRUCTOR priority, with switch_forced[])
-- `/devices/instructor/controls/avionics` — IOS frequency tuning
-- `/devices/instructor/failure_command` — failure inject/clear → sim_failures
-- `/devices/virtual/panel` — cockpit page switches (VIRTUAL priority, no force flags)
+- `/aircraft/devices/instructor/panel` — IOS switch overrides (INSTRUCTOR priority, with switch_forced[])
+- `/aircraft/devices/instructor/controls/avionics` — IOS frequency tuning
+- `/aircraft/devices/instructor/failure_command` — failure inject/clear → sim_failures
+- `/aircraft/devices/virtual/panel` — cockpit page switches (VIRTUAL priority, no force flags)
 
-**NEVER publish to `/sim/` topics from ios_backend.** Always `/devices/instructor/` or `/devices/virtual/`.
+**NEVER publish to `/sim/` topics from ios_backend.** Always `/aircraft/devices/instructor/` or `/aircraft/devices/virtual/`.
 
 ### WebSocket config messages (sent on connect + aircraft_id change)
 - `avionics_config` — radios, displays from navigation.yaml
@@ -116,9 +116,9 @@ IOS switches: amber. Virtual cockpit: green.
 `com1_mhz` → `com1Mhz`, `nav1_mhz` → `nav1Mhz`, `adf1_khz` → `adf1Khz`
 
 ### IOS command rules
-- IOS switches → `/devices/instructor/` (INSTRUCTOR priority)
-- Virtual cockpit → `/devices/virtual/` (VIRTUAL priority)
-- All UIs read state from `/sim/controls/panel` (arbitrated) — never own published commands
+- IOS switches → `/aircraft/devices/instructor/` (INSTRUCTOR priority)
+- Virtual cockpit → `/aircraft/devices/virtual/` (VIRTUAL priority)
+- All UIs read state from `/aircraft/controls/panel` (arbitrated) — never own published commands
 
 ### Performance
 - All components use `useShallow` selectors — only re-render when own data changes

@@ -14,11 +14,11 @@
 ### Architecture
 - **Middleware:** ROS2 Jazzy (LTS), all nodes use sim time (`/clock` + `use_sim_time`)
 - **Sim Manager** owns `/clock` (50 Hz), state machine (INIT→READY→RUNNING↔FROZEN→REPLAY), lifecycle mgmt
-- **Input Arbitrator** is the sole subscriber to `/devices/` topics. Priority: INSTRUCTOR > HARDWARE > VIRTUAL > FROZEN. Channels: flight, engine, avionics, panel. Hardware timeout 500ms → auto-fallback.
-- **Flight Model Adapter** abstract C++ interface (`IFlightModelAdapter`). Implementations: JSBSimAdapter, XPlaneUDPAdapter, HelisimUDPAdapter. Publishes `/sim/flight_model/state` (FlightModelState) and `/sim/flight_model/capabilities` (FlightModelCapabilities, transient_local). CapabilityMode tri-state: FDM_NATIVE / EXTERNAL_COUPLED / EXTERNAL_DECOUPLED. Subscribes to `/sim/writeback/electrical` and `/sim/writeback/fuel` for coupled write-back to FDM.
-- **Systems nodes** (C++) subscribe to `/sim/flight_model/state` + `/sim/failures/active` + `/sim/world/*`, publish own `/sim/<system>/state`. Never talk to each other directly. Aircraft-specific logic via pluginlib plugins loaded from `src/aircraft/<type>/`.
-- **IOS commands** publish to `/devices/instructor/` topics (highest priority): panel → `/devices/instructor/panel`, avionics → `/devices/instructor/controls/avionics`. Virtual cockpit pages publish to `/devices/virtual/` (lower priority, overridden by hardware and instructor). Hardware MCU → `/devices/hardware/`. All arbitrated by input_arbitrator.
-- **NavSignalTable** published by `navaid_sim` on `/sim/world/nav_signals`. Supports A424 (euramec.pc) and X-Plane (earth_nav.dat + WMM.COF) databases. SRTM terrain LOS checks on all VHF receivers.
+- **Input Arbitrator** is the sole subscriber to `/aircraft/devices/` topics. Priority: INSTRUCTOR > HARDWARE > VIRTUAL > FROZEN. Channels: flight, engine, avionics, panel. Hardware timeout 500ms → auto-fallback.
+- **Flight Model Adapter** abstract C++ interface (`IFlightModelAdapter`). Implementations: JSBSimAdapter, XPlaneUDPAdapter, HelisimUDPAdapter. Publishes `/aircraft/fdm/state` (FlightModelState) and `/aircraft/fdm/capabilities` (FlightModelCapabilities, transient_local). CapabilityMode tri-state: FDM_NATIVE / EXTERNAL_COUPLED / EXTERNAL_DECOUPLED. Subscribes to `/aircraft/writeback/electrical` and `/aircraft/writeback/fuel` for coupled write-back to FDM.
+- **Systems nodes** (C++) subscribe to `/aircraft/fdm/state` + `/sim/failures/state` + `/world/*`, publish own `/aircraft/<system>/state`. Never talk to each other directly. Aircraft-specific logic via pluginlib plugins loaded from `src/aircraft/<type>/`.
+- **IOS commands** publish to `/aircraft/devices/instructor/` topics (highest priority): panel → `/aircraft/devices/instructor/panel`, avionics → `/aircraft/devices/instructor/controls/avionics`. Virtual cockpit pages publish to `/aircraft/devices/virtual/` (lower priority, overridden by hardware and instructor). Hardware MCU → `/aircraft/devices/hardware/`. All arbitrated by input_arbitrator.
+- **NavSignalTable** published by `navaid_sim` on `/world/nav_signals`. Supports A424 (euramec.pc) and X-Plane (earth_nav.dat + WMM.COF) databases. SRTM terrain LOS checks on all VHF receivers.
 - **IOS Backend** (FastAPI + rclpy) bridges ROS2 ↔ WebSocket. Run manually, not in launch file.
 - **IOS Frontend** (React + Zustand + WebSocket). URL routing: `/` = IOS app, `/cockpit/c172/*` = virtual cockpit panels. A/C page and StatusStrip radio row are fully dynamic — driven by aircraft `navigation.yaml` config.
 
@@ -35,15 +35,15 @@
 - `sim_manager` — clock, state machine, heartbeat monitoring, IC/scenario handling
 - `input_arbitrator` — full 4-channel arbitration (flight, engine, avionics, panel)
 - `flight_model_adapter` — JSBSim adapter with abstract interface
-- `sim_electrical` — lifecycle node + pluginlib → ElectricalSolver. Subscribes to `/sim/state`, `/sim/controls/panel`, `/sim/failures/active`. Publishes `/sim/electrical/state` at 50 Hz. C172 + EC135 plugins. Respects sim state: full solver when RUNNING, dt=0 when FROZEN (switch changes still reflected), reset() on RESETTING.
-- `sim_engine_systems` — lifecycle node + pluginlib → IEnginesModel. Subscribes to `/sim/state`, `/sim/flight_model/state`, `/sim/controls/panel`, `/sim/failures/active`. Publishes `/sim/engines/state` at 50 Hz. C172 piston + EC135 turboshaft plugins. FlightModelCapabilities derived from flight_model_name. Same frozen/reset behaviour as electrical.
+- `sim_electrical` — lifecycle node + pluginlib → ElectricalSolver. Subscribes to `/sim/state`, `/aircraft/controls/panel`, `/sim/failures/state`. Publishes `/aircraft/electrical/state` at 50 Hz. C172 + EC135 plugins. Respects sim state: full solver when RUNNING, dt=0 when FROZEN (switch changes still reflected), reset() on RESETTING.
+- `sim_engine_systems` — lifecycle node + pluginlib → IEnginesModel. Subscribes to `/sim/state`, `/aircraft/fdm/state`, `/aircraft/controls/panel`, `/sim/failures/state`. Publishes `/aircraft/engines/state` at 50 Hz. C172 piston + EC135 turboshaft plugins. FlightModelCapabilities derived from flight_model_name. Same frozen/reset behaviour as electrical.
 - `navaid_sim` — VOR/ILS/NDB/DME/Marker receivers, terrain LOS, A424 + XP810/XP12 parser
-- `ios_backend` — FDM, fuel, sim state, nav state, avionics, electrical state forwarding. Panel commands to `/devices/instructor/panel`, avionics to `/devices/instructor/controls/avionics`. Cockpit pages to `/devices/virtual/panel`.
+- `ios_backend` — FDM, fuel, sim state, nav state, avionics, electrical state forwarding. Panel commands to `/aircraft/devices/instructor/panel`, avionics to `/aircraft/devices/instructor/controls/avionics`. Cockpit pages to `/aircraft/devices/virtual/panel`.
 - `ios_frontend` — map, status strip (dynamic radio row), 9 panel tabs, action bar, electrical switches (FORCE), ground services (tri-state), radio tuning, nav receiver display. Dynamic A/C page driven by aircraft navigation.yaml config. React Router for cockpit pages.
 
 ### Stub / scaffold only
 - `atmosphere_node`, `cigi_bridge`, `microros_bridge` — skeleton lifecycle nodes
-- `sim_fuel` — lifecycle node + pluginlib → IFuelModel. Subscribes to `/sim/flight_model/state`, `/sim/state`, `/sim/controls/panel`, `/sim/failures/active`, `/sim/initial_conditions`. Publishes `/sim/fuel/state` at 50 Hz. Reads fuel.yaml for density/type/tank config, overlays derived fields (liters, L/h). C172 + EC135 plugins.
+- `sim_fuel` — lifecycle node + pluginlib → IFuelModel. Subscribes to `/aircraft/fdm/state`, `/sim/state`, `/aircraft/controls/panel`, `/sim/failures/state`, `/sim/initial_conditions`. Publishes `/aircraft/fuel/state` at 50 Hz. Reads fuel.yaml for density/type/tank config, overlays derived fields (liters, L/h). C172 + EC135 plugins.
 - Systems: `hydraulic`, `navigation`, `failures`, `ice_protection`, `pressurization`, `gear` — skeleton nodes, no solver logic
 - Virtual cockpit avionics page — placeholder
 

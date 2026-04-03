@@ -128,11 +128,11 @@ FMA writes `propulsion/starter_cmd` from this field. Direct starter_cmd from Eng
 ## Three-tier avionics pipeline
 
 ```
-RawAvionicsControls   /devices/*/controls/avionics
+RawAvionicsControls   /aircraft/devices/*/controls/avionics
        ↓ input_arbitrator
-AvionicsControls      /sim/controls/avionics
+AvionicsControls      /aircraft/controls/avionics
        ↓ navigation_node
-NavigationState       /sim/navigation/state
+NavigationState       /aircraft/navigation/state
 ```
 
 Never skip a tier.

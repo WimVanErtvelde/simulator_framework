@@ -9,14 +9,14 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 ## CURRENT STATE
-<!-- Last updated: 2026-04-01 — This section is editable -->
+<!-- Last updated: 2026-04-03 — This section is editable -->
 
 ### Architecture
 - **Middleware:** ROS2 Jazzy (LTS), all nodes use sim time (`/clock` + `use_sim_time`)
 - **Sim Manager** owns `/clock` (50 Hz), state machine (INIT→READY→RUNNING↔FROZEN→RESETTING→READY). Heartbeat monitoring (2s timeout). CMD_REPOSITION=11 triggers FROZEN + `reposition_active` flag + IC broadcast + terrain wait + return to previous state. No separate REPOSITIONING sim state.
-- **Input Arbitrator** sole subscriber to `/devices/`. Priority: INSTRUCTOR > HARDWARE > VIRTUAL > FROZEN. 4 channels: flight, engine, avionics, panel. Hardware timeout 500ms → auto-fallback.
-- **Flight Model Adapter** abstract C++ interface (`IFlightModelAdapter`). Implementations: JSBSimAdapter, XPlaneUDPAdapter, HelisimUDPAdapter. Publishes `/sim/flight_model/state` + `/sim/flight_model/capabilities` (transient_local). CapabilityMode tri-state: FDM_NATIVE / EXTERNAL_COUPLED / EXTERNAL_DECOUPLED. Subscribes to writeback topics for coupled subsystems. Terrain refinement: runway DB altitude → CIGI HOT via `refine_terrain_altitude` (RunIC with cockpit save/restore). `pending_ic_` gates stepping during terrain wait (30s timeout).
-- **Systems nodes** (C++) subscribe to `/sim/flight_model/state` + `/sim/failure/<handler>_commands` + `/sim/world/*`, publish own `/sim/<s>/state`. Aircraft-specific logic via pluginlib plugins. Cross-subscriptions allowed only for documented physical coupling (engines→electrical, engines→fuel, air_data→electrical).
+- **Input Arbitrator** sole subscriber to `/aircraft/devices/*`. Priority: INSTRUCTOR > HARDWARE > VIRTUAL > FROZEN. 4 channels: flight, engine, avionics, panel. Hardware timeout 500ms → auto-fallback.
+- **Flight Model Adapter** abstract C++ interface (`IFlightModelAdapter`). Implementations: JSBSimAdapter, XPlaneUDPAdapter, HelisimUDPAdapter. Publishes `/aircraft/fdm/state` + `/aircraft/fdm/capabilities` (transient_local). CapabilityMode tri-state: FDM_NATIVE / EXTERNAL_COUPLED / EXTERNAL_DECOUPLED. Subscribes to writeback topics for coupled subsystems. Terrain refinement: runway DB altitude → CIGI HOT via `refine_terrain_altitude` (RunIC with cockpit save/restore). `pending_ic_` gates stepping during terrain wait (30s timeout).
+- **Systems nodes** (C++) subscribe to `/aircraft/fdm/state` + `/sim/failures/route/<handler>` + `/world/*`, publish own `/aircraft/<s>/state`. Aircraft-specific logic via pluginlib plugins. Cross-subscriptions allowed only for documented physical coupling (engines→electrical, engines→fuel, air_data→electrical).
 - **Electrical solver** — GraphSolver (`graph_solver.hpp/cpp`, namespace `elec_graph`). Graph-based topology: nodes (sources, buses, junctions, loads) + connections (wire, switch, contactor, relay, circuit_breaker). V2 YAML format. BFS power propagation with multi-pass relay coil updates. CB trips only via failure effects or IOS commands. YAML validation on load (duplicate IDs, dangling from/to/coil_bus, orphaned loads, CAS target checks). Old `ElectricalSolver` (`elec_sys`) deleted. EC135 electrical plugin stubbed until v2 YAML written.
 - **Failure effects** — property overrides on graph elements via generic actions (force, jam, disable, multiply). `failures.yaml` references graph element IDs directly (e.g. `alternator`, `cb_fuel_pump`). No per-failure C++ code — adding new electrical failures is pure YAML authoring. Solver applies active overrides before computing each element.
 - **CIGI bridge** — raw CIGI 3.3 big-endian encoding (no CCL). Entity Control + IG Control at 60 Hz. HOT terrain requests rate-gated by AGL (50Hz <10m, 10Hz 10-100m, off above). Repositioning handshake: IG Mode Reset for one frame on `reposition_active` rising edge, clear HAT tracker, then Operate. HOT responses gated by SOF IG Status=Operate.
@@ -39,7 +39,7 @@
 - `sim_electrical` — pluginlib. C172 on **GraphSolver** (elec_graph): graph topology (39 nodes, 38 connections), unified connection model, failure effects (force/jam/disable/multiply), YAML validation, interactive CBs on IOS + cockpit, 15 standalone unit tests. EC135 stubbed (no-op, awaiting v2 YAML). Old ElectricalSolver deleted. Capability gating + writeback.
 - `sim_engine_systems` — pluginlib → IEnginesModel. C172 piston + EC135 turboshaft plugins. EngineCommands published (zeros for current aircraft, pre-wired for turboprop/FADEC).
 - `sim_fuel` — pluginlib → IFuelModel. C172 plugin. Capability gating + writeback. FuelState arrays [8] (future graph solver).
-- `sim_failures` — failure catalog from YAML (ATA grouped), armed triggers (delay/condition), 3-topic routing (flight_model/electrical/air_data commands). params_override_json for runtime params. navaid_commands removed (ground station failures are world conditions, not aircraft failures).
+- `sim_failures` — failure catalog from YAML (ATA grouped), armed triggers (delay/condition), routing via `/sim/failures/route/<handler>` (flight_model/electrical/air_data/gear). params_override_json for runtime params. Ground station failures are world conditions routed via `/world/navaids/command` (not yet implemented).
 - `sim_navigation` — GPS/VOR/ILS/ADF/DME, CDI/TO-FROM, DME source selection, failure gating. No pluginlib.
 - `sim_gear` — pluginlib → IGearModel. C172 fixed-tricycle. WoW per leg, nosewheel angle, brake echo.
 - `sim_air_data` — pluginlib → IAirDataModel. Pitot-static with icing, turbulence noise, alternate static. C172 plugin.
@@ -63,7 +63,7 @@ Architecture audit complete (2026-03-25). All bugs resolved (#1–#9). Bug #8 (F
 - Remaining systems: hydraulic, ice_protection, pressurization (stubs exist)
 - micro-ROS hardware bridge
 - Electrical: selector + potentiometer connection types (designed, not in solver). Ammeter reads total bus current instead of alternator output.
-- Ground station failure commands (IOS→navaid_sim via `/sim/world/navaid_command`)
+- Ground station failure commands (IOS→navaid_sim via `/world/navaids/command`)
 
 ### Open decisions
 - [ ] CIGI library: raw encoding (current) or cigicl?
@@ -2300,3 +2300,24 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
   electrical.yaml, c172/electrical_model.cpp, ios_backend_node.py,
   AircraftPanel.jsx, C172Panel.jsx, failures_node.cpp,
   c172/engines_model.cpp. Old solver files kept for EC135.
+
+## 2026-04-03 — Claude Code
+
+- DECIDED: Migrate entire topic namespace from two roots (/devices/ + /sim/) to three roots
+  (/world/ + /aircraft/ + /sim/). Design originated in Claude Chat session same day.
+  /world/ = environment (weather, navaids, terrain), /aircraft/ = the simulated machine
+  (FDM, systems, controls, input devices), /sim/ = simulation infrastructure (state machine,
+  diagnostics, CIGI, failures, scenarios).
+- REASON: Previous two-root model was an engineering boundary, not a conceptual model. Three
+  roots map to how instructors, certification auditors, and new developers think. SimSnapshot
+  sections map directly (world, aircraft, sim).
+- AFFECTS: 17 C++ node files, ios_backend_node.py, 3 frontend files, CLAUDE.md, DECISIONS.md,
+  agent files. All topic strings migrated. No .msg changes, no logic changes.
+
+- DECIDED: Input devices nest under /aircraft/devices/ instead of root /devices/.
+- DECIDED: /sim/failure/ topics renamed to /sim/failures/route/<handler>.
+- DECIDED: /sim/failure_state renamed to /sim/failures/state.
+- DECIDED: /sim/diagnostics/lifecycle_state shortened to /sim/diagnostics/lifecycle.
+- DECIDED: /sim/flight_model/ shortened to /aircraft/fdm/.
+- DECIDED: /sim/world/* moved to /world/*.
+- DECIDED: /clock stays at /clock (ROS2 convention).

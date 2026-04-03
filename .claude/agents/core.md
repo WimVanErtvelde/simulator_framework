@@ -32,7 +32,7 @@ You are working on the core simulation backbone under `src/core/`.
 | sim_manager | `src/core/sim_manager/` | Clock (`/clock` 50Hz), state machine, heartbeat monitoring, CMD_REPOSITION |
 | flight_model_adapter | `src/core/flight_model_adapter/` | IFlightModelAdapter, JSBSimAdapter, capabilities, writeback, terrain refinement |
 | input_arbitrator | `src/core/input_arbitrator/` | 4-channel source selection (INSTRUCTOR>HARDWARE>VIRTUAL>FROZEN) |
-| atmosphere_node | `src/core/atmosphere_node/` | ISA + weather deviation → `/sim/world/atmosphere` |
+| atmosphere_node | `src/core/atmosphere_node/` | ISA + weather deviation → `/world/atmosphere` |
 | cigi_bridge | `src/core/cigi_bridge/` | CIGI 3.3 host, Entity Control, HOT terrain, IG Mode handshake |
 | navaid_sim | `src/core/navaid_sim/` | Ground navaids, airport/runway DB, terrain LOS, A424+XP parsers |
 | sim_interfaces | `src/core/sim_interfaces/` | Headers-only: IElectricalModel, IFuelModel, IEnginesModel, IGearModel, IAirDataModel |
@@ -65,9 +65,9 @@ Key invariants:
 - sim_manager drives `/clock` with wall timer (not sim time)
 - flight_model_adapter uses wall timer for 50Hz update
 - CapabilityMode tri-state: FDM_NATIVE / EXTERNAL_COUPLED / EXTERNAL_DECOUPLED
-- Writeback: system nodes → `/sim/writeback/<system>` → flight_model_adapter
-- input_arbitrator is the ONLY node that reads `/devices/` topics (except `/devices/instructor/failure_command` read by sim_failures)
-- input_arbitrator publishes `/sim/controls/arbitration` (ArbitrationState) with per-switch force state
+- Writeback: system nodes → `/aircraft/writeback/<system>` → flight_model_adapter
+- input_arbitrator is the ONLY node that reads `/aircraft/devices/` topics (except `/aircraft/devices/instructor/failure_command` read by sim_failures)
+- input_arbitrator publishes `/aircraft/controls/arbitration` (ArbitrationState) with per-switch force state
 - All core nodes are `rclcpp_lifecycle::LifecycleNode` with 100ms auto-activate
 
 ## Known bugs (see bugs.md)

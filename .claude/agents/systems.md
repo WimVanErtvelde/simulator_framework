@@ -66,15 +66,15 @@ class FooNode : public rclcpp_lifecycle::LifecycleNode {
 ## Standard subscriptions
 
 - `/sim/state` — controls update behavior per sim state
-- `/sim/flight_model/state` — aircraft state
-- `/sim/failure/<handler>_commands` — failure injection (per handler)
-- `/sim/controls/panel` — switch commands (nodes with switches)
-- `/sim/flight_model/capabilities` (transient_local) — gate solver
+- `/aircraft/fdm/state` — aircraft state
+- `/sim/failures/route/<handler>` — failure injection (per handler)
+- `/aircraft/controls/panel` — switch commands (nodes with switches)
+- `/aircraft/fdm/capabilities` (transient_local) — gate solver
 
 ## Standard publishers
 
 - `/sim/diagnostics/heartbeat` (String, 1 Hz) — `rclcpp::Publisher` NOT LifecyclePublisher
-- `/sim/diagnostics/lifecycle_state` (String) — `rclcpp::Publisher` NOT LifecyclePublisher
+- `/sim/diagnostics/lifecycle` (String) — `rclcpp::Publisher` NOT LifecyclePublisher
 - `/sim/<system>/state` — system state message
 - `/sim/alerts` — config errors, critical failures
 

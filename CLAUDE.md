@@ -146,11 +146,11 @@ validation output (QTG) need to meet authority requirements.
 1. **Swappable Flight Model** — the flight model is behind an adapter interface. The rest of the sim never calls flight model code directly.
 2. **Swappable IG** — visual system is decoupled via CIGI. Any CIGI-compliant IG can be used.
 3. **ROS2 as the backbone** — all systems communicate via ROS2 topics. No direct cross-node function calls.
-4. **Systems nodes do not cross-subscribe** except for documented physical dependencies (engines→electrical for bus voltage, engines→fuel for fuel available, air_data→electrical for pitot heat). All other coupling goes through `/sim/flight_model/state`, `/sim/failure/<handler>_commands`, or `/sim/world/`.
+4. **Systems nodes do not cross-subscribe** except for documented physical dependencies (engines→electrical for bus voltage, engines→fuel for fuel available, air_data→electrical for pitot heat). All other coupling goes through `/aircraft/fdm/state`, `/sim/failures/route/<handler>`, or `/world/`.
 5. **Input arbitration** — all control inputs (hardware, virtual panels, instructor override) are arbitrated by the Input Arbitrator node before reaching the sim. No sim node ever reads device topics directly. The arbitrator is the single source of truth for all control inputs, with per-channel source selection configurable at runtime via IOS.
 6. **Aircraft config drives everything** — which nodes load, which Flight Model Adapter runs, which instrument panels show, all driven by YAML config per aircraft type.
 7. **IOS is purely a control surface** — it injects commands via ROS2 topics. It has no privileged access to sim internals.
-8. **World environment is shared infrastructure** — atmosphere, weather, nav signals, and terrain are published under `/sim/world/` and consumed by any node that needs them. Systems nodes never compute environmental state themselves.
+8. **World environment is shared infrastructure** — atmosphere, weather, nav signals, and terrain are published under `/world/` and consumed by any node that needs them. Systems nodes never compute environmental state themselves.
 
 ---
 
@@ -189,7 +189,7 @@ simulator_framework/
 │   │   ├── sim_manager/             ← ROS2 node: sim clock, state machine, lifecycle mgmt
 │   │   ├── flight_model_adapter/    ← ROS2 node: IFlightModelAdapter interface + implementations
 │   │   ├── input_arbitrator/        ← ROS2 node: per-channel source selection
-│   │   ├── atmosphere_node/         ← ROS2 node: ISA + weather deviation → /sim/world/atmosphere
+│   │   ├── atmosphere_node/         ← ROS2 node: ISA + weather deviation → /world/atmosphere
 │   │   ├── navaid_sim/              ← ROS2 node: VOR/ILS/NDB/DME/markers, DTED LOS, A424+XP format
 │   │   ├── cigi_bridge/             ← ROS2 node: CIGI host implementation
 │   │   └── sim_interfaces/          ← headers-only: shared C++ interfaces (no node)
@@ -205,7 +205,7 @@ simulator_framework/
 │   │   ├── ice_protection/          ← ROS2 node: de-ice, anti-ice (stub — not launched for C172)
 │   │   └── pressurization/          ← ROS2 node: applicable aircraft only (stub — not launched for C172)
 │   ├── hardware/
-│   │   └── microros_bridge/         ← ROS2 node: serial/CAN → /devices/hardware/
+│   │   └── microros_bridge/         ← ROS2 node: serial/CAN → /aircraft/devices/hardware/
 │   ├── ios_backend/                 ← ROS2 ament_python package: FastAPI + rclpy IOS bridge
 │   ├── aircraft/
 │   │   ├── c172/                    ← ROS2 package: config YAML, flight model data, panel layout, plugins
@@ -296,7 +296,7 @@ remain in radians.
 - `pending_ic_` gates FDM stepping — JSBSim does not `step()` while waiting for terrain
 - 30s timeout: if no CIGI HOT arrives, clear `pending_ic_` and accept runway DB altitude
 
-**Publishes:** `/sim/flight_model/state` (FlightModelState — position, attitude, velocities, accelerations, aero forces, WoW)
+**Publishes:** `/aircraft/fdm/state` (FlightModelState — position, attitude, velocities, accelerations, aero forces, WoW)
 
 ---
 
@@ -304,22 +304,27 @@ remain in radians.
 
 ### Naming rule
 
-Two roots:
-- `/devices/` — external inputs (hardware, virtual panels, instructor). Only input_arbitrator
-  reads these, except `/devices/instructor/failure_command` (read by sim_failures).
-- `/sim/` — everything internal to the simulator
+Three roots:
+- `/world/` — environment and infrastructure that exists independently of the aircraft.
+  Weather, navaids, terrain, traffic.
+- `/aircraft/` — the simulated machine. FDM, systems, equipment, controls, input devices.
+  `/aircraft/devices/` carries raw inputs (hardware, virtual panels, instructor). Only
+  input_arbitrator reads `/aircraft/devices/*`, except `/aircraft/devices/instructor/failure_command`
+  (read by sim_failures).
+- `/sim/` — simulation infrastructure. State machine, diagnostics, CIGI, failure injection,
+  scenario engine. Things that wouldn't exist outside a simulator.
 
-Three categories of `/sim/` topics:
-- State (saveable):  `/sim/<system>/state`, `/sim/controls/*`, `/sim/world/*`
-- Commands (transient): `/sim/command`, `/sim/failure/*_commands`, `/sim/engines/commands`
+Topic categories:
+- State (saveable):  `/aircraft/<system>/state`, `/aircraft/controls/*`, `/world/*`
+- Commands (transient): `/sim/command`, `/sim/failures/route/*`, `/aircraft/engines/commands`
 - Infrastructure (transient): `/sim/diagnostics/*`, `/sim/alerts`, `/sim/cigi/*`, `/sim/terrain/*`, `/clock`
 
-SimSnapshot rule: save topics matching `*/state` or `*_state`, plus `/sim/controls/*` and `/sim/world/*`.
+SimSnapshot rule: save topics matching `*/state` or `*_state`, plus `/aircraft/controls/*` and `/world/*`.
 
 Acknowledged exceptions:
 - `/sim/command` — IOS publishes SimCommand directly to /sim/ (no arbitration for operational commands)
-- sim_engine_systems subscribes to /sim/electrical/state (bus voltage for starter) and /sim/fuel/state (fuel available) — physical coupling
-- sim_air_data subscribes to /sim/electrical/state (pitot heat powered) — physical coupling
+- sim_engine_systems subscribes to /aircraft/electrical/state (bus voltage for starter) and /aircraft/fuel/state (fuel available) — physical coupling
+- sim_air_data subscribes to /aircraft/electrical/state (pitot heat powered) — physical coupling
 
 All topics use `snake_case`. No abbreviations unless universally understood (e.g. `flight_model`, `cigi`).
 
@@ -327,19 +332,19 @@ All topics use `snake_case`. No abbreviations unless universally understood (e.g
 
 | Topic | Type | Publisher | Notes |
 |---|---|---|---|
-| `/devices/hardware/controls/flight` | RawFlightControls | microros_bridge | Yoke, pedals, collective from MCU |
-| `/devices/hardware/controls/engine` | RawEngineControls | microros_bridge | Throttle, mixture, condition from MCU |
-| `/devices/hardware/controls/avionics` | RawAvionicsControls | microros_bridge | Radio, nav, transponder from MCU |
-| `/devices/hardware/panel` | PanelControls | microros_bridge | Physical switches, CBs, selectors from MCU |
-| `/devices/hardware/heartbeat` | DeviceHeartbeat | microros_bridge | Per-channel health, used by arbitrator |
-| `/devices/virtual/controls/flight` | RawFlightControls | virtual cockpit pages | Same type as hardware equivalent |
-| `/devices/virtual/controls/engine` | RawEngineControls | virtual cockpit pages | Same type as hardware equivalent |
-| `/devices/virtual/controls/avionics` | RawAvionicsControls | virtual cockpit pages | Future virtual avionics head |
-| `/devices/virtual/panel` | PanelControls | virtual cockpit pages | Virtual switch panels (VIRTUAL priority) |
-| `/devices/instructor/controls/flight` | RawFlightControls | ios_backend | Instructor takeover input |
-| `/devices/instructor/controls/engine` | RawEngineControls | ios_backend | Instructor engine override |
-| `/devices/instructor/controls/avionics` | RawAvionicsControls | ios_backend | IOS frequency tuning (INSTRUCTOR priority) |
-| `/devices/instructor/panel` | PanelControls | ios_backend | IOS switch overrides (INSTRUCTOR priority) |
+| `/aircraft/devices/hardware/controls/flight` | RawFlightControls | microros_bridge | Yoke, pedals, collective from MCU |
+| `/aircraft/devices/hardware/controls/engine` | RawEngineControls | microros_bridge | Throttle, mixture, condition from MCU |
+| `/aircraft/devices/hardware/controls/avionics` | RawAvionicsControls | microros_bridge | Radio, nav, transponder from MCU |
+| `/aircraft/devices/hardware/panel` | PanelControls | microros_bridge | Physical switches, CBs, selectors from MCU |
+| `/aircraft/devices/hardware/heartbeat` | DeviceHeartbeat | microros_bridge | Per-channel health, used by arbitrator |
+| `/aircraft/devices/virtual/controls/flight` | RawFlightControls | virtual cockpit pages | Same type as hardware equivalent |
+| `/aircraft/devices/virtual/controls/engine` | RawEngineControls | virtual cockpit pages | Same type as hardware equivalent |
+| `/aircraft/devices/virtual/controls/avionics` | RawAvionicsControls | virtual cockpit pages | Future virtual avionics head |
+| `/aircraft/devices/virtual/panel` | PanelControls | virtual cockpit pages | Virtual switch panels (VIRTUAL priority) |
+| `/aircraft/devices/instructor/controls/flight` | RawFlightControls | ios_backend | Instructor takeover input |
+| `/aircraft/devices/instructor/controls/engine` | RawEngineControls | ios_backend | Instructor engine override |
+| `/aircraft/devices/instructor/controls/avionics` | RawAvionicsControls | ios_backend | IOS frequency tuning (INSTRUCTOR priority) |
+| `/aircraft/devices/instructor/panel` | PanelControls | ios_backend | IOS switch overrides (INSTRUCTOR priority) |
 
 ### Arbitrated sim topics (what the sim actually reads)
 
@@ -347,50 +352,50 @@ All topics use `snake_case`. No abbreviations unless universally understood (e.g
 |---|---|---|---|
 | `/clock` | rosgraph_msgs/Clock | sim_manager | ROS2 native sim time — drives all nodes |
 | `/sim/state` | SimState | sim_manager | INIT, READY, RUNNING, FROZEN, RESETTING |
-| `/sim/flight_model/state` | FlightModelState | flight_model_adapter | Position, attitude, velocities, forces |
-| `/sim/controls/flight` | FlightControls | input_arbitrator | Authoritative flight controls output |
-| `/sim/controls/engine` | EngineControls | input_arbitrator | Authoritative engine controls output |
-| `/sim/controls/avionics` | AvionicsControls | input_arbitrator | Authoritative avionics controls output |
-| `/sim/controls/panel` | PanelControls | input_arbitrator | Authoritative panel switch/CB output |
-| `/sim/controls/arbitration` | ArbitrationState | input_arbitrator | Per-channel source (HARDWARE/VIRTUAL/INSTRUCTOR/FROZEN) |
-| `/sim/electrical/state` | ElectricalState | sim_electrical | DC/AC buses, sources, loads, SOC |
-| `/sim/fuel/state` | FuelState | sim_fuel | Quantities, flow, CG |
-| `/sim/engines/state` | EngineState | sim_engine_systems | N1/N2, EGT, torque |
-| `/sim/engines/commands` | EngineCommands | sim_engine_systems | Includes starter_engage[4]; turboprop/FADEC writeback |
-| `/sim/gear/state` | GearState | sim_gear | WoW per leg, position, brakes, nosewheel |
-| `/sim/air_data/state` | AirDataState | sim_air_data | Instrument IAS, altitude, VSI (pitot-static) |
-| `/sim/navigation/state` | NavigationState | sim_navigation | Onboard receiver outputs: VOR, ILS, GPS, ADF, DME, TACAN |
-| `/sim/failure_state` | FailureState | sim_failures | Active failure IDs (status tracking + IOS) |
-| `/sim/failure/flight_model_commands` | FailureInjection | sim_failures | Routed to flight_model_adapter |
-| `/sim/failure/electrical_commands` | FailureInjection | sim_failures | Routed to sim_electrical |
-| `/sim/failure/air_data_commands` | FailureInjection | sim_failures | Routed to sim_air_data |
-| `/sim/failure/gear_commands` | FailureInjection | sim_failures | Routed to sim_gear |
+| `/aircraft/fdm/state` | FlightModelState | flight_model_adapter | Position, attitude, velocities, forces |
+| `/aircraft/controls/flight` | FlightControls | input_arbitrator | Authoritative flight controls output |
+| `/aircraft/controls/engine` | EngineControls | input_arbitrator | Authoritative engine controls output |
+| `/aircraft/controls/avionics` | AvionicsControls | input_arbitrator | Authoritative avionics controls output |
+| `/aircraft/controls/panel` | PanelControls | input_arbitrator | Authoritative panel switch/CB output |
+| `/aircraft/controls/arbitration` | ArbitrationState | input_arbitrator | Per-channel source (HARDWARE/VIRTUAL/INSTRUCTOR/FROZEN) |
+| `/aircraft/electrical/state` | ElectricalState | sim_electrical | DC/AC buses, sources, loads, SOC |
+| `/aircraft/fuel/state` | FuelState | sim_fuel | Quantities, flow, CG |
+| `/aircraft/engines/state` | EngineState | sim_engine_systems | N1/N2, EGT, torque |
+| `/aircraft/engines/commands` | EngineCommands | sim_engine_systems | Includes starter_engage[4]; turboprop/FADEC writeback |
+| `/aircraft/gear/state` | GearState | sim_gear | WoW per leg, position, brakes, nosewheel |
+| `/aircraft/air_data/state` | AirDataState | sim_air_data | Instrument IAS, altitude, VSI (pitot-static) |
+| `/aircraft/navigation/state` | NavigationState | sim_navigation | Onboard receiver outputs: VOR, ILS, GPS, ADF, DME, TACAN |
+| `/sim/failures/state` | FailureState | sim_failures | Active failure IDs (status tracking + IOS) |
+| `/sim/failures/route/flight_model` | FailureInjection | sim_failures | Routed to flight_model_adapter |
+| `/sim/failures/route/electrical` | FailureInjection | sim_failures | Routed to sim_electrical |
+| `/sim/failures/route/air_data` | FailureInjection | sim_failures | Routed to sim_air_data |
+| `/sim/failures/route/gear` | FailureInjection | sim_failures | Routed to sim_gear |
 | `/sim/alerts` | SimAlert | any node | SEVERITY_INFO/WARN/CRITICAL alerts to IOS |
 | `/sim/terrain/ready` | std_msgs/Bool | flight_model_adapter | Signals terrain loaded after reposition |
 | `/sim/terrain/source` | TerrainSource | flight_model_adapter | CIGI/SRTM/MSL indicator |
-| `/sim/writeback/electrical` | ElectricalState | sim_electrical | Coupled writeback to FDM |
-| `/sim/writeback/fuel` | FuelState | sim_fuel | Coupled writeback to FDM |
+| `/aircraft/writeback/electrical` | ElectricalState | sim_electrical | Coupled writeback to FDM |
+| `/aircraft/writeback/fuel` | FuelState | sim_fuel | Coupled writeback to FDM |
 | `/sim/cigi/hat_responses` | HatHotResponse | cigi_bridge | HOT terrain elevation per gear point |
 | `/sim/cigi/ig_status` | std_msgs/UInt8 | cigi_bridge | SOF IG Status (0=Standby, 2=Operate) |
 | `/sim/cigi/host_to_ig` | CigiPacket | cigi_bridge | Host → IG packets (planned — recording/debug) |
 | `/sim/cigi/ig_to_host` | CigiPacket | cigi_bridge | IG → Host packets (planned — recording/debug) |
-| `/devices/instructor/failure_command` | FailureCommand | ios_backend | IOS failure inject/clear → sim_failures |
+| `/aircraft/devices/instructor/failure_command` | FailureCommand | ios_backend | IOS failure inject/clear → sim_failures |
 
 ### Diagnostics topics
 
 | Topic | Type | Publisher | Notes |
 |---|---|---|---|
 | `/sim/diagnostics/heartbeat` | std_msgs/String | each node | Node name as data, published at 1 Hz |
-| `/sim/diagnostics/lifecycle_state` | std_msgs/String | each node | Format: "node_name:state" on every transition |
+| `/sim/diagnostics/lifecycle` | std_msgs/String | each node | Format: "node_name:state" on every transition |
 
 ### World environment topics
 
 | Topic | Type | Publisher | Notes |
 |---|---|---|---|
-| `/sim/world/atmosphere` | AtmosphereState | atmosphere_node | Pressure, temp, density at aircraft position |
-| `/sim/world/weather` | WeatherState | sim_manager | Wind layers, turbulence, vis, precip, icing |
-| `/sim/world/nav_signals` | NavSignalTable | navaid_sim | Receivable navaids, signal strength, LOS |
-| `/sim/world/terrain` | TerrainState | terrain_node (TBD) | DTED elevation + obstruction data |
+| `/world/atmosphere` | AtmosphereState | atmosphere_node | Pressure, temp, density at aircraft position |
+| `/world/weather` | WeatherState | sim_manager | Wind layers, turbulence, vis, precip, icing |
+| `/world/nav_signals` | NavSignalTable | navaid_sim | Receivable navaids, signal strength, LOS |
+| `/world/terrain` | TerrainState | terrain_node (TBD) | DTED elevation + obstruction data |
 
 ---
 
@@ -400,15 +405,15 @@ All topics use `snake_case`. No abbreviations unless universally understood (e.g
 
 Source priority per channel (highest to lowest):
 ```
-INSTRUCTOR  → explicit IOS command (/devices/instructor/)
-HARDWARE    → real MCU input, when healthy (/devices/hardware/)
-VIRTUAL     → virtual panel fallback (/devices/virtual/)
+INSTRUCTOR  → explicit IOS command (/aircraft/devices/instructor/)
+HARDWARE    → real MCU input, when healthy (/aircraft/devices/hardware/)
+VIRTUAL     → virtual panel fallback (/aircraft/devices/virtual/)
 FROZEN      → hold last value
 ```
 
 Channels: `flight`, `engine`, `avionics` — 3 continuous channels with sticky instructor takeover.
 
-Hardware timeout > 500ms → auto-fallback to VIRTUAL + alert on `/sim/controls/arbitration`.
+Hardware timeout > 500ms → auto-fallback to VIRTUAL + alert on `/aircraft/controls/arbitration`.
 
 Instructor takeover is **sticky** for flight/engine/avionics — once instructor publishes on a
 channel, source stays INSTRUCTOR until node reconfigure. No auto-release, no timeout.
@@ -432,11 +437,11 @@ remain sticky (safety). `has_inst_panel_` flag removed.
 
 | Source | Topic | Priority | Who publishes |
 |---|---|---|---|
-| IOS A/C page switches | `/devices/instructor/panel` | INSTRUCTOR | ios_backend |
-| IOS frequency tuning | `/devices/instructor/controls/avionics` | INSTRUCTOR | ios_backend |
-| Virtual cockpit switches | `/devices/virtual/panel` | VIRTUAL | cockpit browser pages |
-| Virtual cockpit avionics | `/devices/virtual/controls/avionics` | VIRTUAL | cockpit browser pages |
-| Physical hardware | `/devices/hardware/panel` | HARDWARE | microros_bridge |
+| IOS A/C page switches | `/aircraft/devices/instructor/panel` | INSTRUCTOR | ios_backend |
+| IOS frequency tuning | `/aircraft/devices/instructor/controls/avionics` | INSTRUCTOR | ios_backend |
+| Virtual cockpit switches | `/aircraft/devices/virtual/panel` | VIRTUAL | cockpit browser pages |
+| Virtual cockpit avionics | `/aircraft/devices/virtual/controls/avionics` | VIRTUAL | cockpit browser pages |
+| Physical hardware | `/aircraft/devices/hardware/panel` | HARDWARE | microros_bridge |
 
 IOS A/C page switches are instructor-level. Each switch has a FORCE checkbox — ticking it
 locks the switch at its current value (cockpit/hardware cannot override). Unticking releases
@@ -446,7 +451,7 @@ Amber styling on IOS switches communicates instructor authority visually.
 `PanelControls.msg` carries `switch_forced[]` and `selector_forced[]` arrays parallel to the
 ID arrays. Empty = normal command (cockpit/hardware). Populated = force/release (IOS).
 
-All panel UIs read displayed state from `/sim/controls/panel` (arbitrated output) — never
+All panel UIs read displayed state from `/aircraft/controls/panel` (arbitrated output) — never
 from their own published commands. Single source of truth.
 
 ---
@@ -484,14 +489,14 @@ CMD_RESET_NODE      = 10  # payload: {node_name} — chains deactivate→cleanup
 CMD_REPOSITION      = 11  # payload: IC fields — triggers FROZEN + terrain wait + return to prev state
 ```
 
-**Topic subscriptions:** `/sim/flight_model/state`, `/sim/state`, `/sim/fuel/state`, `/sim/navigation/state`,
-`/sim/controls/avionics`, `/sim/electrical/state`, `/sim/alerts`, `/sim/engines/state`,
-`/sim/air_data/state`, `/sim/gear/state`, `/sim/failure_state`, `/sim/controls/arbitration`,
-`/sim/terrain/source`, `/sim/diagnostics/heartbeat`, `/sim/diagnostics/lifecycle_state`
+**Topic subscriptions:** `/aircraft/fdm/state`, `/sim/state`, `/aircraft/fuel/state`, `/aircraft/navigation/state`,
+`/aircraft/controls/avionics`, `/aircraft/electrical/state`, `/sim/alerts`, `/aircraft/engines/state`,
+`/aircraft/air_data/state`, `/aircraft/gear/state`, `/sim/failures/state`, `/aircraft/controls/arbitration`,
+`/sim/terrain/source`, `/sim/diagnostics/heartbeat`, `/sim/diagnostics/lifecycle`
 
-**Topic publishers:** `/devices/instructor/panel`, `/devices/instructor/controls/avionics`,
-`/devices/virtual/panel` (for cockpit pages via separate WS handler),
-`/devices/instructor/failure_command` (failure inject/clear → sim_failures)
+**Topic publishers:** `/aircraft/devices/instructor/panel`, `/aircraft/devices/instructor/controls/avionics`,
+`/aircraft/devices/virtual/panel` (for cockpit pages via separate WS handler),
+`/aircraft/devices/instructor/failure_command` (failure inject/clear → sim_failures)
 
 ---
 
@@ -538,10 +543,10 @@ Each system node follows this pattern:
 - Uses ROS2 sim time (`use_sim_time: true`) — timer driven by `/clock`
 - Implemented as `rclcpp_lifecycle::LifecycleNode`
 - Auto-activates on startup via `trigger_transition()` in a 100ms timer
-- Subscribes to `/sim/flight_model/state`, relevant `/sim/controls/` and `/sim/world/` topics, and `/sim/failure/<handler>_commands` for failure injection
-- Publishes its `/sim/<system>/state` topic
+- Subscribes to `/aircraft/fdm/state`, relevant `/aircraft/controls/` and `/world/` topics, and `/sim/failures/route/<handler>` for failure injection
+- Publishes its `/aircraft/<system>/state` topic
 - Publishes heartbeat to `/sim/diagnostics/heartbeat` at 1 Hz (node name as String data)
-- Publishes lifecycle transitions to `/sim/diagnostics/lifecycle_state` ("name:state" format)
+- Publishes lifecycle transitions to `/sim/diagnostics/lifecycle` ("name:state" format)
 - Heartbeat and lifecycle publishers are `rclcpp::Publisher` (NOT LifecyclePublisher) — must publish in all states
 - Respects sim state from `/sim/state`:
   - RUNNING → full update at node rate
@@ -566,8 +571,8 @@ Each system node follows this pattern:
 
 Pitot-static instrument model. Computes instrument IAS, altitude, VSI from truth + system state.
 
-- Subscribes to `/sim/flight_model/state` (TAS, altitude truth), `/sim/world/atmosphere` (pressure, temperature, QNH), `/sim/world/weather` (turbulence, visible_moisture), `/sim/electrical/state` (pitot heat load powered), `/sim/controls/panel` (alternate static valve), `/sim/failure/air_data_commands`
-- Publishes `/sim/air_data/state` (AirDataState) at 50Hz
+- Subscribes to `/aircraft/fdm/state` (TAS, altitude truth), `/world/atmosphere` (pressure, temperature, QNH), `/world/weather` (turbulence, visible_moisture), `/aircraft/electrical/state` (pitot heat load powered), `/aircraft/controls/panel` (alternate static valve), `/sim/failures/route/air_data`
+- Publishes `/aircraft/air_data/state` (AirDataState) at 50Hz
 - Supports up to 3 pitot-static systems (C172=1, glass cockpit=3)
 - IOS and cockpit displays read AirDataState for IAS/ALT/VSI (not FlightModelState)
 - FlightModelState remains truth (for QTG, recording, CIGI, IOS TRUTH display)
@@ -590,8 +595,8 @@ Pitot-static instrument model. Computes instrument IAS, altitude, VSI from truth
 
 Landing gear system. Reads FDM gear contact data, publishes aggregated gear state.
 
-- Subscribes to `/sim/flight_model/state` (WoW, gear position, steering), `/sim/controls/flight` (gear handle, brakes), `/sim/failure/gear_commands`
-- Publishes `/sim/gear/state` (GearState) at 50Hz
+- Subscribes to `/aircraft/fdm/state` (WoW, gear position, steering), `/aircraft/controls/flight` (gear handle, brakes), `/sim/failures/route/gear`
+- Publishes `/aircraft/gear/state` (GearState) at 50Hz
 - C172 plugin: fixed tricycle, position always 1.0, WoW from FDM, nosewheel angle, brake echo
 - Supports gear_unsafe_indication failure for warning light test
 - GearState: ios_backend subscriber added per aircraft type. C172 fixed gear = no IOS consumer.
@@ -601,11 +606,11 @@ Landing gear system. Reads FDM gear contact data, publishes aggregated gear stat
 ## Failure Routing
 
 Failures are cataloged in `failures.yaml` per aircraft. `sim_failures` routes injections to
-handler-specific topics: `flight_model_commands`, `electrical_commands`, `air_data_commands`,
-`gear_commands`. Handler `sim_failures` handles nav receiver/instrument failures internally.
+handler-specific topics under `/sim/failures/route/`: `flight_model`, `electrical`, `air_data`,
+`gear`. Handler `sim_failures` handles nav receiver/instrument failures internally.
 
 **Ground station failures** (VOR/ILS/NDB off air) are world conditions, not aircraft equipment
-failures. Will be implemented as IOS→navaid_sim direct command via `/sim/world/navaid_command`.
+failures. Will be implemented as IOS→navaid_sim direct command via `/world/navaid_command`.
 NOT routed through sim_failures.
 
 **ScenarioEvent** — placeholder message for future scenario/CGF engine. Not yet implemented.
@@ -616,8 +621,8 @@ NOT routed through sim_failures.
 
 Core framework package. Ground navaid environment node.
 
-- Subscribes to `/sim/flight_model/state` (position) and `/sim/controls/avionics` (frequencies, OBS)
-- Publishes `/sim/world/nav_signals` (NavSignalTable.msg) at 10 Hz
+- Subscribes to `/aircraft/fdm/state` (position) and `/aircraft/controls/avionics` (frequencies, OBS)
+- Publishes `/world/nav_signals` (NavSignalTable.msg) at 10 Hz
 - Data source selected via ROS2 YAML parameter `data_source`:
   - `"euramec"` — EURAMEC.PC (navaids + markers + magnetic deviation in one file)
   - `"xplane"` — earth_nav.dat (XP810/XP12 auto-detected by token count) + WMM.COF
@@ -636,8 +641,8 @@ Core framework package. Ground navaid environment node.
 
 Onboard receiver layer — aircraft-agnostic, no pluginlib.
 
-- Subscribes to `/sim/flight_model/state`, `/sim/world/nav_signals`, `/sim/controls/avionics`
-- Publishes `/sim/navigation/state` (NavigationState.msg) at 10 Hz
+- Subscribes to `/aircraft/fdm/state`, `/world/nav_signals`, `/aircraft/controls/avionics`
+- Publishes `/aircraft/navigation/state` (NavigationState.msg) at 10 Hz
 - VOR CDI: `(OBS - radial) / 4.0` deg/dot, clamped ±2.5 dots
 - LOC CDI: deviation_dots from navaid_sim directly, clamped ±2.5
 - GS dots: passed through, clamped ±2.5
@@ -652,11 +657,11 @@ Onboard receiver layer — aircraft-agnostic, no pluginlib.
 Three-tier pipeline — never skip a tier:
 
 ```
-RawAvionicsControls   device input, one per source (/devices/*/controls/avionics)
+RawAvionicsControls   device input, one per source (/aircraft/devices/*/controls/avionics)
        ↓ input_arbitrator
-AvionicsControls      arbitrated authoritative state (/sim/controls/avionics)
+AvionicsControls      arbitrated authoritative state (/aircraft/controls/avionics)
        ↓ navigation_node
-NavigationState       computed instrument outputs (/sim/navigation/state)
+NavigationState       computed instrument outputs (/aircraft/navigation/state)
 ```
 
 **Field naming conventions (locked):**
@@ -731,7 +736,7 @@ Config files per aircraft:
 ## CIGI Bridge (`src/core/cigi_bridge/`)
 
 - CIGI 3.3 host side (raw BE encoding, no CCL dependency)
-- Subscribes to `/sim/flight_model/state`, `/sim/state` (for `reposition_active`)
+- Subscribes to `/aircraft/fdm/state`, `/sim/state` (for `reposition_active`)
 - Publishes `/sim/cigi/hat_responses` (HOT terrain data from IG)
 - Sends Entity Control (position/attitude) + IG Control (mode) at 60 Hz via UDP
 - IG identity hidden from rest of sim
@@ -778,19 +783,19 @@ source install/setup.bash
 
 ## What NOT to Do
 
-- Never call flight model code directly from a systems node — always go through `/sim/flight_model/state`
+- Never call flight model code directly from a systems node — always go through `/aircraft/fdm/state`
 - Never hard-code aircraft parameters in node code — always read from aircraft YAML config
 - Systems nodes do not cross-subscribe except for documented physical dependencies: engines→electrical (starter bus voltage), engines→fuel (fuel available), air_data→electrical (pitot heat). All others require design review
-- Never subscribe to `/sim/failures/active` (FailureList) — this topic does not exist. Failure broadcast uses `/sim/failure_state` (FailureState). Failure injection uses `/sim/failure/<handler>_commands` (FailureInjection).
-- Never let any sim node subscribe to `/devices/` topics — only input_arbitrator reads device topics
-- IOS backend publishes inputs to `/devices/instructor/` and operational commands to `/sim/command`. IOS backend NEVER publishes to `/sim/*/state` topics.
+- Never subscribe to `/sim/failures/active` (FailureList) — this topic does not exist. Failure broadcast uses `/sim/failures/state` (FailureState). Failure injection uses `/sim/failures/route/<handler>` (FailureInjection).
+- Never let any sim node subscribe to `/aircraft/devices/` topics — only input_arbitrator reads device topics
+- IOS backend publishes inputs to `/aircraft/devices/instructor/` and operational commands to `/sim/command`. IOS backend NEVER publishes to `/sim/*/state` topics.
 - Never put IOS logic in Sim Manager — IOS sends commands, Sim Manager executes them
 - Never store sim state in the IOS backend — it is stateless, ROS2 is the source of truth
 - Never put a ROS2 package outside `src/` — if it has a `package.xml` it belongs under `src/`
 - Never start ios_backend via sim_full.launch.py — run it manually in its own terminal
-- Never compute atmosphere, signal reception, or terrain in a systems node — subscribe to `/sim/world/` instead
+- Never compute atmosphere, signal reception, or terrain in a systems node — subscribe to `/world/` instead
 - Never use a bare `_freq` suffix on avionics message fields — always `_freq_mhz` or `_freq_khz`
-- Never publish IOS A/C page commands to `/devices/virtual/` — always `/devices/instructor/`
+- Never publish IOS A/C page commands to `/aircraft/devices/virtual/` — always `/aircraft/devices/instructor/`
 - Never hardcode a node list in ios_backend — node discovery is fully dynamic
 - Never use `rclpy.spin()` in a daemon thread under uvicorn — use `spin_once()` in a thread loop instead
 - Never use `json.dumps()` directly on ROS2 message data — use `_dumps()` with `_RosEncoder` to handle numpy types
@@ -800,7 +805,7 @@ source install/setup.bash
 ## Open Decisions
 
 - [x] Sim clock: ROS2 native sim time (`/clock` + `use_sim_time`) ✓
-- [x] Nav signals: `/sim/world/` namespace, navaid_sim as core package ✓
+- [x] Nav signals: `/world/` namespace, navaid_sim as core package ✓
 - [x] NavSignalTable interface: finalised ✓
 - [x] Virtual panel rendering: web-based (React, WebSocket → FastAPI → ROS2) ✓
 - [x] CGF: scripted entities in scenario files first; live panel deferred ✓
