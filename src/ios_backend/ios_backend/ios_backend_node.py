@@ -45,7 +45,7 @@ from sim_msgs.msg import (FlightModelState, FuelState, SimState, SimCommand, Pan
                           RawFlightControls, RawEngineControls,
                           ElectricalState, SimAlert, EngineState,
                           FailureCommand, FailureState, TerrainSource,
-                          InitialConditions, AirDataState,
+                          AirDataState,
                           ArbitrationState, GearState)
 from std_msgs.msg import String
 from lifecycle_msgs.srv import ChangeState

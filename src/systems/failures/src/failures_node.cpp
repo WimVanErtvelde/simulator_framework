@@ -164,8 +164,6 @@ public:
       "/sim/failure/flight_model_commands", 10);
     elec_cmd_pub_ = this->create_publisher<sim_msgs::msg::FailureInjection>(
       "/sim/failure/electrical_commands", 10);
-    navaid_cmd_pub_ = this->create_publisher<sim_msgs::msg::FailureInjection>(
-      "/sim/failure/navaid_commands", 10);
     air_data_cmd_pub_ = this->create_publisher<sim_msgs::msg::FailureInjection>(
       "/sim/failure/air_data_commands", 10);
 
@@ -244,7 +242,6 @@ public:
     if (failure_state_pub_) failure_state_pub_->on_activate();
     if (fdm_cmd_pub_)      fdm_cmd_pub_->on_activate();
     if (elec_cmd_pub_)     elec_cmd_pub_->on_activate();
-    if (navaid_cmd_pub_)   navaid_cmd_pub_->on_activate();
     if (air_data_cmd_pub_) air_data_cmd_pub_->on_activate();
 
     // 10 Hz timer — evaluate armed queue and publish FailureState
@@ -278,7 +275,6 @@ public:
     failure_state_pub_.reset();
     fdm_cmd_pub_.reset();
     elec_cmd_pub_.reset();
-    navaid_cmd_pub_.reset();
     air_data_cmd_pub_.reset();
     RCLCPP_INFO(this->get_logger(), "sim_failures deactivated");
     publish_lifecycle_state("inactive");
@@ -295,7 +291,6 @@ public:
     failure_state_pub_.reset();
     fdm_cmd_pub_.reset();
     elec_cmd_pub_.reset();
-    navaid_cmd_pub_.reset();
     air_data_cmd_pub_.reset();
     cmd_sub_.reset();
     fdm_sub_.reset();
@@ -500,9 +495,6 @@ private:
     } else if (inj.handler == "electrical") {
       topic = "/sim/failure/electrical_commands";
       elec_cmd_pub_->publish(inj);
-    } else if (inj.handler == "navaid_sim") {
-      topic = "/sim/failure/navaid_commands";
-      navaid_cmd_pub_->publish(inj);
     } else if (inj.handler == "air_data") {
       topic = "/sim/failure/air_data_commands";
       air_data_cmd_pub_->publish(inj);
@@ -629,7 +621,6 @@ private:
   rclcpp_lifecycle::LifecyclePublisher<sim_msgs::msg::FailureState>::SharedPtr failure_state_pub_;
   rclcpp_lifecycle::LifecyclePublisher<sim_msgs::msg::FailureInjection>::SharedPtr fdm_cmd_pub_;
   rclcpp_lifecycle::LifecyclePublisher<sim_msgs::msg::FailureInjection>::SharedPtr elec_cmd_pub_;
-  rclcpp_lifecycle::LifecyclePublisher<sim_msgs::msg::FailureInjection>::SharedPtr navaid_cmd_pub_;
   rclcpp_lifecycle::LifecyclePublisher<sim_msgs::msg::FailureInjection>::SharedPtr air_data_cmd_pub_;
 
   // Subscriptions
