@@ -1,7 +1,7 @@
 import { useSimStore } from '../store/useSimStore'
 import { useShallow } from 'zustand/react/shallow'
 
-// Virtual cockpit electrical panel — publishes to /devices/virtual/panel
+// Virtual cockpit electrical panel — publishes to /aircraft/devices/virtual/panel
 // Switches loaded dynamically from electricalConfig (electrical.yaml).
 // NO FORCE checkboxes — that's IOS-only. Green styling = VIRTUAL priority.
 

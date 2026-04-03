@@ -1,7 +1,7 @@
 """IOS Backend — FastAPI + rclpy WebSocket bridge.
 
 Bridges ROS2 topics to/from browser clients via WebSocket.
-- Subscribes to /sim/flight_model/state, /sim/fuel/state, /sim/state → forwards as JSON to WS clients
+- Subscribes to /aircraft/fdm/state, /aircraft/fuel/state, /sim/state → forwards as JSON to WS clients
 - Discovers nodes via ROS2 graph API, heartbeats, and lifecycle_state messages
 - Receives panel commands and sim commands from WS clients
 - Calls ROS2 lifecycle services for node management commands
@@ -84,29 +84,29 @@ class IosBackendNode(Node):
         self._loaded_aircraft_id = ''
 
         self._flight_model_sub = self.create_subscription(
-            FlightModelState, '/sim/flight_model/state', self._on_flight_model_state, 10)
+            FlightModelState, '/aircraft/fdm/state', self._on_flight_model_state, 10)
         self._fuel_sub = self.create_subscription(
-            FuelState, '/sim/fuel/state', self._on_fuel_state, 10)
+            FuelState, '/aircraft/fuel/state', self._on_fuel_state, 10)
         self._sim_state_sub = self.create_subscription(
             SimState, '/sim/state', self._on_sim_state, 10)
         self._nav_state_sub = self.create_subscription(
-            NavigationState, '/sim/navigation/state', self._on_nav_state, 10)
+            NavigationState, '/aircraft/navigation/state', self._on_nav_state, 10)
         self._avionics_sub = self.create_subscription(
-            AvionicsControls, '/sim/controls/avionics', self._on_avionics_controls, 10)
+            AvionicsControls, '/aircraft/controls/avionics', self._on_avionics_controls, 10)
         self._elec_sub = self.create_subscription(
-            ElectricalState, '/sim/electrical/state', self._on_electrical_state, 10)
+            ElectricalState, '/aircraft/electrical/state', self._on_electrical_state, 10)
         self._alert_sub = self.create_subscription(
             SimAlert, '/sim/alerts', self._on_sim_alert, 10)
         self._engine_sub = self.create_subscription(
-            EngineState, '/sim/engines/state', self._on_engine_state, 10)
+            EngineState, '/aircraft/engines/state', self._on_engine_state, 10)
         self._heartbeat_sub = self.create_subscription(
             String, '/sim/diagnostics/heartbeat', self._on_heartbeat, 10)
         self._lifecycle_state_sub = self.create_subscription(
-            String, '/sim/diagnostics/lifecycle_state', self._on_lifecycle_state, 10)
+            String, '/sim/diagnostics/lifecycle', self._on_lifecycle_state, 10)
 
         # Failure state subscription
         self._failure_state_sub = self.create_subscription(
-            FailureState, '/sim/failure_state', self._on_failure_state, 10)
+            FailureState, '/sim/failures/state', self._on_failure_state, 10)
 
         # Terrain source subscription
         self._terrain_source_sub = self.create_subscription(
@@ -114,39 +114,39 @@ class IosBackendNode(Node):
 
         # Air data subscription (pitot-static instruments)
         self._air_data_sub = self.create_subscription(
-            AirDataState, '/sim/air_data/state', self._on_air_data_state, 10)
+            AirDataState, '/aircraft/air_data/state', self._on_air_data_state, 10)
 
         # Arbitration state (per-channel input source)
         self._arbitration_sub = self.create_subscription(
-            ArbitrationState, '/sim/controls/arbitration', self._on_arbitration_state, 10)
+            ArbitrationState, '/aircraft/controls/arbitration', self._on_arbitration_state, 10)
 
         # Gear state
         self._gear_sub = self.create_subscription(
-            GearState, '/sim/gear/state', self._on_gear_state, 10)
+            GearState, '/aircraft/gear/state', self._on_gear_state, 10)
 
         # Failure command publisher → sim_failures
         self._failure_cmd_pub = self.create_publisher(
-            FailureCommand, '/devices/instructor/failure_command', 10)
+            FailureCommand, '/aircraft/devices/instructor/failure_command', 10)
 
         # IOS instructor panel — highest priority in arbitrator
         self._panel_pub = self.create_publisher(
-            PanelControls, '/devices/instructor/panel', 10)
+            PanelControls, '/aircraft/devices/instructor/panel', 10)
         # Virtual cockpit panel — lower priority, used by /cockpit/* pages
         self._virtual_panel_pub = self.create_publisher(
-            PanelControls, '/devices/virtual/panel', 10)
+            PanelControls, '/aircraft/devices/virtual/panel', 10)
         self._raw_avionics_pub = self.create_publisher(
-            RawAvionicsControls, '/devices/instructor/controls/avionics', 10)
+            RawAvionicsControls, '/aircraft/devices/instructor/controls/avionics', 10)
         self._cmd_pub = self.create_publisher(
             SimCommand, '/sim/command', 10)
         # Instructor flight/engine controls — arbitrated by input_arbitrator
         self._raw_flight_pub = self.create_publisher(
-            RawFlightControls, '/devices/instructor/controls/flight', 10)
+            RawFlightControls, '/aircraft/devices/instructor/controls/flight', 10)
         self._raw_engine_pub = self.create_publisher(
-            RawEngineControls, '/devices/instructor/controls/engine', 10)
+            RawEngineControls, '/aircraft/devices/instructor/controls/engine', 10)
         self._heartbeat_pub = self.create_publisher(
             String, '/sim/diagnostics/heartbeat', 10)
         self._lifecycle_pub = self.create_publisher(
-            String, '/sim/diagnostics/lifecycle_state', 10)
+            String, '/sim/diagnostics/lifecycle', 10)
 
         # Service clients for airport/runway queries
         self._search_airports_cli = self.create_client(
@@ -770,7 +770,7 @@ class IosBackendNode(Node):
         }
 
     def publish_failure_command(self, data: dict):
-        """Publish a FailureCommand to /devices/instructor/failure_command."""
+        """Publish a FailureCommand to /aircraft/devices/instructor/failure_command."""
         msg = FailureCommand()
         msg.action = data.get('action', 'inject')
         msg.failure_id = data.get('failure_id', '')
@@ -786,7 +786,7 @@ class IosBackendNode(Node):
             f'Published failure command: {msg.action} {msg.failure_id}')
 
     def publish_avionics(self, data: dict):
-        """Publish RawAvionicsControls to /devices/instructor/controls/avionics."""
+        """Publish RawAvionicsControls to /aircraft/devices/instructor/controls/avionics."""
         msg = RawAvionicsControls()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.com1_freq_mhz = float(data.get('com1_mhz', 118.10))
@@ -809,7 +809,7 @@ class IosBackendNode(Node):
             f'Published instructor avionics: NAV1={msg.nav1_freq_mhz} NAV2={msg.nav2_freq_mhz}')
 
     def publish_flight_controls(self, data: dict):
-        """Publish RawFlightControls to /devices/instructor/controls/flight."""
+        """Publish RawFlightControls to /aircraft/devices/instructor/controls/flight."""
         msg = RawFlightControls()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.aileron_norm       = float(data.get('aileron_norm', 0.0))
@@ -824,7 +824,7 @@ class IosBackendNode(Node):
         self._raw_flight_pub.publish(msg)
 
     def publish_engine_controls(self, data: dict):
-        """Publish RawEngineControls to /devices/instructor/controls/engine."""
+        """Publish RawEngineControls to /aircraft/devices/instructor/controls/engine."""
         msg = RawEngineControls()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.throttle_norm  = [float(t) for t in data.get('throttle_norm', [0.0])]
@@ -892,7 +892,7 @@ class IosBackendNode(Node):
         self._panel_pub.publish(msg)
 
     def publish_virtual_panel(self, data: dict):
-        """Publish PanelControls to /devices/virtual/panel (cockpit pages)."""
+        """Publish PanelControls to /aircraft/devices/virtual/panel (cockpit pages)."""
         msg = PanelControls()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.switch_ids = data.get('switch_ids', [])
@@ -1054,7 +1054,7 @@ async def send_stub_data():
         # Stubs only sent when real ROS2 data is absent
         snapshot = ros_node.get_snapshot() if ros_node else {}
 
-        # Avionics stub — suppressed when /sim/controls/avionics is live
+        # Avionics stub — suppressed when /aircraft/controls/avionics is live
         if 'avionics' not in snapshot:
             await broadcast({
                 'type': 'avionics',
@@ -1072,7 +1072,7 @@ async def send_stub_data():
                 'dme_source': 0,
             })
 
-        # Failure count stub — suppressed when real /sim/failure_state arrives
+        # Failure count stub — suppressed when real /sim/failures/state arrives
         if 'failure_state' not in snapshot:
             await broadcast({
                 'type': 'failure_count',
@@ -1395,7 +1395,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 elif msg.get('type') == 'set_engine_controls' and ros_node:
                     ros_node.publish_engine_controls(msg.get('data', msg))
 
-                elif msg.get('topic') == '/devices/virtual/panel' and ros_node:
+                elif msg.get('topic') == '/aircraft/devices/virtual/panel' and ros_node:
                     ros_node.publish_virtual_panel(msg.get('data', {}))
 
                 elif msg.get('type') == 'search_airports' and ros_node:

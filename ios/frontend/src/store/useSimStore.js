@@ -69,7 +69,7 @@ export const useSimStore = create((set, get) => ({
     tankCount: 0, tanks: [],
   },
 
-  // Avionics (what pilot has dialled in — from /sim/controls/avionics)
+  // Avionics (what pilot has dialled in — from /aircraft/controls/avionics)
   avionics: {
     com1Mhz: 118.0, com2Mhz: 118.0, com3Mhz: 118.0,
     nav1Mhz: 108.0, nav2Mhz: 108.0,

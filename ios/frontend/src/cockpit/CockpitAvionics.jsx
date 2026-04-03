@@ -1,4 +1,4 @@
-// Virtual cockpit avionics panel — publishes to /devices/virtual/panel
+// Virtual cockpit avionics panel — publishes to /aircraft/devices/virtual/panel
 // TODO: implement full C172 avionics stack (COM/NAV/XPDR/ADF)
 
 export default function CockpitAvionics() {
