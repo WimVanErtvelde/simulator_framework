@@ -18,30 +18,7 @@ find_package(sim_interfaces REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
-# nlohmann/json (header-only, used by solver JSON loader)
-include(FetchContent)
-FetchContent_Declare(
-  nlohmann_json
-  GIT_REPOSITORY https://github.com/nlohmann/json.git
-  GIT_TAG v3.11.3
-)
-FetchContent_MakeAvailable(nlohmann_json)
-
-# ─── Solver Library ──────────────────────────────────────────────
-# Standalone library — no ROS2 dependency, usable by aircraft plugins
-add_library(electrical_solver SHARED
-  src/electrical_solver.cpp
-)
-target_include_directories(electrical_solver PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-)
-target_link_libraries(electrical_solver
-  nlohmann_json::nlohmann_json
-  yaml-cpp
-)
-
-# ─── Graph Solver Library (v2) ───────────────────────────────────
+# ─── Graph Solver Library ────────────────────────────────────────
 # Standalone library — no ROS2 dependency
 add_library(graph_solver SHARED
   src/graph_solver.cpp
@@ -67,7 +44,7 @@ ament_target_dependencies(electrical_node
   rclcpp rclcpp_lifecycle sim_msgs std_msgs pluginlib sim_interfaces ament_index_cpp)
 
 # ─── Install ─────────────────────────────────────────────────────
-install(TARGETS electrical_solver graph_solver
+install(TARGETS graph_solver
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
@@ -81,7 +58,7 @@ install(DIRECTORY include/
 )
 
 ament_export_include_directories(include)
-ament_export_libraries(electrical_solver graph_solver)
+ament_export_libraries(graph_solver)
 ament_export_dependencies(yaml-cpp)
 
 ament_package()
