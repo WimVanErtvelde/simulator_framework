@@ -41,9 +41,21 @@
   didn't match v2 graph element IDs (alternator, battery, cb_fuel_pump).
   Updated failures.yaml component_ids to match graph node/connection IDs.
 
+### Bug #8: FORCE checkbox return path incomplete
+- AircraftPanel.jsx used localForced (React local state) instead of forcedSwitchIds from Zustand store
+- The full pipeline existed: input_arbitrator → ArbitrationState → ios_backend WS → useSimStore
+- FIX: Replaced `isForced(id)` to check `forcedSwitchIds.includes(id)` from store. Removed localForced state and setLocalForced calls.
+
+## Cleanup
+
+### Dead wiring cleanup (2026-04-03)
+- Removed 5 dead `/sim/failures/active` subscriptions (FailureList — no publisher existed)
+- Removed `/sim/failure/navaid_commands` publisher from failures_node (ground station failures are world conditions, not aircraft equipment failures — will use `/sim/world/navaid_command` path)
+- Removed dead `_ic_pub` (InitialConditions publisher) from ios_backend (created but never called)
+- `/ios/failure_command` already renamed to `/devices/instructor/failure_command` (was done before this cleanup)
+- Old ElectricalSolver (elec_sys namespace) deleted — GraphSolver (elec_graph) is the only solver
+- EC135 electrical plugin stubbed to no-op pending v2 YAML migration
+
 ## Open
 
-### Bug #8: FORCE checkbox return path incomplete
-- forcedSwitchIds from ArbitrationState not reliably reaching frontend store
-- WORKAROUND: Local React state (localForced) in AircraftPanel.jsx bypasses round-trip
-- IMPACT: Visual only — force/release commands work correctly via WS
+(none)

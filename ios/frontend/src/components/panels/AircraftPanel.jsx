@@ -516,7 +516,6 @@ export default function AircraftPanel() {
   const [groundSelectors, setGroundSelectors] = useState({})
   const [showLoads, setShowLoads] = useState(false)
   const [showCBs, setShowCBs] = useState(false)
-  const [localForced, setLocalForced] = useState({})
 
   const { radios, displays } = avionicsConfig
 
@@ -642,7 +641,7 @@ export default function AircraftPanel() {
           const idx = electrical.switchIds?.indexOf(id)
           return idx >= 0 ? (electrical.switchClosed[idx] ?? false) : false
         }
-        const isForced = (id) => !!localForced[id]
+        const isForced = (id) => forcedSwitchIds.includes(id)
 
         // Build combined switch list: source switches + load switches
         const sourceSwitches = (cfg.switches || [])
@@ -674,7 +673,6 @@ export default function AircraftPanel() {
                     onClick={(e) => {
                       e.stopPropagation()
                       const newForced = !forced
-                      setLocalForced(prev => ({ ...prev, [sw.id]: newForced }))
                       if (newForced) {
                         sendPanel([sw.id], [on], null, null, [true])
                       } else {
@@ -842,9 +840,7 @@ export default function AircraftPanel() {
                         onClick={(e) => {
                           e.stopPropagation()
                           const newForced = !forced
-                          setLocalForced(prev => ({ ...prev, [name]: newForced }))
                           if (newForced) {
-                            // Force at current state
                             sendPanel([name], [closed], null, null, [true])
                           } else {
                             sendPanel([name], [], null, null, [false])
