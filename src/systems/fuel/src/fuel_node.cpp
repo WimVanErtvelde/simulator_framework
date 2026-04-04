@@ -211,13 +211,15 @@ public:
         // Writeback to FDM when EXTERNAL_COUPLED
         if (latest_caps_ &&
             latest_caps_->fuel_quantities == sim_msgs::msg::FlightModelCapabilities::EXTERNAL_COUPLED) {
-          // Starvation writeback: if engine demands fuel but fuel_pressure is zero,
+          // Starvation writeback: if fuel_pressure is zero for any engine,
           // zero all tanks so JSBSim's engine naturally quits from empty tanks.
-          // Display FuelState (published above) keeps real tank quantities.
+          // Uses solver reachability (pressure), not engine demand — avoids
+          // oscillation where dead engine has zero flow → demand check passes
+          // → tanks restored → engine restarts → demand resumes → starved again.
           auto wb = state;
           bool engine_starved = false;
-          for (size_t i = 0; i < engine_flows.size(); ++i) {
-            if (engine_flows[i] > 0.0f && state.fuel_pressure_pa[i] <= 0.0f) {
+          for (size_t i = 0; i < engine_flows.size() && i < 4; ++i) {
+            if (state.fuel_pressure_pa[i] <= 0.0f) {
               engine_starved = true;
               break;
             }
