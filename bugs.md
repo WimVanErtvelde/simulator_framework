@@ -56,6 +56,16 @@
 - Old ElectricalSolver (elec_sys namespace) deleted — GraphSolver (elec_graph) is the only solver
 - EC135 electrical plugin stubbed to no-op pending v2 YAML migration
 
+### Architecture audit batch (2026-04-04) — all already resolved
+- F4.1: JSBSimAdapter gear clear pos-norm — Already correct: `active ? 0.0 : 1.0` (clears to 1.0)
+- F3.6: fuel_node reset on RESETTING — Already correct: `model_->reset()` called on state transition
+- F3.3: on_deactivate lifecycle publisher — Already correct: all 4 nodes (electrical, engines, gear, air_data) call `state_pub_->on_deactivate()`
+- F3.8: electrical solver state gating — By design: INIT/READY intentionally run solver so cockpit has bus power before CMD_RUN
+- F4.10: atmosphere density uses ISA temp — Already correct: uses `oat_k` (ISA + deviation), not ISA baseline
+
+### Deferred (by design)
+- F3.7: DME HOLD reset on RESETTING — Not a bug. DME HOLD is an avionics-device-specific feature (e.g., KNS-80 panel function), not universal receiver behavior. navigation_node is the aircraft-agnostic receiver layer and should not own avionics device state. When the avionics plugin layer is built, DME HOLD state will migrate there. Stale DME HOLD across sim reset is cosmetic and not training-critical.
+
 ## Open
 
 (none)

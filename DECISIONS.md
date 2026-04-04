@@ -2473,3 +2473,21 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
   (v2 graph format), aircraft/c172/CMakeLists.txt (sim_fuel dependency), fuel_node.cpp
   (writeback starvation logic), fuel_graph_solver.hpp/cpp (setTankQuantity added),
   ios_backend_node.py (v2 fuel config parser). IFuelModel interface unchanged.
+
+## 2026-04-04 — 14:20:00 - Claude Code
+
+### Architecture audit batch: F4.1, F3.6, F3.3, F3.8, F4.10
+
+- DECIDED: All 5 findings already resolved in current code. No code changes needed.
+  - F4.1: JSBSimAdapter gear clear pos-norm already 1.0 (not -1.0)
+  - F3.6: fuel_node already calls model_->reset() on RESETTING
+  - F3.3: All 4 nodes already have state_pub_->on_deactivate()
+  - F3.8: Electrical solver runs in INIT/READY by design (cockpit needs bus power before CMD_RUN)
+  - F4.10: Atmosphere density already uses oat_k (ISA + deviation), not ISA baseline
+- DECIDED: F3.7 (DME HOLD reset on RESETTING) is NOT a bug — deferred as design debt. DME HOLD
+  is an avionics-device-specific feature (e.g., KNS-80), not universal receiver behavior.
+  navigation_node is the aircraft-agnostic receiver layer. When avionics plugin layer is built,
+  DME HOLD state will migrate there.
+- REASON: Architecture audit findings reviewed against current code. All were either fixed during
+  prior implementation or are intentional design choices.
+- AFFECTS: bugs.md updated. No source code changes.
