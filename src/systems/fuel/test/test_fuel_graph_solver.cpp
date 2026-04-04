@@ -68,12 +68,12 @@ static void setEngineRunning(FuelGraphSolver& s, double rpm_pct = 60.0, double d
 int main() {
 
     // T1 ── Load C172 topology, verify counts ────────────────────────
-    TEST("Load C172 topology — 7 nodes, 7 connections, 1 selector group");
+    TEST("Load C172 topology — 7 nodes, 8 connections, 1 selector group");
     {
         FuelGraphSolver s = makeSolver();
         auto& topo = s.getTopology();
         CHECK(topo.nodes.size() == 7);
-        CHECK(topo.connections.size() == 7);  // 2 selector + 5 line
+        CHECK(topo.connections.size() == 8);  // 2 selector + 5 line + 1 gravity feed
         CHECK(topo.selectors.size() == 1);
     }
     PASS();
@@ -153,28 +153,12 @@ int main() {
     }
     PASS();
 
-    // T6 ── Mechanical pump fail, no electric pump ───────────────────
-    TEST("Mechanical pump fail — engine starved");
-    {
-        FuelGraphSolver s = makeSolver();
-        setEngineRunning(s);
-        // Force mechanical pump offline
-        s.applyFailureEffect("pump_mechanical", "force", "online", "false");
-        // Electric pump not commanded on
-
-        s.step(0.02);
-
-        CHECK(!s.getNodeStates().at("engine_inlet_0").fed);
-    }
-    PASS();
-
-    // T7 ── Mechanical pump fail + electric pump ON ──────────────────
-    TEST("Mech pump fail + electric pump ON — engine fed through electric path");
+    // T6 ── Mechanical pump fail — engine still fed via gravity ────────
+    TEST("Mechanical pump fail — engine still fed (C172 gravity feed)");
     {
         FuelGraphSolver s = makeSolver();
         setEngineRunning(s);
         s.applyFailureEffect("pump_mechanical", "force", "online", "false");
-        s.commandPump("sw_fuel_pump", true);
 
         s.step(0.02);
 
@@ -182,8 +166,8 @@ int main() {
     }
     PASS();
 
-    // T8 ── Both pumps fail — engine starved ─────────────────────────
-    TEST("Both pumps fail — engine starved regardless of valve position");
+    // T7 ── Both pumps fail — engine still fed via gravity ───────────
+    TEST("Both pumps fail — engine still fed (C172 high-wing gravity)");
     {
         FuelGraphSolver s = makeSolver();
         setEngineRunning(s);
@@ -193,6 +177,21 @@ int main() {
 
         s.step(0.02);
 
+        CHECK(s.getNodeStates().at("engine_inlet_0").fed);
+    }
+    PASS();
+
+    // T8 ── Selector OFF still starves despite gravity feed ────────────
+    TEST("Selector OFF — engine starved even with gravity feed path");
+    {
+        FuelGraphSolver s = makeSolver();
+        setEngineRunning(s);
+        s.setSelector("sel_fuel", "OFF");
+
+        s.step(0.02);
+
+        // Gravity feed goes from strainer to inlet, but selector OFF
+        // means no fuel reaches strainer → gravity path is dry too
         CHECK(!s.getNodeStates().at("engine_inlet_0").fed);
     }
     PASS();

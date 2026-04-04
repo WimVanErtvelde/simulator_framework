@@ -122,6 +122,14 @@ connections:
     from: pump_electric
     to: engine_inlet_0
 
+  # Gravity feed: C172 is high-wing, fuel flows by gravity from
+  # strainer to engine without pumps. Pumps boost pressure but are
+  # not required for delivery. BFS finds this path with no pumps running.
+  - id: gravity_feed
+    type: line
+    from: fuel_strainer
+    to: engine_inlet_0
+
 # ─── CAS Messages ──────────────────────────────────────────────────
 
 cas_messages:

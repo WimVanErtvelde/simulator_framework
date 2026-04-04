@@ -112,8 +112,12 @@ connections:
     from: pump_electric
     to: engine_inlet_0
 
-  # Alternate direct line for BFS testing: manifold → inlet
-  # (Not present on real C172 — fuel MUST flow through a pump)
+  # Gravity feed: C172 is high-wing, fuel flows by gravity from
+  # strainer to engine without pumps.
+  - id: gravity_feed
+    type: line
+    from: fuel_strainer
+    to: engine_inlet_0
 
 # ─── CAS Messages ──────────────────────────────────────────────────
 
