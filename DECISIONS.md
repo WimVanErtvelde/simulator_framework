@@ -38,7 +38,7 @@
 - `navaid_sim` — VOR/ILS/NDB/DME/Marker, terrain LOS, A424 + XP12 parsers. Airport/runway DB (SearchAirports/GetRunways/GetTerrainElevation services)
 - `sim_electrical` — pluginlib. C172 on **GraphSolver** (elec_graph): graph topology (39 nodes, 38 connections), unified connection model, failure effects (force/jam/disable/multiply), YAML validation, interactive CBs on IOS + cockpit, 15 standalone unit tests. EC135 stubbed (no-op, awaiting v2 YAML). Old ElectricalSolver deleted. Capability gating + writeback.
 - `sim_engine_systems` — pluginlib → IEnginesModel. C172 piston + EC135 turboshaft plugins. EngineCommands published (zeros for current aircraft, pre-wired for turboprop/FADEC).
-- `sim_fuel` — pluginlib → IFuelModel. C172 plugin. Capability gating + writeback. FuelState arrays [8]. **Graph solver designed** (fuel_graph, same pattern as elec_graph): Layer 1 topological BFS (mandatory) + Layer 2 flow physics (optional, attitude-dependent). Three-phase implementation planned. Current flat solver has known bugs (fuel valve OFF doesn't starve engine, boost pump failure cosmetic).
+- `sim_fuel` — pluginlib → IFuelModel. C172 on **FuelGraphSolver** (fuel_graph): graph topology (7 nodes, 7 connections, 1 selector group), Layer 1 topological BFS. Fuel valve OFF → engine starvation via writeback (JSBSim tanks zeroed). Pump failures → starvation unless electric backup. 15 standalone unit tests. EC135 on flat solver (unchanged). Writeback starvation: display FuelState shows real quantities, writeback zeros tanks when engine starved.
 - `sim_failures` — failure catalog from YAML (ATA grouped), armed triggers (delay/condition), routing via `/sim/failures/route/<handler>` (flight_model/electrical/air_data/gear). params_override_json for runtime params. Ground station failures are world conditions routed via `/world/navaids/command` (not yet implemented).
 - `sim_navigation` — GPS/VOR/ILS/ADF/DME, CDI/TO-FROM, DME source selection, failure gating. No pluginlib.
 - `sim_gear` — pluginlib → IGearModel. C172 fixed-tricycle. WoW per leg, nosewheel angle, brake echo.
@@ -2449,3 +2449,27 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
   test_fuel_graph_solver.cpp + c172_fuel_v2.yaml test fixture (new),
   sim_fuel/CMakeLists.txt (fuel_graph_solver library + test executable added).
   No changes to fuel_node.cpp, IFuelModel, plugins, or messages.
+
+## 2026-04-04 — 12:23:48 - Claude Code
+
+- DECIDED: Implemented FuelGraphSolver Phase 3 — C172 fuel plugin swapped to graph solver.
+  Fuel valve OFF now causes engine starvation. Pump failures cause starvation unless backup
+  electric pump engaged. Old flat solver preserved as fuel_v1_backup.yaml.
+- DECIDED: Engine RPM for mechanical pump gate uses simplification: fuel_flow > 0 → RPM=100%,
+  flow=0 → RPM=0%. Correct for C172 Layer 1 topological model (pump is either running or not).
+  Proper RPM passthrough deferred to avoid IFuelModel interface change.
+- DECIDED: Writeback starvation path — when engine demands fuel but fuel_pressure_pa is zero
+  (engine starved), writeback zeroes all tank quantities to JSBSim. JSBSim's engine naturally
+  quits from empty tanks. Display FuelState keeps real tank quantities. When valve reopens,
+  writeback restores real quantities and JSBSim restarts fuel flow.
+- DECIDED: fuel.yaml v2 keeps backward-compat `fuel.tanks` shim for fuel_node.cpp which reads
+  tank_count from that array. Tank topology data lives in top-level `nodes:` section.
+- DECIDED: ios_backend fuel config parser detects v1/v2 by presence of top-level `nodes` key.
+  v2 parser extracts tank nodes, pump nodes, and selector definitions for IOS display.
+- REASON: Phase 3 of three-phase fuel graph solver implementation. Completes the design goal:
+  fuel valve OFF kills engine, pump failures cause starvation, all behavior emerges from
+  graph topology.
+- AFFECTS: aircraft/c172/src/fuel_model.cpp (rewritten), aircraft/c172/config/fuel.yaml
+  (v2 graph format), aircraft/c172/CMakeLists.txt (sim_fuel dependency), fuel_node.cpp
+  (writeback starvation logic), fuel_graph_solver.hpp/cpp (setTankQuantity added),
+  ios_backend_node.py (v2 fuel config parser). IFuelModel interface unchanged.

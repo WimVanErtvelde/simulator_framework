@@ -736,6 +736,16 @@ void FuelGraphSolver::commandValve(const std::string& switch_id, bool open) {
     valve_commands_[switch_id] = open;
 }
 
+void FuelGraphSolver::setTankQuantity(const std::string& tank_id, double quantity_kg) {
+    auto it = node_states_.find(tank_id);
+    if (it != node_states_.end()) {
+        auto idx_it = node_index_.find(tank_id);
+        if (idx_it != node_index_.end() && topology_.nodes[idx_it->second].type == NodeType::tank) {
+            it->second.quantity_kg = std::max(0.0, quantity_kg);
+        }
+    }
+}
+
 // ─── Failure Effects ────────────────────────────────────────────────
 
 void FuelGraphSolver::applyFailureEffect(const std::string& target, const std::string& action,

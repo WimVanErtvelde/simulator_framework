@@ -1,96 +1,58 @@
 #include <sim_interfaces/i_fuel_model.hpp>
 #include <pluginlib/class_list_macros.hpp>
-#include <yaml-cpp/yaml.h>
+#include <fuel/fuel_graph_solver.hpp>
+
 #include <string>
 #include <vector>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <memory>
 
 namespace aircraft_c172
 {
-
-struct TankDef {
-  std::string id;
-  float capacity_kg = 0.0f;
-  float unusable_kg = 0.0f;
-  float arm_m = 0.0f;
-};
-
-struct FeedDef {
-  int engine_index = 0;
-  std::string selector_id;  // empty if no selector
-  // position value -> "both", tank_id, or "null" (off)
-  std::map<int, std::string> positions;
-};
-
-struct BoostPumpDef {
-  std::string id;  // switch ID (sw_ prefix)
-  std::string tank;
-};
 
 class FuelModel : public sim_interfaces::IFuelModel
 {
 public:
   void configure(const std::string & yaml_path) override
   {
-    YAML::Node root = YAML::LoadFile(yaml_path);
-    auto fuel = root["fuel"];
-
-    // Load tanks
-    for (const auto & t : fuel["tanks"]) {
-      TankDef td;
-      td.id = t["id"].as<std::string>();
-      td.capacity_kg = t["capacity_kg"].as<float>();
-      td.unusable_kg = t["unusable_kg"].as<float>(0.0f);
-      td.arm_m = t["arm_m"].as<float>(0.0f);
-      tanks_.push_back(td);
+    solver_ = std::make_unique<fuel_graph::FuelGraphSolver>();
+    if (!solver_->loadTopologyYaml(yaml_path)) {
+      std::cerr << "[FuelModel C172] Failed to load fuel topology: " << yaml_path << std::endl;
+      solver_.reset();
+      return;
     }
 
-    // Load feed rules
-    if (fuel["feed"]) {
-      for (const auto & f : fuel["feed"]) {
-        FeedDef fd;
-        fd.engine_index = f["engine_index"].as<int>();
-        if (f["selector_id"] && !f["selector_id"].IsNull()) {
-          fd.selector_id = f["selector_id"].as<std::string>();
-        }
-        if (f["positions"]) {
-          for (const auto & p : f["positions"]) {
-            int pos = p.first.as<int>();
-            if (p.second.IsNull()) {
-              fd.positions[pos] = "null";
-            } else {
-              fd.positions[pos] = p.second.as<std::string>();
-            }
-          }
-        }
-        feeds_.push_back(fd);
+    auto & topo = solver_->getTopology();
+    density_ = topo.density_kg_per_liter;
+
+    // Cache tank IDs and capacities for get_state mapping
+    tank_ids_.clear();
+    for (auto & node : topo.nodes) {
+      if (node.type == fuel_graph::NodeType::tank && node.tank) {
+        tank_ids_.push_back(node.id);
       }
     }
 
-    // Load boost pumps
-    if (fuel["boost_pumps"]) {
-      for (const auto & b : fuel["boost_pumps"]) {
-        BoostPumpDef bp;
-        bp.id = b["id"].as<std::string>();
-        bp.tank = b["tank"].as<std::string>();
-        boost_pumps_.push_back(bp);
+    // Cache electric pump switch IDs
+    elec_pump_switch_ids_.clear();
+    for (auto & node : topo.nodes) {
+      if (node.type == fuel_graph::NodeType::pump && node.pump &&
+          node.pump->source == fuel_graph::PumpSource::electrical) {
+        elec_pump_switch_ids_.push_back(node.pump->switch_id);
       }
     }
 
-    low_fuel_threshold_pct_ = fuel["low_fuel_threshold_pct"].as<float>(0.10f);
-
-    // Initialize tanks to 100%
-    tank_qty_kg_.resize(tanks_.size(), 0.0f);
-    for (size_t i = 0; i < tanks_.size(); ++i) {
-      tank_qty_kg_[i] = tanks_[i].capacity_kg;
+    // Cache selector info
+    selector_defs_.clear();
+    for (auto & sd : topo.selectors) {
+      selector_defs_.push_back(sd);
     }
 
-    // Default selector to position 0 (both)
-    selector_position_ = 0;
-
-    std::cout << "[FuelModel C172] Configured: " << tanks_.size() << " tanks" << std::endl;
+    std::cout << "[FuelModel C172] Configured: graph solver with "
+              << topo.nodes.size() << " nodes, "
+              << topo.connections.size() << " connections" << std::endl;
   }
 
   void update(
@@ -99,178 +61,111 @@ public:
       const sim_msgs::msg::PanelControls & panel,
       const std::vector<std::string> & active_failures) override
   {
-    // Update selector position from panel
-    for (const auto & feed : feeds_) {
-      if (feed.selector_id.empty()) continue;
-      for (size_t i = 0; i < panel.selector_ids.size(); ++i) {
-        if (panel.selector_ids[i] == feed.selector_id) {
-          selector_position_ = panel.selector_values[i];
-          break;
-        }
-      }
+    if (!solver_) return;
+
+    // Build FDM inputs
+    fuel_graph::FdmInputs fdm;
+
+    // Engine RPM: option (b) — if flow > 0, engine is running above pump threshold
+    fdm.engine_rpm_pct.resize(engine_fuel_flow_kgs.size(), 0.0);
+    for (size_t i = 0; i < engine_fuel_flow_kgs.size(); ++i) {
+      fdm.engine_rpm_pct[i] = (engine_fuel_flow_kgs[i] > 0.0f) ? 100.0 : 0.0;
     }
 
-    // Update boost pump state from panel switches
-    boost_pump_on_.clear();
-    boost_pump_on_.resize(boost_pumps_.size(), false);
-    for (size_t i = 0; i < boost_pumps_.size(); ++i) {
+    // Engine fuel demand
+    fdm.engine_fuel_demand_kgs.resize(engine_fuel_flow_kgs.size(), 0.0);
+    for (size_t i = 0; i < engine_fuel_flow_kgs.size(); ++i) {
+      fdm.engine_fuel_demand_kgs[i] = static_cast<double>(engine_fuel_flow_kgs[i]);
+    }
+
+    solver_->setFdmInputs(fdm);
+
+    // Map panel switches to electric pump commands
+    for (auto & sw_id : elec_pump_switch_ids_) {
       for (size_t j = 0; j < panel.switch_ids.size(); ++j) {
-        if (panel.switch_ids[j] == boost_pumps_[i].id) {
-          boost_pump_on_[i] = panel.switch_states[j];
+        if (panel.switch_ids[j] == sw_id) {
+          solver_->commandPump(sw_id, panel.switch_states[j]);
           break;
         }
       }
     }
 
-    // Check for fuel system failures
-    bool fuel_leak = false;
-    for (const auto & f : active_failures) {
-      if (f.find("fuel_leak") != std::string::npos) fuel_leak = true;
-    }
-
-    // Integrate fuel consumption per engine
-    engine_fuel_flow_kgs_.assign(4, 0.0f);
-    for (const auto & feed : feeds_) {
-      if (feed.engine_index < 0 || feed.engine_index >= 4) continue;
-
-      float flow = 0.0f;
-      if (feed.engine_index < static_cast<int>(engine_fuel_flow_kgs.size())) {
-        flow = engine_fuel_flow_kgs[feed.engine_index];
-      }
-      engine_fuel_flow_kgs_[feed.engine_index] = flow;
-
-      if (flow <= 0.0f) continue;
-
-      float consumption = flow * static_cast<float>(dt_sec);
-
-      // Determine which tanks to drain based on selector
-      std::vector<int> drain_tanks;
-      if (!feed.selector_id.empty() && !feed.positions.empty()) {
-        auto it = feed.positions.find(selector_position_);
-        if (it != feed.positions.end()) {
-          if (it->second == "null") {
-            continue;  // fuel off
-          } else if (it->second == "both") {
-            // Drain all tanks equally
-            for (size_t i = 0; i < tanks_.size(); ++i) {
-              drain_tanks.push_back(static_cast<int>(i));
-            }
-          } else {
-            // Find specific tank
-            for (size_t i = 0; i < tanks_.size(); ++i) {
-              if (tanks_[i].id == it->second) {
-                drain_tanks.push_back(static_cast<int>(i));
-                break;
-              }
-            }
+    // Map panel selectors to solver selector positions
+    for (auto & sd : selector_defs_) {
+      for (size_t j = 0; j < panel.selector_ids.size(); ++j) {
+        if (panel.selector_ids[j] == sd.switch_id) {
+          int pos_idx = panel.selector_values[j];
+          if (pos_idx >= 0 && pos_idx < static_cast<int>(sd.positions.size())) {
+            solver_->setSelector(sd.id, sd.positions[pos_idx]);
           }
+          break;
         }
-      } else {
-        // No selector — drain all tanks equally
-        for (size_t i = 0; i < tanks_.size(); ++i) {
-          drain_tanks.push_back(static_cast<int>(i));
-        }
-      }
-
-      if (drain_tanks.empty()) continue;
-
-      float per_tank = consumption / static_cast<float>(drain_tanks.size());
-      for (int idx : drain_tanks) {
-        tank_qty_kg_[idx] = std::max(0.0f, tank_qty_kg_[idx] - per_tank);
       }
     }
 
-    // Fuel leak effect — lose 0.5 kg/s from first tank
-    if (fuel_leak && !tanks_.empty()) {
-      tank_qty_kg_[0] = std::max(0.0f,
-        tank_qty_kg_[0] - 0.5f * static_cast<float>(dt_sec));
-    }
+    // Process failures
+    processFailures(active_failures);
+
+    solver_->step(dt_sec);
   }
 
   void apply_initial_conditions(float fuel_total_norm) override
   {
+    if (!solver_) return;
     float pct = std::clamp(fuel_total_norm, 0.0f, 1.0f);
-    for (size_t i = 0; i < tanks_.size(); ++i) {
-      tank_qty_kg_[i] = tanks_[i].capacity_kg * pct;
+    auto & topo = solver_->getTopology();
+    for (auto & node : topo.nodes) {
+      if (node.type == fuel_graph::NodeType::tank && node.tank) {
+        solver_->setTankQuantity(node.id, node.tank->capacity_kg * pct);
+      }
     }
   }
 
   sim_msgs::msg::FuelState get_state() const override
   {
     sim_msgs::msg::FuelState state;
+    if (!solver_) return state;
 
-    float total_kg = 0.0f;
-    float total_capacity = 0.0f;
-    float cg_moment = 0.0f;
+    auto snap = solver_->getSnapshot();
 
-    for (size_t i = 0; i < tanks_.size() && i < 4; ++i) {
-      state.tank_quantity_kg[i] = tank_qty_kg_[i];
-      state.tank_quantity_norm[i] =
-        (tanks_[i].capacity_kg > 0.0f) ? tank_qty_kg_[i] / tanks_[i].capacity_kg : 0.0f;
-      float usable = std::max(0.0f, tank_qty_kg_[i] - tanks_[i].unusable_kg);
+    // Per-tank quantities
+    for (size_t i = 0; i < snap.tanks.size() && i < 8; ++i) {
+      state.tank_quantity_kg[i] = static_cast<float>(snap.tanks[i].quantity_kg);
+      state.tank_quantity_norm[i] = static_cast<float>(snap.tanks[i].quantity_norm);
+      float usable = std::max(0.0f,
+        static_cast<float>(snap.tanks[i].quantity_kg - snap.tanks[i].unusable_kg));
       state.tank_usable_kg[i] = usable;
-      total_kg += tank_qty_kg_[i];
-      total_capacity += tanks_[i].capacity_kg;
-      cg_moment += tank_qty_kg_[i] * tanks_[i].arm_m;
-
-      // Determine if tank is selected
-      state.tank_selected[i] = false;
+      state.tank_selected[i] = snap.tanks[i].selected;
     }
 
-    // Determine selected tanks from current selector position
-    for (const auto & feed : feeds_) {
-      if (!feed.selector_id.empty() && !feed.positions.empty()) {
-        auto it = feed.positions.find(selector_position_);
-        if (it != feed.positions.end()) {
-          if (it->second == "both") {
-            for (size_t i = 0; i < tanks_.size() && i < 4; ++i) {
-              state.tank_selected[i] = true;
-            }
-          } else if (it->second != "null") {
-            for (size_t i = 0; i < tanks_.size() && i < 4; ++i) {
-              if (tanks_[i].id == it->second) {
-                state.tank_selected[i] = true;
-              }
-            }
-          }
-        }
-      } else {
-        // No selector — all tanks feed
-        for (size_t i = 0; i < tanks_.size() && i < 4; ++i) {
-          state.tank_selected[i] = true;
-        }
+    // Totals
+    state.total_fuel_kg = static_cast<float>(snap.total_fuel_kg);
+    state.total_fuel_norm = static_cast<float>(snap.total_fuel_norm);
+    state.cg_contribution_m = static_cast<float>(snap.cg_contribution_m);
+    state.low_fuel_warning = snap.low_fuel_warning;
+
+    // Per-engine fuel flow and pressure
+    for (size_t i = 0; i < snap.engines.size() && i < 4; ++i) {
+      int idx = snap.engines[i].engine_index;
+      if (idx >= 0 && idx < 4) {
+        state.engine_fuel_flow_kgs[idx] = static_cast<float>(snap.engines[i].fuel_flow_kgs);
+        state.fuel_pressure_pa[idx] = snap.engines[i].fed ? 35000.0f : 0.0f;
       }
     }
 
-    state.total_fuel_kg = total_kg;
-    state.total_fuel_norm = (total_capacity > 0.0f) ? total_kg / total_capacity : 0.0f;
-    state.cg_contribution_m = (total_kg > 0.0f) ? cg_moment / total_kg : 0.0f;
-
-    state.low_fuel_warning = (total_capacity > 0.0f) &&
-      (total_kg / total_capacity < low_fuel_threshold_pct_);
-
-    // Copy engine fuel flow
-    for (size_t i = 0; i < 4; ++i) {
-      state.engine_fuel_flow_kgs[i] = (i < engine_fuel_flow_kgs_.size()) ?
-        engine_fuel_flow_kgs_[i] : 0.0f;
-    }
-
-    // Fuel pressure: non-zero if boost pump is on and tank has usable fuel
-    for (size_t i = 0; i < 4; ++i) {
-      state.fuel_pressure_pa[i] = 0.0f;
-      state.boost_pump_on[i] = false;
-    }
-    for (size_t i = 0; i < boost_pumps_.size() && i < 4; ++i) {
-      bool on = (i < boost_pump_on_.size()) ? boost_pump_on_[i] : false;
-      state.boost_pump_on[i] = on;
-      if (on) {
-        // Find the tank this pump serves
-        for (size_t t = 0; t < tanks_.size(); ++t) {
-          if (tanks_[t].id == boost_pumps_[i].tank) {
-            float usable = std::max(0.0f, tank_qty_kg_[t] - tanks_[t].unusable_kg);
-            state.fuel_pressure_pa[i] = (usable > 0.0f) ? 35000.0f : 0.0f;
-            break;
+    // Boost pump state from electric pump node
+    auto & node_states = solver_->getNodeStates();
+    for (size_t i = 0; i < elec_pump_switch_ids_.size() && i < 4; ++i) {
+      // Find the pump node by switch_id
+      for (auto & node : solver_->getTopology().nodes) {
+        if (node.type == fuel_graph::NodeType::pump && node.pump &&
+            node.pump->source == fuel_graph::PumpSource::electrical &&
+            node.pump->switch_id == elec_pump_switch_ids_[i]) {
+          auto it = node_states.find(node.id);
+          if (it != node_states.end()) {
+            state.boost_pump_on[i] = it->second.running;
           }
+          break;
         }
       }
     }
@@ -280,24 +175,86 @@ public:
 
   void reset() override
   {
-    // Restore tanks to full capacity (from already-parsed config)
-    for (size_t i = 0; i < tanks_.size(); ++i) {
-      tank_qty_kg_[i] = tanks_[i].capacity_kg;
+    if (solver_) {
+      solver_->reset();
     }
-    engine_fuel_flow_kgs_.clear();
-    boost_pump_on_.clear();
-    selector_position_ = 0;
+    prev_failures_.clear();
   }
 
 private:
-  std::vector<TankDef> tanks_;
-  std::vector<FeedDef> feeds_;
-  std::vector<BoostPumpDef> boost_pumps_;
-  std::vector<float> tank_qty_kg_;
-  std::vector<float> engine_fuel_flow_kgs_;
-  std::vector<bool> boost_pump_on_;
-  float low_fuel_threshold_pct_ = 0.10f;
-  int selector_position_ = 0;
+  void processFailures(const std::vector<std::string> & active_failures)
+  {
+    if (!solver_) return;
+
+    // Find newly added failures
+    for (auto & f : active_failures) {
+      if (std::find(prev_failures_.begin(), prev_failures_.end(), f) == prev_failures_.end()) {
+        applyFailure(f);
+      }
+    }
+
+    // Find removed failures
+    for (auto & f : prev_failures_) {
+      if (std::find(active_failures.begin(), active_failures.end(), f) == active_failures.end()) {
+        clearFailure(f);
+      }
+    }
+
+    prev_failures_ = active_failures;
+  }
+
+  void applyFailure(const std::string & failure_id)
+  {
+    // Failure IDs follow pattern: target.property or target.action.property
+    // For fuel: "pump_mechanical.online.false", "sel_fuel.jam", "line_X.leak_rate_lph.10"
+    auto dot1 = failure_id.find('.');
+    if (dot1 == std::string::npos) return;
+
+    std::string target = failure_id.substr(0, dot1);
+    std::string rest = failure_id.substr(dot1 + 1);
+
+    auto dot2 = rest.find('.');
+    if (dot2 != std::string::npos) {
+      std::string prop = rest.substr(0, dot2);
+      std::string val = rest.substr(dot2 + 1);
+      solver_->applyFailureEffect(target, "force", prop, val);
+    } else {
+      // Single property after target: e.g. "sel_fuel.jam"
+      if (rest == "jam") {
+        solver_->applyFailureEffect(target, "jam", "jammed", "true");
+      } else {
+        solver_->applyFailureEffect(target, "force", rest, "true");
+      }
+    }
+  }
+
+  void clearFailure(const std::string & failure_id)
+  {
+    auto dot1 = failure_id.find('.');
+    if (dot1 == std::string::npos) return;
+
+    std::string target = failure_id.substr(0, dot1);
+    std::string rest = failure_id.substr(dot1 + 1);
+
+    auto dot2 = rest.find('.');
+    if (dot2 != std::string::npos) {
+      std::string prop = rest.substr(0, dot2);
+      solver_->clearFailureEffect(target, prop);
+    } else {
+      if (rest == "jam") {
+        solver_->clearFailureEffect(target, "jammed");
+      } else {
+        solver_->clearFailureEffect(target, rest);
+      }
+    }
+  }
+
+  std::unique_ptr<fuel_graph::FuelGraphSolver> solver_;
+  double density_ = 0.72;
+  std::vector<std::string> tank_ids_;
+  std::vector<std::string> elec_pump_switch_ids_;
+  std::vector<fuel_graph::SelectorDef> selector_defs_;
+  std::vector<std::string> prev_failures_;
 };
 
 }  // namespace aircraft_c172

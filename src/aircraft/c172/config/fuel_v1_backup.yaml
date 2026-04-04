@@ -1,0 +1,27 @@
+fuel:
+  fuel_type: "AVGAS_100LL"
+  density_kg_per_liter: 0.72
+  display_unit: "L"
+  tanks:
+    - id: left_wing
+      name: "Left Wing"
+      capacity_kg: 92.0
+      unusable_kg: 1.4
+      arm_m: 0.0
+    - id: right_wing
+      name: "Right Wing"
+      capacity_kg: 92.0
+      unusable_kg: 1.4
+      arm_m: 0.0
+  feed:
+    - engine_index: 0
+      selector_id: sel_fuel
+      positions:
+        0: both
+        1: left_wing
+        2: right_wing
+        3: null
+  boost_pumps:
+    - id: sw_fuel_pump
+      tank: left_wing
+  low_fuel_threshold_pct: 0.10

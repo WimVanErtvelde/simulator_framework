@@ -36,6 +36,9 @@ public:
     /// Command a valve open/close (via switch_id).
     void commandValve(const std::string& switch_id, bool open);
 
+    /// Set a tank's fuel quantity directly (for apply_initial_conditions).
+    void setTankQuantity(const std::string& tank_id, double quantity_kg);
+
     /// Apply a failure effect override on a node or connection property.
     void applyFailureEffect(const std::string& target, const std::string& action,
                             const std::string& property, const std::string& value);

@@ -516,7 +516,7 @@ class IosBackendNode(Node):
             self.get_logger().error(f'Failed to load engine config: {e}')
 
     def _load_fuel_config(self, aircraft_id: str):
-        """Load fuel config from aircraft package fuel.yaml."""
+        """Load fuel config from aircraft package fuel.yaml (v1 flat or v2 graph)."""
         try:
             from ament_index_python.packages import get_package_share_directory
             pkg = f'aircraft_{aircraft_id}'
@@ -529,27 +529,81 @@ class IosBackendNode(Node):
                 cfg = yaml.safe_load(f)
             fuel = cfg.get('fuel', {})
             density = fuel.get('density_kg_per_liter', 0.72)
-            tanks = fuel.get('tanks', [])
-            data = {
-                'type': 'fuel_config',
-                'aircraft_id': aircraft_id,
-                'fuel_type': fuel.get('fuel_type', 'AVGAS_100LL'),
-                'density_kg_per_liter': density,
-                'display_unit': fuel.get('display_unit', 'L'),
-                'tank_count': len(tanks),
-                'tanks': [{
-                    'id': t.get('id', f'tank_{i}'),
-                    'name': t.get('name', t.get('id', f'Tank {i+1}')),
-                    'capacity_kg': t.get('capacity_kg', 0),
-                    'capacity_liters': round(t.get('capacity_kg', 0) / density, 1) if density > 0 else 0,
-                } for i, t in enumerate(tanks)],
-            }
+
+            # Detect v2 graph format: has top-level 'nodes' key
+            if 'nodes' in cfg:
+                data = self._parse_fuel_config_v2(cfg, fuel, density, aircraft_id)
+            else:
+                data = self._parse_fuel_config_v1(fuel, density, aircraft_id)
+
             self._latest['fuel_config'] = data
             self.get_logger().info(
                 f'Loaded fuel config for {aircraft_id}: '
                 f'{data["fuel_type"]}, {data["tank_count"]} tank(s), density={density}')
         except Exception as e:
             self.get_logger().error(f'Failed to load fuel config: {e}')
+
+    def _parse_fuel_config_v1(self, fuel, density, aircraft_id):
+        """Parse v1 flat fuel config (tanks + feeds + boost_pumps)."""
+        tanks = fuel.get('tanks', [])
+        return {
+            'type': 'fuel_config',
+            'format': 'v1',
+            'aircraft_id': aircraft_id,
+            'fuel_type': fuel.get('fuel_type', 'AVGAS_100LL'),
+            'density_kg_per_liter': density,
+            'display_unit': fuel.get('display_unit', 'L'),
+            'tank_count': len(tanks),
+            'tanks': [{
+                'id': t.get('id', f'tank_{i}'),
+                'name': t.get('name', t.get('id', f'Tank {i+1}')),
+                'capacity_kg': t.get('capacity_kg', 0),
+                'capacity_liters': round(t.get('capacity_kg', 0) / density, 1) if density > 0 else 0,
+            } for i, t in enumerate(tanks)],
+        }
+
+    def _parse_fuel_config_v2(self, cfg, fuel, density, aircraft_id):
+        """Parse v2 graph fuel config (nodes + connections + selectors)."""
+        nodes = cfg.get('nodes', [])
+        selectors = cfg.get('selectors', [])
+
+        # Extract tank nodes
+        tank_nodes = [n for n in nodes if n.get('type') == 'tank']
+        pump_nodes = [n for n in nodes if n.get('type') == 'pump']
+
+        tanks = [{
+            'id': t.get('id', f'tank_{i}'),
+            'name': t.get('label', t.get('id', f'Tank {i+1}')),
+            'capacity_kg': t.get('capacity_kg', 0),
+            'capacity_liters': round(t.get('capacity_kg', 0) / density, 1) if density > 0 else 0,
+        } for i, t in enumerate(tank_nodes)]
+
+        pumps = [{
+            'id': p.get('id'),
+            'label': p.get('label', p.get('id')),
+            'source': p.get('source', 'engine'),
+            'switch_id': p.get('switch_id', ''),
+        } for p in pump_nodes]
+
+        sel_list = [{
+            'id': s.get('id'),
+            'switch_id': s.get('switch_id', ''),
+            'positions': s.get('positions', []),
+            'default_position': s.get('default_position', ''),
+        } for s in selectors]
+
+        return {
+            'type': 'fuel_config',
+            'format': 'v2',
+            'aircraft_id': aircraft_id,
+            'fuel_type': fuel.get('fuel_type', 'AVGAS_100LL'),
+            'density_kg_per_liter': density,
+            'display_unit': fuel.get('display_unit', 'L'),
+            'tank_count': len(tank_nodes),
+            'tanks': tanks,
+            'pumps': pumps,
+            'selectors': sel_list,
+        }
 
     @_safe_callback
     def _on_failure_state(self, msg: FailureState):
