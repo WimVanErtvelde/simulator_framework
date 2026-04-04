@@ -38,7 +38,7 @@
 - `navaid_sim` — VOR/ILS/NDB/DME/Marker, terrain LOS, A424 + XP12 parsers. Airport/runway DB (SearchAirports/GetRunways/GetTerrainElevation services)
 - `sim_electrical` — pluginlib. C172 on **GraphSolver** (elec_graph): graph topology (39 nodes, 38 connections), unified connection model, failure effects (force/jam/disable/multiply), YAML validation, interactive CBs on IOS + cockpit, 15 standalone unit tests. EC135 stubbed (no-op, awaiting v2 YAML). Old ElectricalSolver deleted. Capability gating + writeback.
 - `sim_engine_systems` — pluginlib → IEnginesModel. C172 piston + EC135 turboshaft plugins. EngineCommands published (zeros for current aircraft, pre-wired for turboprop/FADEC).
-- `sim_fuel` — pluginlib → IFuelModel. C172 plugin. Capability gating + writeback. FuelState arrays [8] (future graph solver).
+- `sim_fuel` — pluginlib → IFuelModel. C172 plugin. Capability gating + writeback. FuelState arrays [8]. **Graph solver designed** (fuel_graph, same pattern as elec_graph): Layer 1 topological BFS (mandatory) + Layer 2 flow physics (optional, attitude-dependent). Three-phase implementation planned. Current flat solver has known bugs (fuel valve OFF doesn't starve engine, boost pump failure cosmetic).
 - `sim_failures` — failure catalog from YAML (ATA grouped), armed triggers (delay/condition), routing via `/sim/failures/route/<handler>` (flight_model/electrical/air_data/gear). params_override_json for runtime params. Ground station failures are world conditions routed via `/world/navaids/command` (not yet implemented).
 - `sim_navigation` — GPS/VOR/ILS/ADF/DME, CDI/TO-FROM, DME source selection, failure gating. No pluginlib.
 - `sim_gear` — pluginlib → IGearModel. C172 fixed-tricycle. WoW per leg, nosewheel angle, brake echo.
@@ -2321,3 +2321,131 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - DECIDED: /sim/flight_model/ shortened to /aircraft/fdm/.
 - DECIDED: /sim/world/* moved to /world/*.
 - DECIDED: /clock stays at /clock (ROS2 convention).
+
+## 2026-04-04 — Claude Chat
+
+- DECIDED: Redesign sim_fuel around a graph topology model, same architectural pattern as
+  the electrical GraphSolver. Two-layer solver: Layer 1 (topological) is mandatory, Layer 2
+  (flow physics) is optional per aircraft.
+
+  LAYER 1 — TOPOLOGICAL (binary reachability):
+  BFS from tanks through open connections to engine inlets. A path exists or it doesn't.
+  Pumps are nodes that must be running for fuel to pass through. Valves/selectors are
+  connections controlled by panel switches. If an engine inlet is reachable from a tank
+  with usable fuel through at least one running pump → engine is fed. Otherwise →
+  starvation. Fuel consumption drained from connected tanks, split equally or by priority.
+
+  Fixes current bugs:
+  - Fuel valve OFF → selector closes all paths → no route → starve
+  - Both pumps fail → no pump node passable → starvation
+  - Fuel leak → connection drains at leak_rate_lph from upstream tank
+
+  LAYER 2 — FLOW PHYSICS (optional, per aircraft):
+  Activated when any tank node has position_m defined. Computes gravity head pressure from
+  fuel level, tank body-frame position, and attitude/accelerations from FlightModelState:
+    head_pressure = density × g_effective × height_difference
+  Flow rate proportional to pressure differential, capped by connection max_flow_lph. One
+  tuning parameter per connection: flow_resistance (default 1.0). Only needed for
+  crossfeed/asymmetric scenarios (C208 sideslip, DA42 crossfeed). C172 uses Layer 1 only.
+
+- REASON: Current flat solver has no concept of fuel flow path. "Fuel valve OFF" means
+  "stop draining tanks" but never starves the engine. Boost pump failure is cosmetic.
+  These are simulation errors. Graph topology makes correct behavior emerge from structure,
+  same as electrical.
+
+- DECIDED: Fuel graph solver node types:
+  tank          — quantity_kg, capacity_kg, unusable_kg, arm_m, optional position_m
+  pump          — source: engine (RPM-driven) or electrical (bus-powered via switch_id).
+                  Pump is a NODE (not connection) — has own state, visible in future
+                  schematic view
+  junction      — passive merge/split (strainer, manifold, tee)
+  engine_inlet  — engine_index, reports fed/starved
+
+- DECIDED: Fuel graph solver connection types:
+  line          — passive pipe, default open
+  valve         — commandable open/close via switch_id
+  selector      — group-based multi-position (see selector design below)
+  check_valve   — one-way flow only
+
+- DECIDED: Selector design — named positions with group pattern. Selectors use the same
+  approach for both fuel and electrical:
+
+  Top-level `selectors:` section defines the physical switch:
+    id, switch_id, positions (named list), default_position, optional spring_return map
+
+  Connections reference a selector group and list which named positions they are open in
+  via `open_in: [POS1, POS2]`. Each physical path through the selector is its own
+  connection with single from/to (consistent with electrical solver — no multi-input
+  connections). The group ties them to one physical switch.
+
+  Example — C172 fuel selector:
+    selectors:
+      - id: sel_fuel
+        switch_id: sel_fuel_selector
+        positions: [BOTH, LEFT, RIGHT, OFF]
+        default_position: BOTH
+    connections:
+      - id: sel_fuel_left
+        type: selector
+        from: tank_left
+        to: fuel_strainer
+        selector: { group: sel_fuel, open_in: [BOTH, LEFT] }
+      - id: sel_fuel_right
+        type: selector
+        from: tank_right
+        to: fuel_strainer
+        selector: { group: sel_fuel, open_in: [BOTH, RIGHT] }
+
+  YAML reads like English: "left tank to strainer is open in BOTH and LEFT positions."
+  No magic numbers. Solver maps position names to index internally.
+
+  Pattern extends to DA42 crossfeed (open_in: [OPEN]), electrical magneto selector
+  (positions: [OFF, R, L, BOTH, START] with spring_return: {START: BOTH}), and any future
+  multi-position switch. This becomes the shared selector pattern for BOTH fuel and
+  electrical solvers.
+
+- DECIDED: Failure effects use identical model to electrical: force, jam, disable, multiply.
+  YAML-only failure authoring. Examples:
+  - Mechanical pump fail: force pump_mechanical.online = false
+  - Fuel line leak: set line_strainer.leak_rate_lph = 10.0
+  - Fuel valve stuck: jam sel_fuel_left (captures position)
+  - Fuel filter blocked: force line_filter.closed = true
+
+- DECIDED: JSBSim owns weight and balance. Fuel solver owns tank contents. Writeback:
+  solver quantities → FuelState.msg → JSBSim propulsion/tank[N]/contents-lbs → JSBSim
+  recalculates CG automatically. We never compute W&B.
+
+- DECIDED: FuelFdmInputs struct:
+  engine_rpm_pct[], engine_fuel_demand_kgs[], on_ground, pitch_rad, roll_rad,
+  accel_x, accel_y, accel_z
+
+- DECIDED: C172 fuel topology: 7 nodes (2 tanks, 2 junctions, 2 pumps, 1 engine inlet),
+  6 connections + 2 selector connections. Layer 1 only (no tank position_m). 1 selector
+  group (4 positions: BOTH/LEFT/RIGHT/OFF).
+
+- DECIDED: Three-phase implementation:
+  Phase 1: YAML schema + C172 fuel topology YAML + DECISIONS.md
+  Phase 2: Standalone FuelGraphSolver (namespace fuel_graph), unit tests, no ROS2
+  Phase 3: Live swap into fuel_node via C172 plugin
+
+- DECIDED: EC135 fuel plugin stays on current flat solver (symmetric tanks, no crossfeed,
+  no selector — flat solver is correct). Migration to graph solver optional.
+
+- AFFECTS: fuel_graph_types.hpp, fuel_graph_solver.hpp/cpp (new),
+  test_fuel_graph_solver.cpp (new), aircraft/c172/config/fuel.yaml (rewrite),
+  aircraft/c172/src/fuel_model.cpp (rewrite), IFuelModel interface (unchanged),
+  fuel_node.cpp (unchanged), FuelState.msg (unchanged),
+  ios_backend (fuel_config parser v2), failures.yaml (new fuel failure entries)
+
+## 2026-04-04 — 12:12:39 - Claude Code
+
+- DECIDED: Implemented FuelGraphSolver Phase 2 — standalone solver library (namespace
+  fuel_graph) with 15 unit tests. No ROS2 dependency. Mirrors electrical GraphSolver
+  patterns: same failure effect API, same YAML loading, same test macros.
+- REASON: Phase 2 of three-phase fuel graph solver implementation. Validates topology
+  BFS, selector group pattern, pump-as-node model, leak tracing, and CAS evaluation
+  before integrating into the live fuel_node.
+- AFFECTS: fuel_graph_types.hpp, fuel_graph_solver.hpp, fuel_graph_solver.cpp (new),
+  test_fuel_graph_solver.cpp + c172_fuel_v2.yaml test fixture (new),
+  sim_fuel/CMakeLists.txt (fuel_graph_solver library + test executable added).
+  No changes to fuel_node.cpp, IFuelModel, plugins, or messages.

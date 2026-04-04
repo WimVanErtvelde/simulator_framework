@@ -43,7 +43,7 @@
 
 ### Stub / scaffold only
 - `atmosphere_node`, `cigi_bridge`, `microros_bridge` — skeleton lifecycle nodes
-- `sim_fuel` — lifecycle node + pluginlib → IFuelModel. Subscribes to `/aircraft/fdm/state`, `/sim/state`, `/aircraft/controls/panel`, `/sim/failures/state`, `/sim/initial_conditions`. Publishes `/aircraft/fuel/state` at 50 Hz. Reads fuel.yaml for density/type/tank config, overlays derived fields (liters, L/h). C172 + EC135 plugins.
+- `sim_fuel` — lifecycle node + pluginlib → IFuelModel. C172 + EC135 plugins. Capability gating + writeback. FuelState arrays [8]. **Graph solver designed** (fuel_graph, same pattern as elec_graph): Layer 1 topological BFS (mandatory) + Layer 2 flow physics (optional, attitude-dependent). Three-phase implementation planned. Current flat solver has known bugs (fuel valve OFF doesn't starve engine, boost pump failure cosmetic).
 - Systems: `hydraulic`, `navigation`, `failures`, `ice_protection`, `pressurization`, `gear` — skeleton nodes, no solver logic
 - Virtual cockpit avionics page — placeholder
 
@@ -1745,3 +1745,74 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - DECIDED: **Backend service calls use async polling** (not `spin_until_future_complete`) — avoids "node already in executor" crash. Background `rclpy.spin` thread resolves futures; WS handlers poll with `await asyncio.sleep(0.05)`.
 - REASON: IOS needs to position aircraft at specific runway thresholds for training scenarios. Coordinate precision requires matching IG data source (apt.dat) and correct geodetic/geocentric handling in JSBSim.
 - AFFECTS: sim_msgs, navaid_sim (AirportDatabase + services), ios_backend (IC publisher + WS handlers), flight_model_adapter (JSBSimAdapter geodetic fix), ios/frontend (PositionPanel), launch file
+
+## 2026-04-04 — Claude Chat
+
+- DECIDED: Redesign sim_fuel around a graph topology model, same architectural pattern as
+  the electrical GraphSolver. Two-layer solver: Layer 1 (topological) is mandatory, Layer 2
+  (flow physics) is optional per aircraft.
+
+  LAYER 1 — TOPOLOGICAL (binary reachability):
+  BFS from tanks through open connections to engine inlets. A path exists or it doesn't.
+  Pumps are nodes that must be running for fuel to pass through. Valves/selectors are
+  connections controlled by panel switches. If an engine inlet is reachable from a tank
+  with usable fuel through at least one running pump → engine is fed. Otherwise →
+  starvation. Fuel consumption drained from connected tanks, split equally or by priority.
+
+  LAYER 2 — FLOW PHYSICS (optional, per aircraft):
+  Activated when any tank node has position_m defined. Computes gravity head pressure from
+  fuel level, tank body-frame position, and attitude/accelerations from FlightModelState:
+    head_pressure = density × g_effective × height_difference
+  Flow rate proportional to pressure differential, capped by connection max_flow_lph. One
+  tuning parameter per connection: flow_resistance (default 1.0). Only needed for
+  crossfeed/asymmetric scenarios (C208 sideslip, DA42 crossfeed). C172 uses Layer 1 only.
+
+- REASON: Current flat solver has no concept of fuel flow path. "Fuel valve OFF" means
+  "stop draining tanks" but never starves the engine. Boost pump failure is cosmetic.
+  These are simulation errors. Graph topology makes correct behavior emerge from structure,
+  same as electrical.
+
+- DECIDED: Fuel graph solver node types:
+  tank          — quantity_kg, capacity_kg, unusable_kg, arm_m, optional position_m
+  pump          — source: engine (RPM-driven) or electrical (bus-powered via switch_id).
+                  Pump is a NODE (not connection) — has own state, visible in future
+                  schematic view
+  junction      — passive merge/split (strainer, manifold, tee)
+  engine_inlet  — engine_index, reports fed/starved
+
+- DECIDED: Fuel graph solver connection types:
+  line          — passive pipe, default open
+  valve         — commandable open/close via switch_id
+  selector      — group-based multi-position (see selector design below)
+  check_valve   — one-way flow only
+
+- DECIDED: Selector design — named positions with group pattern. Selectors use the same
+  approach for both fuel and electrical. Top-level `selectors:` section defines the physical
+  switch (id, switch_id, positions, default_position, optional spring_return). Connections
+  reference a selector group and list which named positions they are open in via
+  `open_in: [POS1, POS2]`. Each physical path is its own connection with single from/to.
+  This becomes the shared selector pattern for BOTH fuel and electrical solvers.
+
+- DECIDED: Failure effects use identical model to electrical: force, jam, disable, multiply.
+  YAML-only failure authoring.
+
+- DECIDED: JSBSim owns weight and balance. Fuel solver owns tank contents. Writeback:
+  solver quantities → FuelState.msg → JSBSim propulsion/tank[N]/contents-lbs → JSBSim
+  recalculates CG automatically.
+
+- DECIDED: C172 fuel topology: 7 nodes (2 tanks, 2 junctions, 2 pumps, 1 engine inlet),
+  6 connections + 2 selector connections. Layer 1 only (no tank position_m). 1 selector
+  group (4 positions: BOTH/LEFT/RIGHT/OFF).
+
+- DECIDED: Three-phase implementation:
+  Phase 1: YAML schema + C172 fuel topology YAML + DECISIONS.md
+  Phase 2: Standalone FuelGraphSolver (namespace fuel_graph), unit tests, no ROS2
+  Phase 3: Live swap into fuel_node via C172 plugin
+
+- DECIDED: EC135 fuel plugin stays on current flat solver.
+
+- AFFECTS: fuel_graph_types.hpp, fuel_graph_solver.hpp/cpp (new),
+  test_fuel_graph_solver.cpp (new), aircraft/c172/config/fuel.yaml (rewrite),
+  aircraft/c172/src/fuel_model.cpp (rewrite), IFuelModel interface (unchanged),
+  fuel_node.cpp (unchanged), FuelState.msg (unchanged),
+  ios_backend (fuel_config parser v2), failures.yaml (new fuel failure entries)

@@ -1,0 +1,133 @@
+# C172 Fuel System — Graph Topology v2
+# Test fixture for fuel graph solver unit tests.
+# Will become the real aircraft/c172/config/fuel.yaml in Phase 3.
+
+aircraft:
+  type: c172
+
+fuel:
+  type: AVGAS_100LL
+  density_kg_per_liter: 0.72
+  low_fuel_threshold_norm: 0.10
+
+# ─── Nodes ──────────────────────────────────────────────────────────
+
+nodes:
+  # Tanks
+  - id: tank_left
+    type: tank
+    label: "Left Wing"
+    capacity_kg: 92.0
+    unusable_kg: 1.4
+    arm_m: 0.0
+
+  - id: tank_right
+    type: tank
+    label: "Right Wing"
+    capacity_kg: 92.0
+    unusable_kg: 1.4
+    arm_m: 0.0
+
+  # Junctions
+  - id: fuel_strainer
+    type: junction
+    label: "Fuel Strainer"
+
+  - id: pump_manifold
+    type: junction
+    label: "Pump Manifold"
+
+  # Pumps
+  - id: pump_mechanical
+    type: pump
+    label: "Engine-Driven Fuel Pump"
+    source: engine
+    engine_index: 0
+    min_rpm_pct: 10.0
+
+  - id: pump_electric
+    type: pump
+    label: "Electric Fuel Pump"
+    source: electrical
+    switch_id: sw_fuel_pump
+
+  # Engine inlet
+  - id: engine_inlet_0
+    type: engine_inlet
+    label: "Engine 1 Inlet"
+    engine_index: 0
+
+# ─── Selectors ──────────────────────────────────────────────────────
+
+selectors:
+  - id: sel_fuel
+    switch_id: sel_fuel_selector
+    positions: [BOTH, LEFT, RIGHT, OFF]
+    default_position: BOTH
+
+# ─── Connections ────────────────────────────────────────────────────
+
+connections:
+  # Selector: tank → fuel strainer
+  - id: sel_fuel_left
+    type: selector
+    from: tank_left
+    to: fuel_strainer
+    selector:
+      group: sel_fuel
+      open_in: [BOTH, LEFT]
+
+  - id: sel_fuel_right
+    type: selector
+    from: tank_right
+    to: fuel_strainer
+    selector:
+      group: sel_fuel
+      open_in: [BOTH, RIGHT]
+
+  # Strainer → pump manifold
+  - id: line_strainer_to_manifold
+    type: line
+    from: fuel_strainer
+    to: pump_manifold
+
+  # Pump manifold → pumps → engine inlet
+  - id: line_manifold_to_mech_pump
+    type: line
+    from: pump_manifold
+    to: pump_mechanical
+
+  - id: line_mech_pump_to_inlet
+    type: line
+    from: pump_mechanical
+    to: engine_inlet_0
+
+  - id: line_manifold_to_elec_pump
+    type: line
+    from: pump_manifold
+    to: pump_electric
+
+  - id: line_elec_pump_to_inlet
+    type: line
+    from: pump_electric
+    to: engine_inlet_0
+
+  # Alternate direct line for BFS testing: manifold → inlet
+  # (Not present on real C172 — fuel MUST flow through a pump)
+
+# ─── CAS Messages ──────────────────────────────────────────────────
+
+cas_messages:
+  - id: cas_low_fuel
+    text: "LOW FUEL"
+    level: warning
+    condition:
+      type: low_fuel
+      threshold: 0.10
+
+  - id: cas_fuel_press
+    text: "FUEL PRESS"
+    level: warning
+    condition:
+      type: fuel_press
+      target_id: engine_inlet_0
