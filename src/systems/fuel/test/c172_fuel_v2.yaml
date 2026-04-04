@@ -1,14 +1,22 @@
 # C172 Fuel System — Graph Topology v2
-# Test fixture for fuel graph solver unit tests.
-# Will become the real aircraft/c172/config/fuel.yaml in Phase 3.
+# Test fixture — kept in sync with aircraft/c172/config/fuel.yaml
 
 aircraft:
   type: c172
 
 fuel:
-  type: AVGAS_100LL
+  fuel_type: AVGAS_100LL
   density_kg_per_liter: 0.72
+  display_unit: L
   low_fuel_threshold_norm: 0.10
+  # Compat: fuel_node reads tanks array size for tank_count
+  tanks:
+    - id: tank_left
+      name: "Left Wing"
+      capacity_kg: 92.0
+    - id: tank_right
+      name: "Right Wing"
+      capacity_kg: 92.0
 
 # ─── Nodes ──────────────────────────────────────────────────────────
 
@@ -61,7 +69,7 @@ nodes:
 
 selectors:
   - id: sel_fuel
-    switch_id: sel_fuel_selector
+    switch_id: sel_fuel
     positions: [BOTH, LEFT, RIGHT, OFF]
     default_position: BOTH
 
@@ -113,7 +121,8 @@ connections:
     to: engine_inlet_0
 
   # Gravity feed: C172 is high-wing, fuel flows by gravity from
-  # strainer to engine without pumps.
+  # strainer to engine without pumps. Pumps boost pressure but are
+  # not required for delivery. BFS finds this path with no pumps running.
   - id: gravity_feed
     type: line
     from: fuel_strainer
