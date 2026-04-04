@@ -32,7 +32,7 @@ these rules prevents the most common mistakes that occur during code generation.
 │   │   ├── sim_manager/                  # Clock, state machine, lifecycle mgmt
 │   │   ├── flight_model_adapter/         # IFlightModelAdapter interface + JSBSim/XPlane/Helisim
 │   │   ├── input_arbitrator/             # 4-channel source selection (INSTRUCTOR>HARDWARE>VIRTUAL>FROZEN)
-│   │   ├── atmosphere_node/              # ISA + weather → /sim/world/atmosphere
+│   │   ├── atmosphere_node/              # ISA + weather → /world/atmosphere
 │   │   ├── navaid_sim/                   # Navaids, airport/runway DB, terrain LOS
 │   │   ├── cigi_bridge/                  # CIGI 3.3 host (raw BE encoding, no CCL)
 │   │   └── sim_interfaces/               # Shared C++ headers (no node)
@@ -48,7 +48,7 @@ these rules prevents the most common mistakes that occur during code generation.
 │   │   ├── ice_protection/               # Stub
 │   │   └── pressurization/               # Stub
 │   ├── hardware/
-│   │   └── microros_bridge/              # Stub — serial/CAN → /devices/hardware/
+│   │   └── microros_bridge/              # Stub — serial/CAN → /aircraft/devices/hardware/
 │   ├── ios_backend/                      # FastAPI + rclpy IOS bridge (ament_python)
 │   ├── aircraft/
 │   │   ├── c172/                         # Config YAML, plugins, flight model data
@@ -100,13 +100,14 @@ IOS frontend → FailureCommand → failures_node → FailureInjection → downs
 Note: FailureInjection routing is the ONLY active failure delivery path.
 FailureState carries active_failure_ids for UI display and recording.
 Systems nodes do NOT subscribe to FailureState for failure handling —
-they receive failures via /sim/failure/<handler>_commands topics.
+they receive failures via /sim/failures/route/<handler> topics.
 ```
 
 Routing topics (all recordable in rosbag2):
-- `/sim/failure/flight_model_commands` → flight_model_adapter
-- `/sim/failure/electrical_commands` → sim_electrical
-- `/sim/failure/navaid_commands` → navaid_sim
+- `/sim/failures/route/flight_model` → flight_model_adapter
+- `/sim/failures/route/electrical` → sim_electrical
+- `/sim/failures/route/air_data` → sim_air_data
+- `/sim/failures/route/gear` → sim_gear
 
 Never bypass the pipeline. Never publish failure messages from downstream nodes.
 
@@ -131,30 +132,39 @@ src/systems/foo/
     └── default.yaml
 ```
 
-### 4. Systems nodes never talk to each other
+### 4. Systems nodes do not cross-subscribe
 
-Systems nodes subscribe to `/sim/flight_model/state` and publish their own `/sim/<s>/state`.
-Coupling between systems goes through the Flight Model Adapter or Sim Manager only.
-No direct cross-node topic subscriptions between systems nodes.
+Systems nodes subscribe to `/aircraft/fdm/state` and publish their own `/aircraft/<system>/state`.
+All other coupling goes through `/aircraft/fdm/state`, `/sim/failures/route/<handler>`, or `/world/`.
+Cross-subscriptions allowed only for documented physical coupling:
+- engines → `/aircraft/electrical/state` (starter bus voltage)
+- engines → `/aircraft/fuel/state` (fuel available)
+- air_data → `/aircraft/electrical/state` (pitot heat powered)
 
 ### 5. Topic namespace convention
 
-Two roots:
-- `/devices/` — external inputs (hardware, virtual panels, instructor). Only input_arbitrator
-  reads these, except `/devices/instructor/failure_command` (read by sim_failures).
-- `/sim/` — everything internal to the simulator
+Three roots:
+- `/world/` — environment and infrastructure that exists independently of the aircraft.
+  Weather, navaids, terrain, traffic.
+- `/aircraft/` — the simulated machine. FDM, systems, equipment, controls, input devices.
+  `/aircraft/devices/` carries raw inputs (hardware, virtual panels, instructor). Only
+  input_arbitrator reads `/aircraft/devices/*`, except `/aircraft/devices/instructor/failure_command`
+  (read by sim_failures).
+- `/sim/` — simulation infrastructure. State machine, diagnostics, CIGI, failure injection,
+  scenario engine. Things that wouldn't exist outside a simulator.
 
-Three categories of `/sim/` topics:
-- State (saveable):  `/sim/<system>/state`, `/sim/controls/*`, `/sim/world/*`
-- Commands (transient): `/sim/command`, `/sim/failure/*_commands`, `/sim/engines/commands`
+Topic categories:
+- State (saveable):  `/aircraft/<system>/state`, `/aircraft/controls/*`, `/world/*`
+- Commands (transient): `/sim/command`, `/sim/failures/route/*`, `/aircraft/engines/commands`
 - Infrastructure (transient): `/sim/diagnostics/*`, `/sim/alerts`, `/sim/cigi/*`, `/sim/terrain/*`, `/clock`
 
-IOS backend publishes inputs to `/devices/instructor/` and operational commands to `/sim/command`.
-IOS backend NEVER publishes to `/sim/*/state` topics.
+IOS backend publishes inputs to `/aircraft/devices/instructor/` and operational commands to `/sim/command`.
+IOS backend NEVER publishes to `/aircraft/*/state` or `/sim/*/state` topics.
 
 Acknowledged exceptions:
 - `/sim/command` — IOS publishes SimCommand directly to /sim/ (no arbitration for operational commands)
-- sim_engine_systems subscribes to /sim/electrical/state and /sim/fuel/state (physical coupling)
+- sim_engine_systems subscribes to `/aircraft/electrical/state` and `/aircraft/fuel/state` (physical coupling)
+- sim_air_data subscribes to `/aircraft/electrical/state` (pitot heat powered)
 
 ### 6. Plugin authority model
 
@@ -171,7 +181,7 @@ The plugin has full authority over its published state.
 - `EXTERNAL_DECOUPLED` — our node runs independently, no FDM write-back
 
 JSBSim: electrical=EXTERNAL_COUPLED, fuel=EXTERNAL_COUPLED, air_data=EXTERNAL_DECOUPLED.
-Published as transient_local on `/sim/flight_model/capabilities` at startup.
+Published as transient_local on `/aircraft/fdm/capabilities` at startup.
 
 ## Common Pitfalls
 
@@ -179,7 +189,7 @@ Published as transient_local on `/sim/flight_model/capabilities` at startup.
 2. **Hardcoding aircraft values** — use config. Ask: "would I change this C++ for a new aircraft?"
 3. **Putting rclcpp in solver logic** — solver library must work without ROS2
 4. **Stale build after .msg changes** — full `colcon build` + restart all nodes
-5. **Subscribing to `/devices/` from a sim node** — only input_arbitrator reads device topics
+5. **Subscribing to `/aircraft/devices/` from a sim node** — only input_arbitrator reads device topics
 6. **Not checking error returns** — lifecycle transitions, file loads, service calls can fail
 7. **Over-engineering for DIS/HLA/SISO** — ROS2 topics are the backbone, no external standards
 
@@ -198,5 +208,5 @@ failures. Fix: full `colcon build` + restart all nodes.
 ## Helisim Integration Notes
 
 Helisim is used as the FDM **only**. Real-time data via UDP: 6-word header + 268-word data
-section. The adapter reads this stream and publishes to `/sim/flight_model/state`.
+section. The adapter reads this stream and publishes to `/aircraft/fdm/state`.
 See `references/helisim-icd-quickref.md` for commonly needed word offsets.
