@@ -217,13 +217,11 @@ public:
           // oscillation where dead engine has zero flow → demand check passes
           // → tanks restored → engine restarts → demand resumes → starved again.
           auto wb = state;
-          bool engine_starved = false;
-          for (size_t i = 0; i < engine_flows.size() && i < 4; ++i) {
-            if (state.fuel_pressure_pa[i] <= 0.0f) {
-              engine_starved = true;
-              break;
-            }
-          }
+          // Starvation writeback: check engine 0 pressure only. The solver plugin
+          // sets fuel_pressure_pa[i] = 35000 if fed, 0 if starved. Unused engine
+          // slots (1-3 on single-engine) default to 0 and must NOT trigger this.
+          // TODO: multi-engine support — check all engines up to actual engine_count
+          bool engine_starved = (state.tank_count > 0 && state.fuel_pressure_pa[0] <= 0.0f);
           if (engine_starved) {
             for (int i = 0; i < 8; ++i) {
               wb.tank_quantity_kg[i] = 0.0f;
