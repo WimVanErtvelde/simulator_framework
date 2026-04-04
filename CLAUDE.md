@@ -104,6 +104,18 @@ Backend takes ~5 seconds before ROS2 data flows (3s DDS discovery + 2s initial s
 # → http://localhost:5173
 ```
 
+**Terminal 4 — PlotJuggler** (optional, for FDM tuning / QTG)
+```bash
+./start_plotjuggler.sh
+```
+Connect via Streaming → ROS2 Topic Subscriber. Select topics to plot.
+Useful topics for FDM tuning:
+- `/aircraft/fdm/state` — all truth values (position, attitude, velocities)
+- `/aircraft/air_data/state` — instrument readings (IAS, altitude, VSI)
+- `/aircraft/electrical/state` — bus voltages, load states
+- `/aircraft/fuel/state` — tank quantities, flow rates
+- `/aircraft/engines/state` — RPM, MAP, temps
+
 **Notes**
 - Backend MUST be started with ROS2 sourced — without it, DDS isolation means no nodes are visible
 - Backend is NOT in sim_full.launch.py (removed — it conflicts on port 8080 if already running)

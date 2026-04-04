@@ -7,6 +7,7 @@ import WeatherPanel from './panels/WeatherPanel'
 import TimePanel from './panels/TimePanel'
 import ScenariosPanel from './panels/ScenariosPanel'
 import NodesPanel from './panels/NodesPanel'
+import InspectorPanel from './panels/InspectorPanel'
 import SessionPanel from './panels/SessionPanel'
 
 const TABS = {
@@ -17,6 +18,7 @@ const TABS = {
   time: { title: 'TIME', component: TimePanel },
   scenarios: { title: 'SCENARIOS', component: ScenariosPanel },
   nodes: { title: 'NODES', component: NodesPanel },
+  inspector: { title: 'STATE INSPECTOR', component: InspectorPanel },
   session: { title: 'SESSION', component: SessionPanel },
 }
 

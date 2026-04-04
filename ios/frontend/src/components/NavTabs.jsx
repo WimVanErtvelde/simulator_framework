@@ -13,6 +13,7 @@ const TABS = [
   { id: 'scenarios', icon: '▤',  label: 'SCEN' },
   null, // divider
   { id: 'nodes',     icon: '⬡',  label: 'NODE' },
+  { id: 'inspector', icon: '⟐',  label: 'DBG' },
   { id: 'session',   icon: '◌',  label: 'SESS' },
 ]
 

@@ -2491,3 +2491,19 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - REASON: Architecture audit findings reviewed against current code. All were either fixed during
   prior implementation or are intentional design choices.
 - AFFECTS: bugs.md updated. No source code changes.
+
+## 2026-04-04 — Claude Chat
+
+### State inspector panel design (Phase 1 read-only)
+
+- DECIDED: Add "DBG" tab to IOS nav column. InspectorPanel.jsx renders a live collapsible
+  tree of all WebSocket state messages from useSimStore. Search/filter at top. No backend
+  changes — pure frontend read.
+- DECIDED: Phase 2 (not built): DebugOverride.msg for admin-level value overrides from IOS.
+  Topic /sim/debug/override. Nodes opt in by subscribing and mapping property_path to existing
+  internal override APIs (electrical applyFailureEffect, fuel setTankQuantity, FMA set_property).
+  Inspector UI shows editable fields with amber highlight on active overrides.
+- REASON: Primary debug tool for daily development and QTG tuning. Replaces terminal
+  ros2 topic echo. Phase 2 deferred until use cases prove which values need editing most.
+- AFFECTS: NavTabs.jsx (new tab), SidePanel.jsx (new mapping), InspectorPanel.jsx (new
+  component). No backend changes.
