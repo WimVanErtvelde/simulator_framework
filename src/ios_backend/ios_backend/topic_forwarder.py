@@ -154,15 +154,20 @@ class TopicForwarder:
             except Exception:
                 pass  # Don't crash on serialization failure
 
-        # Transient local for capability-style topics
+        # BEST_EFFORT is universally compatible: receives from both best-effort
+        # (e.g. /clock) and reliable publishers. Read-only inspector needs no
+        # delivery guarantee.
         if 'capabilities' in topic_path:
             qos = QoSProfile(
                 depth=1,
+                reliability=ReliabilityPolicy.BEST_EFFORT,
                 durability=DurabilityPolicy.TRANSIENT_LOCAL,
-                reliability=ReliabilityPolicy.RELIABLE,
             )
         else:
-            qos = 10
+            qos = QoSProfile(
+                depth=1,
+                reliability=ReliabilityPolicy.BEST_EFFORT,
+            )
 
         sub = self._node.create_subscription(msg_class, topic_path, callback, qos)
         self._subscriptions[topic_path] = sub
