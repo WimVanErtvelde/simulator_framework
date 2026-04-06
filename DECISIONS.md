@@ -2507,3 +2507,23 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
   ros2 topic echo. Phase 2 deferred until use cases prove which values need editing most.
 - AFFECTS: NavTabs.jsx (new tab), SidePanel.jsx (new mapping), InspectorPanel.jsx (new
   component). No backend changes.
+
+## 2026-04-06 — Claude Code
+
+### Generic topic forwarder (Phase 2a backend)
+
+- DECIDED: TopicForwarder class in ios_backend dynamically discovers and subscribes to all
+  active ROS2 topics with known message types. Forwards raw SI values (no conversion) as
+  `topic_tree` and `topic_update` WS messages alongside existing hand-coded callbacks.
+  Existing IOS panels continue working unchanged — forwarder runs in parallel.
+- DECIDED: 5 Hz throttle per topic to prevent WS flooding. topic_tree metadata sent every 3s.
+  topic_update values sent every 200ms. Own published topics excluded (no echo).
+  Transient-local QoS for capabilities topics. Stale subscription cleanup on node death.
+- DECIDED: message_to_ordereddict (rosidl_runtime_py) for generic serialization.
+  _deep_convert handles numpy→native Python for JSON. Known types built from sim_msgs.msg
+  introspection + std_msgs + rosgraph_msgs.
+- REASON: Enables Phase 2b frontend (InspectorPanel) to show ALL topics with raw values,
+  not just the subset forwarded by hand-coded callbacks. Replaces ros2 topic echo for
+  real-time debugging.
+- AFFECTS: topic_forwarder.py (new), ios_backend_node.py (import + instantiate forwarder,
+  discovery in refresh_graph, topic_tree/topic_update in sender loop).

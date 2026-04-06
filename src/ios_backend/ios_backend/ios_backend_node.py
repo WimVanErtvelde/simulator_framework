@@ -56,6 +56,8 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import JSONResponse
 import uvicorn
 
+from .topic_forwarder import TopicForwarder
+
 
 
 
@@ -181,6 +183,9 @@ class IosBackendNode(Node):
         self._load_fuel_config('c172')
         self._load_failures_config('c172')
         self._load_electrical_config('c172')
+
+        # Generic topic forwarder for State Inspector (raw SI values)
+        self._forwarder = TopicForwarder(self)
 
         self.get_logger().info('ios_backend started — ws://0.0.0.0:8080/ws')
 
@@ -1062,6 +1067,8 @@ async def refresh_graph():
                                 'source': 'graph',
                                 'in_graph': True,
                             }
+                # Topic forwarder discovery (runs alongside graph query)
+                ros_node._forwarder.discover()
             except Exception as e:
                 if ros_node:
                     ros_node.get_logger().debug(f'[graph] query failed: {e}')
@@ -1365,6 +1372,29 @@ async def websocket_endpoint(websocket: WebSocket):
                         await websocket.send_text(encoded)
                         prev_json[key] = encoded
                         last_send[key] = now
+
+                # Topic forwarder: topic_tree (every 3s) + topic_update (every cycle)
+                if ros_node and hasattr(ros_node, '_forwarder'):
+                    # topic_tree metadata — lightweight, every 3s
+                    if now - last_send.get('_topic_tree', 0) >= 3.0:
+                        tree = ros_node._forwarder.get_topic_tree()
+                        if tree:
+                            tree_msg = _dumps({'type': 'topic_tree', 'topics': tree})
+                            if prev_json.get('_topic_tree') != tree_msg:
+                                await websocket.send_text(tree_msg)
+                                prev_json['_topic_tree'] = tree_msg
+                            last_send['_topic_tree'] = now
+
+                    # topic_update — raw SI values, every 200ms
+                    if now - last_send.get('_topic_update', 0) >= 0.2:
+                        values = ros_node._forwarder.get_all_values()
+                        if values:
+                            update_msg = _dumps({'type': 'topic_update', 'topics': values})
+                            if prev_json.get('_topic_update') != update_msg:
+                                await websocket.send_text(update_msg)
+                                prev_json['_topic_update'] = update_msg
+                            last_send['_topic_update'] = now
+
                 await asyncio.sleep(0.05)
             except Exception as e:
                 if ros_node:
