@@ -186,6 +186,10 @@ export const useSimStore = create((set, get) => ({
   track: [],
   trackMaxPoints: 10000,
 
+  // Topic forwarder (raw ROS2 topics for State Inspector)
+  topicTree: {},       // { "/aircraft/fdm/state": { type: "...", has_data: true }, ... }
+  topicValues: {},     // { "/aircraft/fdm/state": { latitude_deg: 50.9, ... }, ... }
+
   // UI
   activeTab: 'map',
   sidePanelOpen: false,
@@ -736,6 +740,14 @@ export const useSimStore = create((set, get) => ({
               armedFailures: msg.armed ?? s.armedFailures,
               activeFailures: msg.active ?? s.activeFailures,
             })
+            break
+
+          case 'topic_tree':
+            set({ topicTree: msg.topics ?? {} })
+            break
+
+          case 'topic_update':
+            set({ topicValues: msg.topics ?? {} })
             break
         }
       } catch (e) {

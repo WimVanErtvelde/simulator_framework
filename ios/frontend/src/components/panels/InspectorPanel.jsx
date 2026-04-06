@@ -2,24 +2,25 @@ import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useSimStore } from '../../store/useSimStore'
 import { useShallow } from 'zustand/react/shallow'
 
-const STATE_GROUPS = [
-  { key: 'simState',    label: 'sim_state',         defaultOpen: true,  scalar: true },
-  { key: 'fdm',         label: 'fdm_state',         defaultOpen: true },
-  { key: 'electrical',  label: 'electrical_state',   defaultOpen: false },
-  { key: 'fuel',        label: 'fuel_state',         defaultOpen: false },
-  { key: 'engines',     label: 'engine_state',       defaultOpen: false },
-  { key: 'airData',     label: 'air_data_state',     defaultOpen: false },
-  { key: 'nav',         label: 'nav_state',          defaultOpen: false },
-  { key: 'gear',        label: 'gear_state',         defaultOpen: false },
-  { key: 'arbitration', label: 'arbitration_state',  defaultOpen: false },
+// Fixed root order
+const ROOTS = [
+  { prefix: '/world',    label: '/world' },
+  { prefix: '/aircraft', label: '/aircraft' },
+  { prefix: '/sim',      label: '/sim' },
+  { prefix: '/clock',    label: '/clock' },
 ]
 
+// Topics expanded by default
+const DEFAULT_OPEN = new Set([
+  '/aircraft/fdm/state',
+  '/sim/state',
+])
+
 export default function InspectorPanel() {
-  const state = useSimStore(useShallow(s => {
-    const out = {}
-    for (const g of STATE_GROUPS) out[g.key] = s[g.key]
-    return out
-  }))
+  const { topicTree, topicValues } = useSimStore(useShallow(s => ({
+    topicTree: s.topicTree,
+    topicValues: s.topicValues,
+  })))
 
   const [rawFilter, setRawFilter] = useState('')
   const [filter, setFilter] = useState('')
@@ -40,6 +41,11 @@ export default function InspectorPanel() {
 
   useEffect(() => () => clearTimeout(timerRef.current), [])
 
+  // Build nested tree from flat topic paths
+  const tree = useMemo(() => buildTree(topicTree, topicValues), [topicTree, topicValues])
+
+  const isEmpty = Object.keys(topicTree).length === 0
+
   return (
     <div style={{ fontFamily: 'monospace', fontSize: 12 }}>
       {/* Search bar */}
@@ -47,7 +53,7 @@ export default function InspectorPanel() {
         <input
           value={rawFilter}
           onChange={onFilterChange}
-          placeholder="Filter fields..."
+          placeholder="Filter topics and fields..."
           style={{
             width: '100%', boxSizing: 'border-box',
             padding: '8px 28px 8px 10px',
@@ -65,70 +71,211 @@ export default function InspectorPanel() {
         )}
       </div>
 
-      {STATE_GROUPS.map((g, i) => (
-        <div key={g.key}>
-          {i > 0 && <div style={{ height: 1, background: '#1e293b', margin: '4px 0' }} />}
-          <TreeRoot
-            label={g.label}
-            data={g.scalar ? { value: state[g.key] } : state[g.key]}
-            defaultOpen={g.defaultOpen}
-            filter={filter}
-            scalar={g.scalar}
-          />
+      {isEmpty && (
+        <div style={{ color: '#64748b', textAlign: 'center', padding: '32px 0', animation: 'pulse 2s ease-in-out infinite' }}>
+          Waiting for topic discovery...
+          <style>{`@keyframes pulse { 0%,100% { opacity: 0.5 } 50% { opacity: 1 } }`}</style>
         </div>
-      ))}
+      )}
+
+      {!isEmpty && ROOTS.map((root, i) => {
+        const subtree = tree[root.prefix]
+        if (!subtree) return null
+        return (
+          <div key={root.prefix}>
+            {i > 0 && <div style={{ height: 1, background: '#1e293b', margin: '4px 0' }} />}
+            <NamespaceNode
+              segment={root.label}
+              fullPath={root.prefix}
+              node={subtree}
+              depth={0}
+              filter={filter}
+              defaultOpen={true}
+            />
+          </div>
+        )
+      })}
     </div>
   )
 }
 
-function TreeRoot({ label, data, defaultOpen, filter, scalar }) {
-  const [open, setOpen] = useState(defaultOpen)
+// ─── Tree Builder ───────────────────────────────────────────────────
+
+function buildTree(topicTree, topicValues) {
+  const root = {}
+  for (const [topicPath, meta] of Object.entries(topicTree)) {
+    // Split "/aircraft/fdm/state" → ["", "aircraft", "fdm", "state"]
+    const parts = topicPath.split('/')
+    let cursor = root
+
+    // Build path one segment at a time, using "/" prefix keys
+    for (let i = 1; i < parts.length; i++) {
+      const key = '/' + parts[i]
+      // Last segment → topic leaf
+      if (i === parts.length - 1) {
+        cursor[key] = {
+          _meta: meta,
+          _data: topicValues[topicPath] ?? null,
+          _path: topicPath,
+        }
+      } else {
+        if (!cursor[key] || cursor[key]._meta) {
+          // Don't overwrite a leaf with a namespace
+          if (!cursor[key] || cursor[key]._meta) cursor[key] = cursor[key] ? { ...cursor[key] } : {}
+        }
+        cursor = cursor[key]
+      }
+    }
+  }
+  return root
+}
+
+// ─── Namespace Node (recursive) ─────────────────────────────────────
+
+function NamespaceNode({ segment, fullPath, node, depth, filter, defaultOpen }) {
+  const [open, setOpen] = useState(defaultOpen ?? false)
   const forceOpen = filter.length > 0
 
-  const keyCount = data && typeof data === 'object' ? Object.keys(data).length : 0
-  const hasData = data != null && (typeof data !== 'object' || keyCount > 0)
+  // If this node has _meta, it's a topic leaf
+  if (node._meta) {
+    return <TopicLeaf
+      segment={segment}
+      fullPath={node._path || fullPath}
+      meta={node._meta}
+      data={node._data}
+      depth={depth}
+      filter={filter}
+    />
+  }
+
+  // Namespace group — collect children
+  const children = Object.entries(node).filter(([k]) => k.startsWith('/'))
+  const topicCount = countTopics(node)
 
   const matchesFilter = useMemo(() => {
     if (!filter) return true
-    return hasData && matchesDeep(label, data, filter)
-  }, [filter, label, data, hasData])
+    if (fullPath.toLowerCase().includes(filter)) return true
+    return children.some(([k, v]) => nodeMatchesFilter(fullPath + k, v, filter))
+  }, [filter, fullPath, children])
 
   if (filter && !matchesFilter) return null
 
   const isOpen = forceOpen || open
 
   return (
-    <div>
+    <div style={{ paddingLeft: depth > 0 ? 16 : 0 }}>
       <div
         onClick={() => setOpen(o => !o)}
         style={{
-          display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
-          padding: '4px 0', userSelect: 'none',
+          display: 'flex', alignItems: 'center', gap: 6,
+          cursor: 'pointer', padding: '3px 0', userSelect: 'none',
         }}
       >
         <span style={{ color: '#64748b', fontSize: 10, width: 12, textAlign: 'center' }}>
           {isOpen ? '▼' : '▶'}
         </span>
-        <span style={{ color: '#39d0d8', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1 }}>
-          {label}
+        <span style={{ color: '#39d0d8', fontSize: 11, fontWeight: 700 }}>
+          {segment}
         </span>
         <span style={{ color: '#64748b', fontSize: 10 }}>
-          {hasData ? (scalar ? '' : `(${keyCount})`) : '(no data)'}
+          ({topicCount})
         </span>
       </div>
-      {isOpen && hasData && (
-        <div style={{ paddingLeft: 12 }}>
-          {scalar
-            ? <ValueDisplay value={data.value} />
-            : Object.entries(data).map(([k, v]) => (
-                <TreeNode key={k} path={k} name={k} value={v} filter={filter} depth={0} />
+      {isOpen && children
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, child]) => (
+          <NamespaceNode
+            key={key}
+            segment={key}
+            fullPath={fullPath + key}
+            node={child}
+            depth={depth + 1}
+            filter={filter}
+            defaultOpen={DEFAULT_OPEN.has((child._path || fullPath + key))}
+          />
+        ))
+      }
+    </div>
+  )
+}
+
+function countTopics(node) {
+  if (node._meta) return 1
+  let count = 0
+  for (const [k, v] of Object.entries(node)) {
+    if (k.startsWith('/')) count += countTopics(v)
+  }
+  return count
+}
+
+function nodeMatchesFilter(path, node, filter) {
+  if (path.toLowerCase().includes(filter)) return true
+  if (node._meta) {
+    if (node._meta.type?.toLowerCase().includes(filter)) return true
+    if (node._data) return matchesDeep(path, node._data, filter)
+    return false
+  }
+  return Object.entries(node).some(([k, v]) => k.startsWith('/') && nodeMatchesFilter(path + k, v, filter))
+}
+
+// ─── Topic Leaf ─────────────────────────────────────────────────────
+
+function TopicLeaf({ segment, fullPath, meta, data, depth, filter }) {
+  const [open, setOpen] = useState(DEFAULT_OPEN.has(fullPath))
+  const forceOpen = filter.length > 0
+
+  const typeName = meta.type?.split('/').pop() || meta.type || ''
+
+  const matchesFilter = useMemo(() => {
+    if (!filter) return true
+    if (fullPath.toLowerCase().includes(filter)) return true
+    if (typeName.toLowerCase().includes(filter)) return true
+    if (data) return matchesDeep(fullPath, data, filter)
+    return false
+  }, [filter, fullPath, typeName, data])
+
+  if (filter && !matchesFilter) return null
+
+  const isOpen = forceOpen || open
+
+  return (
+    <div style={{ paddingLeft: depth > 0 ? 16 : 0 }}>
+      <div
+        onClick={() => setOpen(o => !o)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          cursor: 'pointer', padding: '3px 0', userSelect: 'none',
+        }}
+      >
+        <span style={{ color: '#64748b', fontSize: 10, width: 12, textAlign: 'center' }}>
+          {isOpen ? '▼' : '▶'}
+        </span>
+        <span style={{ color: '#e2e8f0', fontSize: 12 }}>
+          {segment}
+        </span>
+        <span style={{ color: '#475569', fontSize: 10 }}>
+          {typeName}
+        </span>
+        <span style={{
+          width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+          background: meta.has_data ? '#00ff88' : '#334155',
+        }} />
+      </div>
+      {isOpen && (
+        <div style={{ paddingLeft: 20 }}>
+          {data
+            ? Object.entries(data).map(([k, v]) => (
+                <TreeNode key={k} path={`${fullPath}.${k}`} name={k} value={v} filter={filter} depth={0} />
               ))
+            : <span style={{ color: '#64748b', fontStyle: 'italic' }}>(awaiting first message)</span>
           }
         </div>
       )}
     </div>
   )
 }
+
+// ─── Recursive Value Renderer (reused from Phase 1) ─────────────────
 
 function TreeNode({ path, name, value, filter, depth }) {
   const [open, setOpen] = useState(false)
@@ -148,10 +295,9 @@ function TreeNode({ path, name, value, filter, depth }) {
   const pad = depth * 16
   const isOpen = forceOpen || open
 
-  // Leaf: primitive or short numeric array
   if (!isObject && !isArray) {
     return (
-      <div style={{ display: 'flex', gap: 8, paddingLeft: pad, padding: '1px 0 1px ' + pad + 'px', alignItems: 'baseline' }}>
+      <div style={{ display: 'flex', gap: 8, padding: `1px 0 1px ${pad}px`, alignItems: 'baseline' }}>
         <span style={{ color: '#94a3b8', flexShrink: 0 }}>{name}:</span>
         {isNumericArray
           ? <span style={{ color: '#e2e8f0' }}>[{value.map(formatNum).join(', ')}]</span>
@@ -161,7 +307,6 @@ function TreeNode({ path, name, value, filter, depth }) {
     )
   }
 
-  // Array of non-numbers or long array
   if (isArray) {
     return (
       <div style={{ paddingLeft: pad }}>
@@ -177,7 +322,6 @@ function TreeNode({ path, name, value, filter, depth }) {
     )
   }
 
-  // Object: collapsible group
   const entries = Object.entries(value)
   return (
     <div style={{ paddingLeft: pad }}>

@@ -2527,3 +2527,18 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
   real-time debugging.
 - AFFECTS: topic_forwarder.py (new), ios_backend_node.py (import + instantiate forwarder,
   discovery in refresh_graph, topic_tree/topic_update in sender loop).
+
+## 2026-04-06 — Claude Code
+
+### Topic tree inspector frontend (Phase 2b)
+
+- DECIDED: InspectorPanel rewritten from flat 9-group store view to full ROS2 namespace tree.
+  Consumes topic_tree and topic_update WS messages from TopicForwarder. Tree organized by
+  three-root namespace (/world/, /aircraft/, /sim/) plus /clock. Topics show message type
+  badge and green/grey data indicator dot.
+- DECIDED: useSimStore gains topicTree and topicValues state fields, with handlers for the
+  two new WS message types. Independent of existing state — no interaction with old panels.
+- REASON: Phase 2b of generic topic forwarder. Inspector now shows all active ROS2 topics
+  with raw SI values, not just the hand-coded subset.
+- AFFECTS: useSimStore.js (new state + handlers), InspectorPanel.jsx (rewritten).
+  No backend changes, no other panel changes.
