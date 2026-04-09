@@ -99,6 +99,12 @@
 - FIX: In updateBatterySoc(), capture max voltage from charging source. Update
   battery terminal voltage to charging voltage minus IR drop. Post-charge one-hop
   re-propagation updates hot_batt_bus.
+- BUG #12c: updateSources() overwrites charging voltage every frame. The charging
+  voltage set by updateBatterySoc() only survived one frame before updateSources()
+  clobbered it with OCV on the next step().
+- FIX: Added charging_voltage to NodeState. updateBatterySoc() sets it when charge
+  path active, clears when not. updateSources() uses charging_voltage instead of
+  OCV when non-zero.
 
 ## Open
 

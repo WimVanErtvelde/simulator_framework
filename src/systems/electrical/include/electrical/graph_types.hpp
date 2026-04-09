@@ -102,6 +102,7 @@ struct NodeState {
     double battery_soc = -1.0;
     bool gcu_tripped = false;
     double gcu_trip_timer = 0.0;
+    double charging_voltage = 0.0;  // set by updateBatterySoc, 0 = not charging
 
 };
 

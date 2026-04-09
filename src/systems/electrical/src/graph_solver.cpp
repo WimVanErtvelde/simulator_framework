@@ -440,9 +440,13 @@ void GraphSolver::updateSources(double dt) {
         } else if (sp.subtype == "battery") {
             ns.online = true;
             if (sp.battery) {
-                double ocv = interpolateSocVoltage(*sp.battery, ns.battery_soc);
-                double load_current = ns.current; // from previous frame
-                ns.voltage = std::max(0.0, ocv - load_current * sp.battery->internal_resistance_ohm);
+                if (ns.charging_voltage > 0.0) {
+                    ns.voltage = ns.charging_voltage;
+                } else {
+                    double ocv = interpolateSocVoltage(*sp.battery, ns.battery_soc);
+                    double load_current = ns.current; // from previous frame
+                    ns.voltage = std::max(0.0, ocv - load_current * sp.battery->internal_resistance_ohm);
+                }
             } else {
                 ns.voltage = sp.nominal_voltage * (0.8 + 0.2 * (ns.battery_soc / 100.0));
             }
@@ -608,8 +612,9 @@ void GraphSolver::updateBatterySoc(double dt) {
                                               (100.0 - ns.battery_soc) * 0.5);
                 double soc_gain = (charge_rate * dt) / (bp.capacity_ah * 3600.0) * 100.0;
                 ns.battery_soc = std::min(100.0, ns.battery_soc + soc_gain);
-                // Terminal voltage reflects imposed charging voltage minus IR drop
-                ns.voltage = charge_voltage - (bp.internal_resistance_ohm * charge_rate);
+                ns.charging_voltage = charge_voltage - (bp.internal_resistance_ohm * charge_rate);
+            } else {
+                ns.charging_voltage = 0.0;
             }
         }
     }
