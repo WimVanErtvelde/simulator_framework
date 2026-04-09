@@ -74,6 +74,16 @@
   B) input_arbitrator: discard VIRTUAL/HARDWARE input for switches/selectors where ctrl.forced == true
   C) input_arbitrator: on FORCE release, copy force_value into virtual_value and hardware_value
 
+### Bug #11: CB only pops when a switch is toggled afterward
+- SwitchControlState.virtual_value defaults to false. When pilot pulls a CB (sends false)
+  for the first time, change detection (virtual_value != state) evaluates false != false
+  → no change → publish_effective_panel() never runs. CB command stored but only reaches
+  electrical_node when a subsequent switch toggle triggers a publish.
+- ROOT CAUSE: Missing first-input detection. Arbitrator compares against uninitialized
+  default instead of recognizing has_virtual false→true as itself a change.
+- FIX: Set changed=true when has_virtual or has_hardware transitions false→true (first
+  input from that source). Applies to both switch and selector branches.
+
 ## Open
 
 (none)

@@ -486,10 +486,12 @@ private:
         // Discard VIRTUAL/HARDWARE input when switch is forced by instructor
         bool state = msg.switch_states[i];
         if (source == SOURCE_VIRTUAL) {
+          if (!ctrl.has_virtual) changed = true;  // first input ever
           ctrl.has_virtual = true;
           if (ctrl.virtual_value != state) changed = true;
           ctrl.virtual_value = state;
         } else if (source == SOURCE_HARDWARE) {
+          if (!ctrl.has_hardware) changed = true;  // first input ever
           ctrl.has_hardware = true;
           if (ctrl.hardware_value != state) changed = true;
           ctrl.hardware_value = state;
@@ -523,10 +525,12 @@ private:
         // Discard VIRTUAL/HARDWARE input when selector is forced by instructor
         int32_t val = msg.selector_values[i];
         if (source == SOURCE_VIRTUAL) {
+          if (!ctrl.has_virtual) changed = true;  // first input ever
           ctrl.has_virtual = true;
           if (ctrl.virtual_value != val) changed = true;
           ctrl.virtual_value = val;
         } else if (source == SOURCE_HARDWARE) {
+          if (!ctrl.has_hardware) changed = true;  // first input ever
           ctrl.has_hardware = true;
           if (ctrl.hardware_value != val) changed = true;
           ctrl.hardware_value = val;
