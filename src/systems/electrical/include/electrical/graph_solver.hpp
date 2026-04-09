@@ -89,9 +89,6 @@ private:
 
     std::vector<CasMessage> active_cas_;
     double sim_time_ = 0.0;
-
-    // Battery charging voltages detected from previous frame (set at top of step)
-    std::unordered_map<std::string, double> battery_charge_voltages_;
 };
 
 } // namespace elec_graph

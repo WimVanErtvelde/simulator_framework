@@ -352,7 +352,6 @@ void GraphSolver::step(double dt) {
     // updateSources has applied failure overrides (so offline sources are
     // already offline and won't contribute stale voltage to the BFS).
     // Then re-set battery voltage if charging detected, before propagate.
-    battery_charge_voltages_.clear();
     if (!adjacency_.empty() && !node_states_.empty()) {
         for (auto& node : topology_.nodes) {
             if (node.type != NodeType::source || !node.source || !node.source->battery) continue;
@@ -363,7 +362,6 @@ void GraphSolver::step(double dt) {
                 double charge_rate = std::min(bp.charge_rate_max,
                                               (100.0 - ns.battery_soc) * 0.5);
                 ns.voltage = cv - (bp.internal_resistance_ohm * charge_rate);
-                battery_charge_voltages_[node.id] = ns.voltage;
             }
         }
     }
