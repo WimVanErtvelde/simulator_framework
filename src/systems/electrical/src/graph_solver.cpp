@@ -356,27 +356,6 @@ void GraphSolver::step(double dt) {
 
     updateLoads(dt);
     updateBatterySoc(dt);
-
-    // Post-charge voltage propagation: push updated battery voltage to direct downstream
-    for (auto& node : topology_.nodes) {
-        if (node.type != NodeType::source || !node.source || !node.source->battery) continue;
-        auto& ns = node_states_[node.id];
-        if (ns.battery_soc < 0) continue;
-        auto batt_it = node_index_.find(node.id);
-        if (batt_it == node_index_.end()) continue;
-        for (auto& [ci, neighbor_idx] : adjacency_[batt_it->second]) {
-            auto& conn = topology_.connections[ci];
-            auto& cs = conn_states_[conn.id];
-            if (!isPassable(conn.type, cs)) continue;
-            auto& nns = node_states_[topology_.nodes[neighbor_idx].id];
-            if (ns.voltage > nns.voltage) {
-                nns.voltage = ns.voltage;
-                nns.power_source = node.id;
-                nns.powered = true;
-            }
-        }
-    }
-
     evaluateCas();
 
     sim_time_ += dt;
@@ -440,13 +419,9 @@ void GraphSolver::updateSources(double dt) {
         } else if (sp.subtype == "battery") {
             ns.online = true;
             if (sp.battery) {
-                if (ns.charging_voltage > 0.0) {
-                    ns.voltage = ns.charging_voltage;
-                } else {
-                    double ocv = interpolateSocVoltage(*sp.battery, ns.battery_soc);
-                    double load_current = ns.current; // from previous frame
-                    ns.voltage = std::max(0.0, ocv - load_current * sp.battery->internal_resistance_ohm);
-                }
+                double ocv = interpolateSocVoltage(*sp.battery, ns.battery_soc);
+                double load_current = ns.current; // from previous frame
+                ns.voltage = std::max(0.0, ocv - load_current * sp.battery->internal_resistance_ohm);
             } else {
                 ns.voltage = sp.nominal_voltage * (0.8 + 0.2 * (ns.battery_soc / 100.0));
             }
@@ -612,9 +587,7 @@ void GraphSolver::updateBatterySoc(double dt) {
                                               (100.0 - ns.battery_soc) * 0.5);
                 double soc_gain = (charge_rate * dt) / (bp.capacity_ah * 3600.0) * 100.0;
                 ns.battery_soc = std::min(100.0, ns.battery_soc + soc_gain);
-                ns.charging_voltage = charge_voltage - (bp.internal_resistance_ohm * charge_rate);
-            } else {
-                ns.charging_voltage = 0.0;
+                ns.voltage = charge_voltage - (bp.internal_resistance_ohm * charge_rate);
             }
         }
     }
