@@ -84,6 +84,15 @@
 - FIX: Set changed=true when has_virtual or has_hardware transitions false→true (first
   input from that source). Applies to both switch and selector branches.
 
+### Bug #12: Battery never charges when alternator is online
+- updateBatterySoc() only checked one-hop connections from battery node.
+  Topology: battery → hot_batt_bus → sw_battery → primary_bus. hot_batt_bus
+  has power_source=="battery" so charge condition never fired. Alternator-powered
+  primary_bus was two hops away and unreachable.
+- FIX: Replace one-hop neighbor check with mini-BFS from battery through passable
+  connections. If any reachable node is powered by a non-battery source, charge.
+  Respects sw_battery state (master off → no charge path → no charge).
+
 ## Open
 
 (none)

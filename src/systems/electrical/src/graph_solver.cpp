@@ -556,21 +556,36 @@ void GraphSolver::updateBatterySoc(double dt) {
             double soc_drain = (total_current * dt) / (bp.capacity_ah * 3600.0) * 100.0;
             ns.battery_soc = std::max(0.0, ns.battery_soc - soc_drain);
         } else {
-            // Charge: if connected to a bus powered by another source
-            for (auto& conn : topology_.connections) {
-                if (conn.from != node.id) continue;
-                auto& cs = conn_states_[conn.id];
-                if (!isPassable(conn.type, cs)) continue;
-
-                auto to_it = node_states_.find(conn.to);
-                if (to_it != node_states_.end() && to_it->second.powered &&
-                    to_it->second.power_source != node.id) {
-                    double charge_rate = std::min(bp.charge_rate_max,
-                                                  (100.0 - ns.battery_soc) * 0.5);
-                    double soc_gain = (charge_rate * dt) / (bp.capacity_ah * 3600.0) * 100.0;
-                    ns.battery_soc = std::min(100.0, ns.battery_soc + soc_gain);
-                    break;
+            // Charge: BFS from battery — if any reachable node is powered by another source
+            bool can_charge = false;
+            std::unordered_set<size_t> visited;
+            std::queue<size_t> cq;
+            auto batt_it = node_index_.find(node.id);
+            if (batt_it != node_index_.end()) {
+                cq.push(batt_it->second);
+                visited.insert(batt_it->second);
+                while (!cq.empty() && !can_charge) {
+                    size_t ni = cq.front(); cq.pop();
+                    for (auto& [ci, neighbor_idx] : adjacency_[ni]) {
+                        if (visited.count(neighbor_idx)) continue;
+                        auto& conn = topology_.connections[ci];
+                        auto& cs = conn_states_[conn.id];
+                        if (!isPassable(conn.type, cs)) continue;
+                        visited.insert(neighbor_idx);
+                        auto& nns = node_states_[topology_.nodes[neighbor_idx].id];
+                        if (nns.powered && nns.power_source != node.id) {
+                            can_charge = true;
+                            break;
+                        }
+                        cq.push(neighbor_idx);
+                    }
                 }
+            }
+            if (can_charge) {
+                double charge_rate = std::min(bp.charge_rate_max,
+                                              (100.0 - ns.battery_soc) * 0.5);
+                double soc_gain = (charge_rate * dt) / (bp.capacity_ah * 3600.0) * 100.0;
+                ns.battery_soc = std::min(100.0, ns.battery_soc + soc_gain);
             }
         }
     }
