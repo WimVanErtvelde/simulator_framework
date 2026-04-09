@@ -356,6 +356,27 @@ void GraphSolver::step(double dt) {
 
     updateLoads(dt);
     updateBatterySoc(dt);
+
+    // Post-charge voltage propagation: push updated battery voltage to direct downstream
+    for (auto& node : topology_.nodes) {
+        if (node.type != NodeType::source || !node.source || !node.source->battery) continue;
+        auto& ns = node_states_[node.id];
+        if (ns.battery_soc < 0) continue;
+        auto batt_it = node_index_.find(node.id);
+        if (batt_it == node_index_.end()) continue;
+        for (auto& [ci, neighbor_idx] : adjacency_[batt_it->second]) {
+            auto& conn = topology_.connections[ci];
+            auto& cs = conn_states_[conn.id];
+            if (!isPassable(conn.type, cs)) continue;
+            auto& nns = node_states_[topology_.nodes[neighbor_idx].id];
+            if (ns.voltage > nns.voltage) {
+                nns.voltage = ns.voltage;
+                nns.power_source = node.id;
+                nns.powered = true;
+            }
+        }
+    }
+
     evaluateCas();
 
     sim_time_ += dt;
@@ -556,15 +577,16 @@ void GraphSolver::updateBatterySoc(double dt) {
             double soc_drain = (total_current * dt) / (bp.capacity_ah * 3600.0) * 100.0;
             ns.battery_soc = std::max(0.0, ns.battery_soc - soc_drain);
         } else {
-            // Charge: BFS from battery — if any reachable node is powered by another source
+            // Charge: BFS from battery — find max voltage from any reachable non-battery source
             bool can_charge = false;
+            double charge_voltage = 0.0;
             std::unordered_set<size_t> visited;
             std::queue<size_t> cq;
             auto batt_it = node_index_.find(node.id);
             if (batt_it != node_index_.end()) {
                 cq.push(batt_it->second);
                 visited.insert(batt_it->second);
-                while (!cq.empty() && !can_charge) {
+                while (!cq.empty()) {
                     size_t ni = cq.front(); cq.pop();
                     for (auto& [ci, neighbor_idx] : adjacency_[ni]) {
                         if (visited.count(neighbor_idx)) continue;
@@ -575,7 +597,7 @@ void GraphSolver::updateBatterySoc(double dt) {
                         auto& nns = node_states_[topology_.nodes[neighbor_idx].id];
                         if (nns.powered && nns.power_source != node.id) {
                             can_charge = true;
-                            break;
+                            charge_voltage = std::max(charge_voltage, nns.voltage);
                         }
                         cq.push(neighbor_idx);
                     }
@@ -586,6 +608,8 @@ void GraphSolver::updateBatterySoc(double dt) {
                                               (100.0 - ns.battery_soc) * 0.5);
                 double soc_gain = (charge_rate * dt) / (bp.capacity_ah * 3600.0) * 100.0;
                 ns.battery_soc = std::min(100.0, ns.battery_soc + soc_gain);
+                // Terminal voltage reflects imposed charging voltage minus IR drop
+                ns.voltage = charge_voltage - (bp.internal_resistance_ohm * charge_rate);
             }
         }
     }

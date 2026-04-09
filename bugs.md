@@ -92,6 +92,13 @@
 - FIX: Replace one-hop neighbor check with mini-BFS from battery through passable
   connections. If any reachable node is powered by a non-battery source, charge.
   Respects sw_battery state (master off → no charge path → no charge).
+- BUG #12b: Battery terminal voltage not updated during charging. updateSources()
+  sets voltage from OCV only. When alternator is online and charging, battery
+  terminal voltage should reflect the imposed charging voltage (~28V), not OCV (~24V).
+  hot_batt_bus inherits the wrong voltage from BFS.
+- FIX: In updateBatterySoc(), capture max voltage from charging source. Update
+  battery terminal voltage to charging voltage minus IR drop. Post-charge one-hop
+  re-propagation updates hot_batt_bus.
 
 ## Open
 
