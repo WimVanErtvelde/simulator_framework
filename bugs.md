@@ -102,9 +102,17 @@
 - BUG #12c: updateSources() overwrites charging voltage every frame. The charging
   voltage set by updateBatterySoc() only survived one frame before updateSources()
   clobbered it with OCV on the next step().
-- FIX: Added charging_voltage to NodeState. updateBatterySoc() sets it when charge
-  path active, clears when not. updateSources() uses charging_voltage instead of
-  OCV when non-zero.
+- FIX (reverted): Added charging_voltage to NodeState — broke buses (zero voltages).
+- BUG #12c (take 2): Previous fix stored persistent state in NodeState, causing
+  initialization ordering issues. New approach: detectChargingVoltage() helper reads
+  previous frame's propagation results AFTER updateSources() applies failure overrides.
+  If a charging source is found, battery voltage is overridden before propagate() runs.
+  No persistent state in NodeState. Validates charging source is still online to prevent
+  stale voltage from failed sources.
+- FIX: detectChargingVoltage() BFS from battery through passable connections, checks
+  that power_source node is online with voltage > 0. Battery voltage set to charging
+  voltage minus IR drop after updateSources, before propagate. BFS naturally propagates
+  ~28V through hot_batt_bus.
 
 ## Open
 

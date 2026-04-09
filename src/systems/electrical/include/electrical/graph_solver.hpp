@@ -64,6 +64,7 @@ private:
     void evaluateCas();
 
     double interpolateSocVoltage(const BatteryParams& bp, double soc) const;
+    double detectChargingVoltage(const Node& battery_node) const;
     std::string getOverride(const std::string& target, const std::string& property) const;
     bool hasOverride(const std::string& target, const std::string& property) const;
 
@@ -88,6 +89,9 @@ private:
 
     std::vector<CasMessage> active_cas_;
     double sim_time_ = 0.0;
+
+    // Battery charging voltages detected from previous frame (set at top of step)
+    std::unordered_map<std::string, double> battery_charge_voltages_;
 };
 
 } // namespace elec_graph

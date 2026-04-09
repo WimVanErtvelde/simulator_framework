@@ -348,6 +348,24 @@ void GraphSolver::reset() {
 void GraphSolver::step(double dt) {
     updateSources(dt);
 
+    // Detect charging state from previous frame's propagation, but AFTER
+    // updateSources has applied failure overrides (so offline sources are
+    // already offline and won't contribute stale voltage to the BFS).
+    // Then re-set battery voltage if charging detected, before propagate.
+    battery_charge_voltages_.clear();
+    for (auto& node : topology_.nodes) {
+        if (node.type != NodeType::source || !node.source || !node.source->battery) continue;
+        double cv = detectChargingVoltage(node);
+        if (cv > 0.0) {
+            auto& ns = node_states_[node.id];
+            auto& bp = *node.source->battery;
+            double charge_rate = std::min(bp.charge_rate_max,
+                                          (100.0 - ns.battery_soc) * 0.5);
+            ns.voltage = cv - (bp.internal_resistance_ohm * charge_rate);
+            battery_charge_voltages_[node.id] = ns.voltage;
+        }
+    }
+
     for (int pass = 0; pass < topology_.propagation_passes; ++pass) {
         resetAllNodes();
         propagate();
@@ -587,7 +605,6 @@ void GraphSolver::updateBatterySoc(double dt) {
                                               (100.0 - ns.battery_soc) * 0.5);
                 double soc_gain = (charge_rate * dt) / (bp.capacity_ah * 3600.0) * 100.0;
                 ns.battery_soc = std::min(100.0, ns.battery_soc + soc_gain);
-                ns.voltage = charge_voltage - (bp.internal_resistance_ohm * charge_rate);
             }
         }
     }
@@ -764,6 +781,40 @@ std::string GraphSolver::getOverride(const std::string& target, const std::strin
 
 bool GraphSolver::hasOverride(const std::string& target, const std::string& property) const {
     return failure_overrides_.count({target, property}) > 0;
+}
+
+double GraphSolver::detectChargingVoltage(const Node& battery_node) const {
+    // BFS from battery through passable connections. If any reachable node
+    // is powered by a non-battery source, return the max voltage found.
+    auto batt_it = node_index_.find(battery_node.id);
+    if (batt_it == node_index_.end()) return 0.0;
+
+    double max_voltage = 0.0;
+    std::unordered_set<size_t> visited;
+    std::queue<size_t> q;
+    q.push(batt_it->second);
+    visited.insert(batt_it->second);
+
+    while (!q.empty()) {
+        size_t ni = q.front(); q.pop();
+        for (auto& [ci, neighbor_idx] : adjacency_[ni]) {
+            if (visited.count(neighbor_idx)) continue;
+            auto& conn = topology_.connections[ci];
+            auto& cs = conn_states_.at(conn.id);
+            if (!isPassable(conn.type, cs)) continue;
+            visited.insert(neighbor_idx);
+            auto& nns = node_states_.at(topology_.nodes[neighbor_idx].id);
+            if (nns.powered && nns.power_source != battery_node.id) {
+                // Verify the power source is still online (updateSources may have killed it)
+                auto src_it = node_states_.find(nns.power_source);
+                if (src_it != node_states_.end() && src_it->second.online && src_it->second.voltage > 0.0) {
+                    max_voltage = std::max(max_voltage, nns.voltage);
+                }
+            }
+            q.push(neighbor_idx);
+        }
+    }
+    return max_voltage;
 }
 
 } // namespace elec_graph
