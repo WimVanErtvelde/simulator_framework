@@ -66,6 +66,14 @@
 ### Deferred (by design)
 - F3.7: DME HOLD reset on RESETTING — Not a bug. DME HOLD is an avionics-device-specific feature (e.g., KNS-80 panel function), not universal receiver behavior. navigation_node is the aircraft-agnostic receiver layer and should not own avionics device state. When the avionics plugin layer is built, DME HOLD state will migrate there. Stale DME HOLD across sim reset is cosmetic and not training-critical.
 
+### Bug #10: Forced switch remembers pilot click after unlock
+- Pilot clicks on virtual cockpit switches during instructor FORCE were stored in
+  input_arbitrator virtual_value. On FORCE release, stale pilot value took effect.
+- FIX (3 layers):
+  A) Frontend: CockpitElectrical.jsx + C172Panel.jsx guard clicks when forcedSwitchIds includes the switch
+  B) input_arbitrator: discard VIRTUAL/HARDWARE input for switches/selectors where ctrl.forced == true
+  C) input_arbitrator: on FORCE release, copy force_value into virtual_value and hardware_value
+
 ## Open
 
 (none)

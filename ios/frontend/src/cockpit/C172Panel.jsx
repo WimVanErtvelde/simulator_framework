@@ -61,13 +61,17 @@ function sendEngineControls(data) {
 
 
 export default function C172Panel() {
-  const { fdm, airData, nav, electrical, engines, fuel, gear, atmosphere } = useSimStore(useShallow(s => ({
+  const { fdm, airData, nav, electrical, engines, fuel, gear, atmosphere, forcedSwitchIds } = useSimStore(useShallow(s => ({
     fdm: s.fdm, airData: s.airData, nav: s.nav, electrical: s.electrical,
     engines: s.engines, fuel: s.fuel, gear: s.gear, atmosphere: s.atmosphere,
+    forcedSwitchIds: s.forcedSwitchIds ?? [],
   })))
   const { state: kb, setThrottle, setMixture, setMagneto: kbSetMagneto } = useKeyboardControls()
   const [magnetoPos, setMagnetoPos] = useState(0)
   const [fuelSelPos, setFuelSelPos] = useState(0)
+
+  // Guard: skip clicks on forced switches
+  const isForced = (id) => forcedSwitchIds.includes(id)
 
   // Helper to find switch state by ID
   const sw = (id) => {
@@ -96,28 +100,28 @@ export default function C172Panel() {
       <Section title="SWITCHES">
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center', alignItems: 'flex-end' }}>
           <ToggleSwitch label="BATT" on={sw('sw_battery')}
-            onToggle={() => sendVirtualPanel(['sw_battery'], [!sw('sw_battery')])} />
+            onToggle={() => { if (!isForced('sw_battery')) sendVirtualPanel(['sw_battery'], [!sw('sw_battery')]) }} />
           <ToggleSwitch label="ALT" on={sw('sw_alt')}
-            onToggle={() => sendVirtualPanel(['sw_alt'], [!sw('sw_alt')])} />
+            onToggle={() => { if (!isForced('sw_alt')) sendVirtualPanel(['sw_alt'], [!sw('sw_alt')]) }} />
           <ToggleSwitch label="AVIONICS" on={sw('sw_avionics_master')}
-            onToggle={() => sendVirtualPanel(['sw_avionics_master'], [!sw('sw_avionics_master')])} />
+            onToggle={() => { if (!isForced('sw_avionics_master')) sendVirtualPanel(['sw_avionics_master'], [!sw('sw_avionics_master')]) }} />
           <ToggleSwitch label="FUEL PUMP" on={sw('sw_fuel_pump')}
-            onToggle={() => sendVirtualPanel(['sw_fuel_pump'], [!sw('sw_fuel_pump')])} />
+            onToggle={() => { if (!isForced('sw_fuel_pump')) sendVirtualPanel(['sw_fuel_pump'], [!sw('sw_fuel_pump')]) }} />
           <ToggleSwitch label="PITOT HT" on={sw('sw_pitot_heat')}
-            onToggle={() => sendVirtualPanel(['sw_pitot_heat'], [!sw('sw_pitot_heat')])} />
+            onToggle={() => { if (!isForced('sw_pitot_heat')) sendVirtualPanel(['sw_pitot_heat'], [!sw('sw_pitot_heat')]) }} />
           <ToggleSwitch label="BCN" on={sw('sw_beacon')}
-            onToggle={() => sendVirtualPanel(['sw_beacon'], [!sw('sw_beacon')])} />
+            onToggle={() => { if (!isForced('sw_beacon')) sendVirtualPanel(['sw_beacon'], [!sw('sw_beacon')]) }} />
           <ToggleSwitch label="NAV" on={sw('sw_nav_lt')}
-            onToggle={() => sendVirtualPanel(['sw_nav_lt'], [!sw('sw_nav_lt')])} />
+            onToggle={() => { if (!isForced('sw_nav_lt')) sendVirtualPanel(['sw_nav_lt'], [!sw('sw_nav_lt')]) }} />
           <ToggleSwitch label="STROBE" on={sw('sw_strobe')}
-            onToggle={() => sendVirtualPanel(['sw_strobe'], [!sw('sw_strobe')])} />
+            onToggle={() => { if (!isForced('sw_strobe')) sendVirtualPanel(['sw_strobe'], [!sw('sw_strobe')]) }} />
           <ToggleSwitch label="LAND" on={sw('sw_landing_lt')}
-            onToggle={() => sendVirtualPanel(['sw_landing_lt'], [!sw('sw_landing_lt')])} />
+            onToggle={() => { if (!isForced('sw_landing_lt')) sendVirtualPanel(['sw_landing_lt'], [!sw('sw_landing_lt')]) }} />
           <ToggleSwitch label="TAXI" on={sw('sw_taxi_lt')}
-            onToggle={() => sendVirtualPanel(['sw_taxi_lt'], [!sw('sw_taxi_lt')])} />
+            onToggle={() => { if (!isForced('sw_taxi_lt')) sendVirtualPanel(['sw_taxi_lt'], [!sw('sw_taxi_lt')]) }} />
           <div style={{ borderLeft: '1px solid #1e293b', height: 56, margin: '0 4px' }} />
           <ToggleSwitch label="CARB HT" on={sw('sw_carb_heat')}
-            onToggle={() => sendVirtualPanel(['sw_carb_heat'], [!sw('sw_carb_heat')])} />
+            onToggle={() => { if (!isForced('sw_carb_heat')) sendVirtualPanel(['sw_carb_heat'], [!sw('sw_carb_heat')]) }} />
           <div style={{ borderLeft: '1px solid #1e293b', height: 56, margin: '0 4px' }} />
           <SelectorControl label="MAGNETOS" value={magnetoPos}
             options={[
@@ -143,7 +147,7 @@ export default function C172Panel() {
               const label = name.replace('cb_', '').replace(/_/g, ' ').toUpperCase()
               return (
                 <div key={name}
-                  onClick={() => sendVirtualPanel([name], [!closed])}
+                  onClick={() => { if (!isForced(name)) sendVirtualPanel([name], [!closed]) }}
                   title={`${name}: ${tripped ? 'TRIPPED' : closed ? 'IN' : 'POPPED'} — click to ${closed ? 'pull' : 'reset'}`}
                   style={{
                     width: 40, textAlign: 'center', cursor: 'pointer', userSelect: 'none',

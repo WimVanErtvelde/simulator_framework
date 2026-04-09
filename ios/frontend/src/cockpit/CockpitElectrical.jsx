@@ -48,11 +48,13 @@ function voltageColor(v) {
 }
 
 export default function CockpitElectrical() {
-  const { electrical, electricalConfig, aircraftId } = useSimStore(useShallow(s => ({
+  const { electrical, electricalConfig, aircraftId, forcedSwitchIds } = useSimStore(useShallow(s => ({
     electrical: s.electrical, electricalConfig: s.electricalConfig, aircraftId: s.aircraftId,
+    forcedSwitchIds: s.forcedSwitchIds ?? [],
   })))
 
   const toggleVirtual = (id, currentState) => {
+    if (forcedSwitchIds.includes(id)) return
     const { ws, wsConnected } = useSimStore.getState()
     if (!wsConnected || !ws) return
     ws.send(JSON.stringify({

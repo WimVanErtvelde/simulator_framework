@@ -466,7 +466,11 @@ private:
       if (source == SOURCE_INSTRUCTOR) {
         bool has_force_flag = (i < msg.switch_forced.size());
         if (has_force_flag && !msg.switch_forced[i]) {
-          // RELEASE: give back to cockpit/hardware — don't touch value
+          // RELEASE: copy force_value into virtual/hardware so stale pilot
+          // clicks during force don't take effect on unlock
+          ctrl.virtual_value = ctrl.force_value;
+          ctrl.has_virtual = true;
+          if (ctrl.has_hardware) ctrl.hardware_value = ctrl.force_value;
           ctrl.forced = false;
         } else if (has_force_flag && msg.switch_forced[i] && has_state) {
           // EXPLICIT FORCE: lock switch at this value
@@ -478,7 +482,8 @@ private:
           ctrl.virtual_value = msg.switch_states[i];
         }
         changed = true;
-      } else if (has_state) {
+      } else if (has_state && !ctrl.forced) {
+        // Discard VIRTUAL/HARDWARE input when switch is forced by instructor
         bool state = msg.switch_states[i];
         if (source == SOURCE_VIRTUAL) {
           ctrl.has_virtual = true;
@@ -501,6 +506,10 @@ private:
       if (source == SOURCE_INSTRUCTOR) {
         bool has_force_flag = (i < msg.selector_forced.size());
         if (has_force_flag && !msg.selector_forced[i]) {
+          // RELEASE: copy force_value so stale pilot input doesn't take effect
+          ctrl.virtual_value = ctrl.force_value;
+          ctrl.has_virtual = true;
+          if (ctrl.has_hardware) ctrl.hardware_value = ctrl.force_value;
           ctrl.forced = false;
         } else if (has_force_flag && msg.selector_forced[i] && has_val) {
           ctrl.forced = true;
@@ -510,7 +519,8 @@ private:
           ctrl.virtual_value = msg.selector_values[i];
         }
         changed = true;
-      } else if (has_val) {
+      } else if (has_val && !ctrl.forced) {
+        // Discard VIRTUAL/HARDWARE input when selector is forced by instructor
         int32_t val = msg.selector_values[i];
         if (source == SOURCE_VIRTUAL) {
           ctrl.has_virtual = true;
