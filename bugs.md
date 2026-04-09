@@ -122,6 +122,12 @@
   graph_solver.so with new layout.
 - FIX: Removed member variable, replaced with local computation in step(). Clean
   rebuild (rm build/install for sim_electrical + aircraft_c172) required.
+- BUG #12f: Battery never enters charge branch because clock/ELT loads on hot_batt_bus
+  give total_current > 0, forcing discharge-only branch. Charge check was in the else.
+- FIX: Removed if/else split. Always compute drain AND charge. Net current (charge
+  minus drain) determines SOC direction. Charge current is physics-based:
+  (V_alternator - V_ocv) / R_internal, clamped to [0, charge_rate_max]. Natural
+  CC/CV taper as SOC rises.
 
 ## Open
 

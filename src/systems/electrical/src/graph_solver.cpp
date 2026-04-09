@@ -556,26 +556,21 @@ void GraphSolver::updateBatterySoc(double dt) {
         if (node.type != NodeType::source || !node.source || !node.source->battery) continue;
         auto& ns = node_states_[node.id];
         if (ns.battery_soc < 0) continue;
+        auto& bp = *node.source->battery;
 
-        // Sum current drawn from all loads powered by this source
-        double total_current = 0.0;
+        // Drain: sum current drawn from all loads powered by this battery
+        double drain_current = 0.0;
         for (auto& lnode : topology_.nodes) {
             if (lnode.type != NodeType::load) continue;
             auto& lns = node_states_[lnode.id];
             if (lns.powered && lns.power_source == node.id)
-                total_current += lns.current;
+                drain_current += lns.current;
         }
-        ns.current = total_current;
+        ns.current = drain_current;
 
-        auto& bp = *node.source->battery;
-
-        if (total_current > 0.0) {
-            // Discharge: Ah = I × t, SOC% = Ah / capacity × 100
-            double soc_drain = (total_current * dt) / (bp.capacity_ah * 3600.0) * 100.0;
-            ns.battery_soc = std::max(0.0, ns.battery_soc - soc_drain);
-        } else {
-            // Charge: BFS from battery — find max voltage from any reachable non-battery source
-            bool can_charge = false;
+        // Charge: BFS from battery — find max voltage from any reachable non-battery source
+        double charge_current = 0.0;
+        {
             double charge_voltage = 0.0;
             std::unordered_set<size_t> visited;
             std::queue<size_t> cq;
@@ -593,19 +588,27 @@ void GraphSolver::updateBatterySoc(double dt) {
                         visited.insert(neighbor_idx);
                         auto& nns = node_states_[topology_.nodes[neighbor_idx].id];
                         if (nns.powered && nns.power_source != node.id) {
-                            can_charge = true;
                             charge_voltage = std::max(charge_voltage, nns.voltage);
                         }
                         cq.push(neighbor_idx);
                     }
                 }
             }
-            if (can_charge) {
-                double charge_rate = std::min(bp.charge_rate_max,
-                                              (100.0 - ns.battery_soc) * 0.5);
-                double soc_gain = (charge_rate * dt) / (bp.capacity_ah * 3600.0) * 100.0;
-                ns.battery_soc = std::min(100.0, ns.battery_soc + soc_gain);
+            if (charge_voltage > 0.0) {
+                double ocv = interpolateSocVoltage(bp, ns.battery_soc);
+                charge_current = (charge_voltage - ocv) / bp.internal_resistance_ohm;
+                charge_current = std::clamp(charge_current, 0.0, bp.charge_rate_max);
             }
+        }
+
+        // Net current: positive = net charging, negative = net discharging
+        double net_current = charge_current - drain_current;
+        if (net_current > 0.0) {
+            double soc_gain = (net_current * dt) / (bp.capacity_ah * 3600.0) * 100.0;
+            ns.battery_soc = std::min(100.0, ns.battery_soc + soc_gain);
+        } else if (net_current < 0.0) {
+            double soc_drain = ((-net_current) * dt) / (bp.capacity_ah * 3600.0) * 100.0;
+            ns.battery_soc = std::max(0.0, ns.battery_soc - soc_drain);
         }
     }
 }
