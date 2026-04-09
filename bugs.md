@@ -113,6 +113,15 @@
   that power_source node is online with voltage > 0. Battery voltage set to charging
   voltage minus IR drop after updateSources, before propagate. BFS naturally propagates
   ~28V through hot_batt_bus.
+- BUG #12d: Segfault in detectChargingVoltage on startup — .at() on empty maps,
+  unguarded adjacency access before topology loaded.
+- FIX: Replaced .at() with .find() + null checks, added bounds checks on adjacency
+  indices, guarded call site in step() with !adjacency_.empty().
+- BUG #12e: Heap corruption from ABI mismatch — battery_charge_voltages_ member added
+  to header changed class layout. electrical_node built against old header loaded
+  graph_solver.so with new layout.
+- FIX: Removed member variable, replaced with local computation in step(). Clean
+  rebuild (rm build/install for sim_electrical + aircraft_c172) required.
 
 ## Open
 
