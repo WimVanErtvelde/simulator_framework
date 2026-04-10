@@ -71,6 +71,200 @@ function WeightDonut({ current, max, unit }) {
   )
 }
 
+// ── CG Envelope Helpers ──────────────────────────────────────────────
+
+function interpolateLimit(polyline, weight) {
+  if (!polyline || polyline.length === 0) return null
+  if (weight <= polyline[0][0]) return polyline[0][1]
+  if (weight >= polyline[polyline.length - 1][0]) return polyline[polyline.length - 1][1]
+  for (let i = 0; i < polyline.length - 1; i++) {
+    const [w0, a0] = polyline[i]
+    const [w1, a1] = polyline[i + 1]
+    if (weight >= w0 && weight <= w1) {
+      const t = (weight - w0) / (w1 - w0)
+      return a0 + t * (a1 - a0)
+    }
+  }
+  return polyline[polyline.length - 1][1]
+}
+
+function isInsideEnvelope(arm, weight, envelope) {
+  if (!envelope) return true
+  const fwd = envelope.forward || []
+  const aft = envelope.aft || []
+  if (fwd.length === 0 || aft.length === 0) return true
+  const minW = Math.min(fwd[0][0], aft[0][0])
+  const maxW = Math.max(fwd[fwd.length - 1][0], aft[aft.length - 1][0])
+  if (weight < minW || weight > maxW) return false
+  const fwdLimit = interpolateLimit(fwd, weight)
+  const aftLimit = interpolateLimit(aft, weight)
+  return arm >= fwdLimit && arm <= aftLimit
+}
+
+function computeCgArm(emptyW, emptyArm, payloadWeights, payloadStations, fuelWeights, fuelStations) {
+  let totalMoment = emptyW * emptyArm
+  let totalWeight = emptyW
+  for (const s of payloadStations) {
+    const w = payloadWeights[s.index] || 0
+    totalMoment += w * s.arm_in
+    totalWeight += w
+  }
+  for (const t of fuelStations) {
+    const w = fuelWeights[t.tank_index] || 0
+    totalMoment += w * t.arm_in
+    totalWeight += w
+  }
+  return totalWeight > 0 ? totalMoment / totalWeight : emptyArm
+}
+
+function CgEnvelopeChart({ weightConfig, payloadWeights, fuelWeights, unitLbs, fdm }) {
+  if (!weightConfig?.cg_envelope) return null
+
+  const env = weightConfig.cg_envelope
+  const fwd = env.forward || []
+  const aft = env.aft || []
+  if (fwd.length === 0 || aft.length === 0) return null
+
+  const emptyW = weightConfig.empty_weight_lbs || 0
+  const emptyArm = weightConfig.empty_cg_arm_in || 0
+  const mtow = weightConfig.max_takeoff_weight_lbs || 2400
+  const mlw = weightConfig.max_landing_weight_lbs || mtow
+  const payloadStations = weightConfig.payload_stations || []
+  const fuelStations = weightConfig.fuel_stations || []
+
+  // Data ranges
+  const allArms = [...fwd.map(p => p[1]), ...aft.map(p => p[1])]
+  const allWeights = [...fwd.map(p => p[0]), ...aft.map(p => p[0])]
+  const armMin = Math.min(...allArms) - 2
+  const armMax = Math.max(...allArms) + 2
+  const wMin = Math.min(...allWeights) - 100
+  const wMax = Math.max(mtow, ...allWeights) + 100
+
+  // SVG layout
+  const pad = { top: 10, right: 10, bottom: 30, left: 40 }
+  const vw = 260, vh = 260
+  const cw = vw - pad.left - pad.right
+  const ch = vh - pad.top - pad.bottom
+
+  const toX = (arm) => pad.left + (arm - armMin) / (armMax - armMin) * cw
+  const toY = (w) => pad.top + (1 - (w - wMin) / (wMax - wMin)) * ch
+  const conv = (lbs) => unitLbs ? lbs : lbs * LBS_TO_KG
+  const unitLabel = unitLbs ? 'lbs' : 'kg'
+
+  // Envelope polygon: forward bottom→top, then aft top→bottom
+  const polyPoints = [
+    ...fwd.map(([w, a]) => `${toX(a)},${toY(w)}`),
+    ...[...aft].reverse().map(([w, a]) => `${toX(a)},${toY(w)}`),
+  ].join(' ')
+
+  // Compute local CG
+  const payloadTotal = Object.values(payloadWeights).reduce((s, v) => s + v, 0)
+  const fuelTotal = Object.values(fuelWeights).reduce((s, v) => s + v, 0)
+  const localWeight = emptyW + payloadTotal + fuelTotal
+  const localArm = computeCgArm(emptyW, emptyArm, payloadWeights, payloadStations, fuelWeights, fuelStations)
+  const localInside = isInsideEnvelope(localArm, localWeight, env)
+
+  // ZFW dot
+  const zfwWeight = emptyW + payloadTotal
+  const zfwArm = computeCgArm(emptyW, emptyArm, payloadWeights, payloadStations, {}, [])
+
+  // FDM dot
+  const fdmWeight = (fdm.totalMassKg || 0) / LBS_TO_KG
+  const fdmArm = fdm.cgXIn || 0
+
+  // Axis ticks
+  const armStep = (armMax - armMin) > 20 ? 5 : 2
+  const wStep = (wMax - wMin) > 1000 ? 200 : 100
+  const armTicks = []
+  for (let a = Math.ceil(armMin / armStep) * armStep; a <= armMax; a += armStep) armTicks.push(a)
+  const wTicks = []
+  for (let w = Math.ceil(wMin / wStep) * wStep; w <= wMax; w += wStep) wTicks.push(w)
+
+  return (
+    <svg viewBox={`0 0 ${vw} ${vh}`} style={{ width: '100%', maxHeight: 300 }}>
+      {/* Grid */}
+      {armTicks.map(a => (
+        <line key={`ga${a}`} x1={toX(a)} y1={pad.top} x2={toX(a)} y2={pad.top + ch}
+          stroke="#1e293b" strokeWidth={0.5} strokeDasharray="2,2" />
+      ))}
+      {wTicks.map(w => (
+        <line key={`gw${w}`} x1={pad.left} y1={toY(w)} x2={pad.left + cw} y2={toY(w)}
+          stroke="#1e293b" strokeWidth={0.5} strokeDasharray="2,2" />
+      ))}
+
+      {/* Envelope polygon */}
+      <polygon points={polyPoints} fill="rgba(0,255,136,0.08)" stroke="#00ff88" strokeWidth={1.5} />
+
+      {/* MTOW line */}
+      <line x1={pad.left} y1={toY(mtow)} x2={pad.left + cw} y2={toY(mtow)}
+        stroke="#f59e0b" strokeWidth={1} strokeDasharray="4,3" />
+      <text x={pad.left + cw + 2} y={toY(mtow) + 3} fill="#f59e0b"
+        fontSize={7} fontFamily="monospace">MTOW</text>
+
+      {/* MLW line (if different) */}
+      {mlw !== mtow && (
+        <>
+          <line x1={pad.left} y1={toY(mlw)} x2={pad.left + cw} y2={toY(mlw)}
+            stroke="#39d0d8" strokeWidth={1} strokeDasharray="4,3" />
+          <text x={pad.left + cw + 2} y={toY(mlw) + 3} fill="#39d0d8"
+            fontSize={7} fontFamily="monospace">MLW</text>
+        </>
+      )}
+
+      {/* Empty weight marker */}
+      <circle cx={toX(emptyArm)} cy={toY(emptyW)} r={3} fill="#64748b" />
+      <text x={toX(emptyArm) + 5} y={toY(emptyW) + 3} fill="#64748b"
+        fontSize={7} fontFamily="monospace">EW</text>
+
+      {/* Loading line: EW → ZFW → live CG */}
+      <line x1={toX(emptyArm)} y1={toY(emptyW)} x2={toX(zfwArm)} y2={toY(zfwWeight)}
+        stroke="#475569" strokeWidth={0.5} strokeDasharray="2,2" />
+      <line x1={toX(zfwArm)} y1={toY(zfwWeight)} x2={toX(localArm)} y2={toY(localWeight)}
+        stroke="#475569" strokeWidth={0.5} strokeDasharray="2,2" />
+
+      {/* ZFW dot */}
+      {payloadTotal > 0 && (
+        <>
+          <rect x={toX(zfwArm) - 3} y={toY(zfwWeight) - 3} width={6} height={6}
+            fill="#39d0d8" transform={`rotate(45 ${toX(zfwArm)} ${toY(zfwWeight)})`} />
+          <text x={toX(zfwArm) + 6} y={toY(zfwWeight) + 3} fill="#39d0d8"
+            fontSize={7} fontFamily="monospace">ZFW</text>
+        </>
+      )}
+
+      {/* FDM confirmed dot (smaller, only if different from local) */}
+      {fdmArm > 0 && Math.abs(fdmArm - localArm) > 0.5 && (
+        <circle cx={toX(fdmArm)} cy={toY(fdmWeight)} r={3}
+          fill="none" stroke="#e2e8f0" strokeWidth={1} />
+      )}
+
+      {/* Live CG dot */}
+      <circle cx={toX(localArm)} cy={toY(localWeight)} r={5}
+        fill={localInside ? '#00ff88' : '#ff3b30'}
+        stroke={localInside ? '#00ff8844' : '#ff3b3044'} strokeWidth={3} />
+
+      {/* Axis labels */}
+      {armTicks.map(a => (
+        <text key={`la${a}`} x={toX(a)} y={pad.top + ch + 12} fill="#64748b"
+          fontSize={7} fontFamily="monospace" textAnchor="middle">{a}</text>
+      ))}
+      {wTicks.map(w => (
+        <text key={`lw${w}`} x={pad.left - 4} y={toY(w) + 3} fill="#64748b"
+          fontSize={7} fontFamily="monospace" textAnchor="end">{conv(w).toFixed(0)}</text>
+      ))}
+      <text x={pad.left + cw / 2} y={vh - 2} fill="#475569"
+        fontSize={7} fontFamily="monospace" textAnchor="middle">
+        CG ({weightConfig.unit_label || 'inches'})
+      </text>
+      <text x={4} y={pad.top + ch / 2} fill="#475569"
+        fontSize={7} fontFamily="monospace" textAnchor="middle"
+        transform={`rotate(-90 4 ${pad.top + ch / 2})`}>
+        {unitLabel}
+      </text>
+    </svg>
+  )
+}
+
 export default function FuelTab() {
   const { fuel, fuelConfig, aircraftId, fdm, weightConfig, sendPayload, sendFuelLoading, simState } = useSimStore(useShallow(s => ({
     fuel: s.fuel, fuelConfig: s.fuelConfig, aircraftId: s.aircraftId,
@@ -216,6 +410,12 @@ export default function FuelTab() {
   const maxTow = weightConfig?.max_takeoff_weight_lbs || 2400
   const emptyWeight = weightConfig?.empty_weight_lbs || 0
   const localTotalWeight = emptyWeight + totalPayload + totalFuel
+  const emptyArm = weightConfig?.empty_cg_arm_in || 0
+  const localCgArm = computeCgArm(
+    emptyWeight, emptyArm, payloadWeights,
+    weightConfig?.payload_stations || [], fuelWeights,
+    weightConfig?.fuel_stations || [])
+  const localInsideEnvelope = isInsideEnvelope(localCgArm, localTotalWeight, weightConfig?.cg_envelope)
 
   return (
     <div>
@@ -320,23 +520,41 @@ export default function FuelTab() {
           )}
         </div>
 
-        {/* RIGHT — summary */}
-        <div style={{ width: 130, flexShrink: 0 }}>
-          <WeightDonut
-            current={conv(localTotalWeight)}
-            max={conv(maxTow)}
-            unit={unitLabel}
-          />
-          <div style={{ marginTop: 8, fontSize: 9, color: '#475569', fontFamily: 'monospace', textAlign: 'center' }}>
-            FDM: {conv(fdm.totalMassKg / LBS_TO_KG).toFixed(0)} {unitLabel}
-          </div>
-          <div style={{ marginTop: 8, fontSize: 11, fontFamily: 'monospace', textAlign: 'center' }}>
-            <div style={{ color: '#64748b', fontSize: 9, letterSpacing: 1, marginBottom: 2 }}>CG POSITION</div>
-            <div style={{ color: '#e2e8f0', fontWeight: 700 }}>
-              {fdm.cgXIn?.toFixed(1) ?? '--'} in
+        {/* RIGHT — summary + CG chart */}
+        <div style={{ width: 200, flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+            <WeightDonut
+              current={conv(localTotalWeight)}
+              max={conv(maxTow)}
+              unit={unitLabel}
+            />
+            <div style={{ fontSize: 11, fontFamily: 'monospace' }}>
+              <div style={{ color: '#64748b', fontSize: 9, letterSpacing: 1, marginBottom: 2 }}>CG</div>
+              <div style={{ color: '#e2e8f0', fontWeight: 700 }}>
+                {localCgArm.toFixed(1)} in
+              </div>
+              <div style={{ color: '#475569', fontSize: 9, marginTop: 4 }}>
+                FDM: {conv(fdm.totalMassKg / LBS_TO_KG).toFixed(0)} {unitLabel}
+              </div>
+              <div style={{
+                color: localInsideEnvelope ? '#00ff88' : '#ff3b30',
+                fontSize: 9, fontWeight: 700, marginTop: 4,
+              }}>
+                {localInsideEnvelope ? 'IN ENVELOPE' : 'OUT OF ENVELOPE'}
+              </div>
             </div>
           </div>
-          {/* CG envelope chart placeholder — Phase 3 */}
+          {weightConfig?.cg_envelope && (
+            <div style={{ marginTop: 8 }}>
+              <CgEnvelopeChart
+                weightConfig={weightConfig}
+                payloadWeights={payloadWeights}
+                fuelWeights={fuelWeights}
+                unitLbs={unitLbs}
+                fdm={fdm}
+              />
+            </div>
+          )}
         </div>
       </div>
 
