@@ -110,7 +110,7 @@ public:
           double kg = msg->weights_lbs[i] * 0.453592;
           model_->set_tank_quantity(tank_idx, kg);
         }
-        RCLCPP_INFO(this->get_logger(), "Fuel load: %zu tanks updated",
+        RCLCPP_DEBUG(this->get_logger(), "Fuel load: %zu tanks updated",
           msg->station_indices.size());
       });
 
