@@ -287,6 +287,10 @@ uint8 fuel_tank_count               # number of tanks reported by flight model
 # [HLSIM word 134 total mass]  [JSBSim inertia/mass-slugs converted]
 float32 total_mass_kg           # total aircraft mass (airframe + fuel + payload)
 
+# CG position (from FDM mass balance)
+float32 cg_x_in                 # longitudinal CG from datum (inches)
+float32 cg_y_in                 # lateral CG (inches, 0 = symmetric)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 10. LANDING GEAR (up to 5 gear assemblies)
 # [HLSIM words 139-153]  [JSBSim contact/unit[N]/... properties]

@@ -183,6 +183,7 @@ class IosBackendNode(Node):
         self._load_fuel_config('c172')
         self._load_failures_config('c172')
         self._load_electrical_config('c172')
+        self._load_weight_config('c172')
 
         # Generic topic forwarder for State Inspector (raw SI values)
         self._forwarder = TopicForwarder(self)
@@ -215,6 +216,9 @@ class IosBackendNode(Node):
             'pitch_deg': round(float(msg.pitch_rad) * 180.0 / _m.pi, 1),
             'roll_deg': round(float(msg.roll_rad) * 180.0 / _m.pi, 1),
             'is_helicopter': bool(msg.is_helicopter),
+            'cg_x_in': round(float(msg.cg_x_in), 2),
+            'cg_y_in': round(float(msg.cg_y_in), 2),
+            'total_mass_kg': round(float(msg.total_mass_kg), 1),
         }
         with self._lock:
             self._latest['flight_model_state'] = data
@@ -268,6 +272,7 @@ class IosBackendNode(Node):
                 self._load_fuel_config(msg.aircraft_id)
                 self._load_failures_config(msg.aircraft_id)
                 self._load_electrical_config(msg.aircraft_id)
+                self._load_weight_config(msg.aircraft_id)
 
     @_safe_callback
     def _on_nav_state(self, msg: NavigationState):
@@ -827,6 +832,32 @@ class IosBackendNode(Node):
             'loads': loads,
             'cbs': cbs,
         }
+
+    def _load_weight_config(self, aircraft_id: str):
+        """Load weight & balance config from aircraft package weight.yaml."""
+        try:
+            from ament_index_python.packages import get_package_share_directory
+            pkg = f'aircraft_{aircraft_id}'
+            share_dir = get_package_share_directory(pkg)
+            weight_yaml = os.path.join(share_dir, 'config', 'weight.yaml')
+            if not os.path.isfile(weight_yaml):
+                self.get_logger().info(f'No weight.yaml for {pkg} — W&B panel disabled')
+                return
+            with open(weight_yaml) as f:
+                cfg = yaml.safe_load(f)
+            data = {
+                'type': 'weight_config',
+                'aircraft_id': aircraft_id,
+                **cfg,
+            }
+            self._latest['weight_config'] = data
+            stations = len(cfg.get('payload_stations', []))
+            tanks = len(cfg.get('fuel_stations', []))
+            self.get_logger().info(
+                f'Loaded weight config for {aircraft_id}: '
+                f'{stations} payload stations, {tanks} fuel stations')
+        except Exception as e:
+            self.get_logger().error(f'Failed to load weight config: {e}')
 
     def publish_failure_command(self, data: dict):
         """Publish a FailureCommand to /aircraft/devices/instructor/failure_command."""

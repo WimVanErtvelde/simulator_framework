@@ -629,6 +629,12 @@ sim_msgs::msg::FlightModelState JSBSimAdapter::get_state() const
   state.total_mass_kg = static_cast<float>(
     exec_->GetPropertyValue("inertia/weight-lbs") * LBS_TO_KG);
 
+  // CG position
+  state.cg_x_in = static_cast<float>(exec_->GetPropertyValue("inertia/cg-x-in"));
+  // cg-y-in may not exist in all JSBSim models — default to 0
+  auto* cg_y_node = exec_->GetPropertyManager()->GetNode("inertia/cg-y-in", false);
+  state.cg_y_in = cg_y_node ? static_cast<float>(cg_y_node->getDoubleValue()) : 0.0f;
+
   // --- 10. LANDING GEAR ---
   // C172 has 3 fixed gear: [0]=nose, [1]=left main, [2]=right main
   state.gear_count = 3;

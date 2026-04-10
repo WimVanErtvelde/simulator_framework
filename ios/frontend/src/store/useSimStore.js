@@ -48,6 +48,7 @@ export const useSimStore = create((set, get) => ({
     altFtMsl: 0, iasKt: 0, gndSpeedKt: 0,
     hdgTrueDeg: 0, trackDeg: 0, vsFpm: 0,
     pitchDeg: 0, rollDeg: 0, isHelicopter: false,
+    cgXIn: 0, cgYIn: 0, totalMassKg: 0,
   },
 
   // Atmosphere
@@ -125,6 +126,9 @@ export const useSimStore = create((set, get) => ({
 
   // Electrical config (from aircraft electrical.yaml — drives dynamic IOS/cockpit panels)
   electricalConfig: null,
+
+  // Weight & balance config (from aircraft weight.yaml)
+  weightConfig: null,
 
   // Per-switch force state (from ArbitrationState.forced_switch_ids)
   forcedSwitchIds: [],
@@ -399,6 +403,9 @@ export const useSimStore = create((set, get) => ({
               pitchDeg: msg.pitch_deg ?? s.fdm.pitchDeg,
               rollDeg: msg.roll_deg ?? s.fdm.rollDeg,
               isHelicopter: msg.is_helicopter ?? s.fdm.isHelicopter,
+              cgXIn: msg.cg_x_in ?? s.fdm.cgXIn,
+              cgYIn: msg.cg_y_in ?? s.fdm.cgYIn,
+              totalMassKg: msg.total_mass_kg ?? s.fdm.totalMassKg,
             }
             set({ fdm })
             // Append track point if sim is running
@@ -740,6 +747,10 @@ export const useSimStore = create((set, get) => ({
               armedFailures: msg.armed ?? s.armedFailures,
               activeFailures: msg.active ?? s.activeFailures,
             })
+            break
+
+          case 'weight_config':
+            set({ weightConfig: msg })
             break
 
           case 'topic_tree':

@@ -1,0 +1,59 @@
+# C172P Weight & Balance — IOS display config
+# Pointmass indices and arms match JSBSim c172p.xml <pointmass> order.
+# CG envelope from POH Section 6.
+
+empty_weight_lbs: 1500
+empty_cg_arm_in: 41.0
+
+payload_stations:
+  - index: 0
+    label: "Pilot"
+    arm_in: 36.0
+    default_lbs: 180
+    max_lbs: 300
+  - index: 1
+    label: "Co-Pilot"
+    arm_in: 36.0
+    default_lbs: 0
+    max_lbs: 300
+  - index: 2
+    label: "Left Rear Pax"
+    arm_in: 70.0
+    default_lbs: 0
+    max_lbs: 200
+  - index: 3
+    label: "Right Rear Pax"
+    arm_in: 70.0
+    default_lbs: 0
+    max_lbs: 200
+  - index: 4
+    label: "Baggage"
+    arm_in: 95.0
+    default_lbs: 0
+    max_lbs: 120
+
+fuel_stations:
+  - tank_index: 0
+    label: "Left Tank"
+    arm_in: 56.0
+    capacity_lbs: 185
+    default_lbs: 185
+  - tank_index: 1
+    label: "Right Tank"
+    arm_in: 56.0
+    capacity_lbs: 185
+    default_lbs: 185
+
+cg_envelope:
+  forward:
+    - [1500, 35.0]
+    - [1950, 35.0]
+    - [2400, 38.5]
+  aft:
+    - [1500, 47.3]
+    - [2400, 47.3]
+
+max_ramp_weight_lbs: 2407
+max_takeoff_weight_lbs: 2400
+max_landing_weight_lbs: 2400
+unit_label: "inches"
