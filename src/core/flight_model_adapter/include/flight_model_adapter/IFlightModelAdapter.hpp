@@ -112,6 +112,9 @@ public:
   /// Apply payload station weight command from IOS.
   virtual void apply_payload_command(const sim_msgs::msg::PayloadCommand & /*cmd*/) {}
 
+  /// Apply fuel tank load command from IOS (direct tank write, no RunIC).
+  virtual void apply_fuel_load_command(const sim_msgs::msg::PayloadCommand & /*cmd*/) {}
+
   /// Set a named FDM property (e.g. "fcs/aileron-cmd-norm").
   /// Used by the node to write arbitrated controls before each step.
   virtual void set_property(const std::string & /*name*/, double /*value*/) {}

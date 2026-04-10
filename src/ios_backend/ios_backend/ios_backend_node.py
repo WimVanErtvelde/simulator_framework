@@ -45,7 +45,7 @@ from sim_msgs.msg import (FlightModelState, FuelState, SimState, SimCommand, Pan
                           RawFlightControls, RawEngineControls,
                           ElectricalState, SimAlert, EngineState,
                           FailureCommand, FailureState, TerrainSource,
-                          AirDataState, PayloadCommand, InitialConditions,
+                          AirDataState, PayloadCommand,
                           ArbitrationState, GearState)
 from std_msgs.msg import String
 from lifecycle_msgs.srv import ChangeState
@@ -147,8 +147,8 @@ class IosBackendNode(Node):
             RawEngineControls, '/aircraft/devices/instructor/controls/engine', 10)
         self._payload_pub = self.create_publisher(
             PayloadCommand, '/aircraft/payload/command', 10)
-        self._ic_pub = self.create_publisher(
-            InitialConditions, '/sim/initial_conditions', 10)
+        self._fuel_load_pub = self.create_publisher(
+            PayloadCommand, '/aircraft/fuel/load_command', 10)
         self._heartbeat_pub = self.create_publisher(
             String, '/sim/diagnostics/heartbeat', 10)
         self._lifecycle_pub = self.create_publisher(
@@ -1582,22 +1582,13 @@ async def websocket_endpoint(websocket: WebSocket):
                     ros_node._payload_pub.publish(payload_msg)
 
                 elif msg.get('type') == 'set_fuel_loading' and ros_node:
-                    # Compute fuel_total_norm from requested quantities and publish IC.
-                    # The fuel solver's apply_initial_conditions sets all tanks equally.
-                    # Per-tank asymmetric loading needs fuel_node changes (deferred).
                     data = msg.get('data', {})
-                    tanks = data.get('tanks', [])
-                    if tanks and ros_node._latest.get('weight_config'):
-                        wcfg = ros_node._latest['weight_config']
-                        total_capacity = sum(
-                            s.get('capacity_lbs', 0)
-                            for s in wcfg.get('fuel_stations', []))
-                        total_requested = sum(float(t.get('quantity_lbs', 0)) for t in tanks)
-                        norm = total_requested / total_capacity if total_capacity > 0 else 1.0
-                        ic_msg = InitialConditions()
-                        ic_msg.header.stamp = ros_node.get_clock().now().to_msg()
-                        ic_msg.fuel_total_norm = max(0.0, min(1.0, float(norm)))
-                        ros_node._ic_pub.publish(ic_msg)
+                    fuel_msg = PayloadCommand()
+                    fuel_msg.header.stamp = ros_node.get_clock().now().to_msg()
+                    for t in data.get('tanks', []):
+                        fuel_msg.station_indices.append(int(t['index']))
+                        fuel_msg.weights_lbs.append(float(t.get('quantity_lbs', 0)))
+                    ros_node._fuel_load_pub.publish(fuel_msg)
 
             except json.JSONDecodeError:
                 pass

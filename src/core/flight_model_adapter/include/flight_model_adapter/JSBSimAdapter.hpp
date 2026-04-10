@@ -42,6 +42,7 @@ public:
   void write_back_electrical(const sim_msgs::msg::ElectricalState & state) override;
   void write_back_fuel(const sim_msgs::msg::FuelState & state) override;
   void apply_payload_command(const sim_msgs::msg::PayloadCommand & cmd) override;
+  void apply_fuel_load_command(const sim_msgs::msg::PayloadCommand & cmd) override;
 
   void set_property(const std::string & name, double value) override;
   double get_property(const std::string & name) const override;

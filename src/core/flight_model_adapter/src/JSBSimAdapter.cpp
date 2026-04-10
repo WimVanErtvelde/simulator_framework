@@ -819,6 +819,24 @@ void JSBSimAdapter::apply_payload_command(const sim_msgs::msg::PayloadCommand & 
   }
 }
 
+void JSBSimAdapter::apply_fuel_load_command(const sim_msgs::msg::PayloadCommand & cmd)
+{
+  if (!initialized_ || !exec_) return;
+  try {
+    for (size_t i = 0; i < cmd.station_indices.size() && i < cmd.weights_lbs.size(); ++i) {
+      int idx = cmd.station_indices[i];
+      std::string prop = "propulsion/tank[" + std::to_string(idx) + "]/contents-lbs";
+      exec_->SetPropertyValue(prop, static_cast<double>(cmd.weights_lbs[i]));
+    }
+  } catch (const std::exception & e) {
+    log_error(std::string("[JSBSimAdapter] Exception in apply_fuel_load_command: ") + e.what());
+  } catch (const std::string & s) {
+    log_error("[JSBSimAdapter] JSBSim error in apply_fuel_load_command: " + s);
+  } catch (...) {
+    log_error("[JSBSimAdapter] Unknown exception in apply_fuel_load_command");
+  }
+}
+
 void JSBSimAdapter::refine_terrain_altitude(double alt_msl_m, double terrain_elev_m)
 {
     if (!initialized_) return;

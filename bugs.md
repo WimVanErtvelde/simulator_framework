@@ -129,6 +129,15 @@
   (V_alternator - V_ocv) / R_internal, clamped to [0, charge_rate_max]. Natural
   CC/CV taper as SOC rises.
 
+### Bug #13: Fuel slider triggers full JSBSim reset
+- set_fuel_loading WS command was routed through InitialConditions msg
+  with fuel_total_norm. Fuel solver IC subscription triggers JSBSim RunIC,
+  resetting position, attitude, and velocities.
+- FIX: Bypass IC path entirely. ios_backend publishes PayloadCommand on
+  /aircraft/fuel/load_command. JSBSimAdapter subscribes and writes
+  propulsion/tank[N]/contents-lbs directly. No RunIC, no reset.
+  Fuel solver internal state may be stale until proper integration (deferred).
+
 ## Open
 
 (none)
