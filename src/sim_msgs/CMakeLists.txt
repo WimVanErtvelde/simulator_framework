@@ -47,6 +47,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/HatHotResponse.msg"
   "msg/TerrainSource.msg"
   "msg/HotRequest.msg"
+  "msg/PayloadCommand.msg"
   "msg/Runway.msg"
   "msg/Airport.msg"
   "srv/GetTerrainElevation.srv"

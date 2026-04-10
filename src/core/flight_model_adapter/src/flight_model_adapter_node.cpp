@@ -16,6 +16,7 @@
 #include <sim_msgs/msg/flight_controls.hpp>
 #include <sim_msgs/msg/engine_controls.hpp>
 #include <sim_msgs/msg/hat_hot_response.hpp>
+#include <sim_msgs/msg/payload_command.hpp>
 #include <sim_msgs/msg/terrain_source.hpp>
 #include <sim_msgs/msg/sim_alert.hpp>
 
@@ -315,6 +316,12 @@ public:
         if (adapter_) adapter_->write_back_fuel(*msg);
       });
 
+    payload_command_sub_ = this->create_subscription<sim_msgs::msg::PayloadCommand>(
+      "/aircraft/payload/command", 10,
+      [this](const sim_msgs::msg::PayloadCommand::SharedPtr msg) {
+        if (adapter_) adapter_->apply_payload_command(*msg);
+      });
+
     heartbeat_timer_ = this->create_wall_timer(
       std::chrono::seconds(1),
       [this]() {
@@ -576,6 +583,7 @@ private:
   rclcpp::Subscription<sim_msgs::msg::EngineControls>::SharedPtr engine_controls_sub_;
   rclcpp::Subscription<sim_msgs::msg::ElectricalState>::SharedPtr elec_writeback_sub_;
   rclcpp::Subscription<sim_msgs::msg::FuelState>::SharedPtr fuel_writeback_sub_;
+  rclcpp::Subscription<sim_msgs::msg::PayloadCommand>::SharedPtr payload_command_sub_;
   rclcpp::Subscription<sim_msgs::msg::HatHotResponse>::SharedPtr hat_response_sub_;
 
   sim_msgs::msg::FlightControls::SharedPtr latest_flight_controls_;

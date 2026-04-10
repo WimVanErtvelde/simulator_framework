@@ -7,6 +7,7 @@
 #include <sim_msgs/msg/engine_commands.hpp>
 #include <sim_msgs/msg/electrical_state.hpp>
 #include <sim_msgs/msg/fuel_state.hpp>
+#include <sim_msgs/msg/payload_command.hpp>
 
 namespace flight_model_adapter
 {
@@ -107,6 +108,9 @@ public:
   /// Write-back fuel state from sim_fuel to the FDM.
   /// Called each cycle when fuel_quantities capability is EXTERNAL_COUPLED.
   virtual void write_back_fuel(const sim_msgs::msg::FuelState & /*state*/) {}
+
+  /// Apply payload station weight command from IOS.
+  virtual void apply_payload_command(const sim_msgs::msg::PayloadCommand & /*cmd*/) {}
 
   /// Set a named FDM property (e.g. "fcs/aileron-cmd-norm").
   /// Used by the node to write arbitrated controls before each step.

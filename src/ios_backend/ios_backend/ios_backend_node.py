@@ -45,7 +45,7 @@ from sim_msgs.msg import (FlightModelState, FuelState, SimState, SimCommand, Pan
                           RawFlightControls, RawEngineControls,
                           ElectricalState, SimAlert, EngineState,
                           FailureCommand, FailureState, TerrainSource,
-                          AirDataState,
+                          AirDataState, PayloadCommand,
                           ArbitrationState, GearState)
 from std_msgs.msg import String
 from lifecycle_msgs.srv import ChangeState
@@ -145,6 +145,8 @@ class IosBackendNode(Node):
             RawFlightControls, '/aircraft/devices/instructor/controls/flight', 10)
         self._raw_engine_pub = self.create_publisher(
             RawEngineControls, '/aircraft/devices/instructor/controls/engine', 10)
+        self._payload_pub = self.create_publisher(
+            PayloadCommand, '/aircraft/payload/command', 10)
         self._heartbeat_pub = self.create_publisher(
             String, '/sim/diagnostics/heartbeat', 10)
         self._lifecycle_pub = self.create_publisher(
@@ -856,6 +858,13 @@ class IosBackendNode(Node):
             self.get_logger().info(
                 f'Loaded weight config for {aircraft_id}: '
                 f'{stations} payload stations, {tanks} fuel stations')
+            # Publish default payload weights to JSBSim on load
+            payload_msg = PayloadCommand()
+            payload_msg.header.stamp = self.get_clock().now().to_msg()
+            for s in cfg.get('payload_stations', []):
+                payload_msg.station_indices.append(int(s['index']))
+                payload_msg.weights_lbs.append(float(s.get('default_lbs', 0)))
+            self._payload_pub.publish(payload_msg)
         except Exception as e:
             self.get_logger().error(f'Failed to load weight config: {e}')
 
@@ -1560,6 +1569,32 @@ async def websocket_endpoint(websocket: WebSocket):
                         f'lon={payload["longitude_deg"]:.5f} alt={payload["altitude_msl_m"]:.1f}m '
                         f'hdg={payload["heading_rad"] * 180/_m.pi:.1f} '
                         f'config={config}')
+
+                elif msg.get('type') == 'set_payload' and ros_node:
+                    data = msg.get('data', {})
+                    payload_msg = PayloadCommand()
+                    payload_msg.header.stamp = ros_node.get_clock().now().to_msg()
+                    for s in data.get('stations', []):
+                        payload_msg.station_indices.append(int(s['index']))
+                        payload_msg.weights_lbs.append(float(s['weight_lbs']))
+                    ros_node._payload_pub.publish(payload_msg)
+
+                elif msg.get('type') == 'set_fuel_loading' and ros_node:
+                    # Write fuel quantities through fuel solver via setTankQuantity
+                    # For now: publish as payload-style command to JSBSim directly
+                    # TODO: route through fuel solver for proper state sync
+                    data = msg.get('data', {})
+                    for t in data.get('tanks', []):
+                        idx = int(t['index'])
+                        lbs = float(t['quantity_lbs'])
+                        prop = f'propulsion/tank[{idx}]/contents-lbs'
+                        # Use set_property on the adapter via a generic path
+                        # For now: publish a PayloadCommand with tank index + 100 offset
+                        # as a convention (adapter ignores, JSBSim gets direct write)
+                    # Simpler: send IC with fuel_total_norm (existing path)
+                    # For Phase 2: direct JSBSim write via adapter set_property
+                    pass  # TODO: implement fuel loading command path
+
             except json.JSONDecodeError:
                 pass
             except Exception as e:

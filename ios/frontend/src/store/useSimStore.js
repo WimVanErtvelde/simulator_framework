@@ -269,6 +269,18 @@ export const useSimStore = create((set, get) => ({
     return true
   },
 
+  sendPayload: (stations) => {
+    const { ws, wsConnected } = get()
+    if (!wsConnected || !ws) return
+    ws.send(JSON.stringify({ type: 'set_payload', data: { stations } }))
+  },
+
+  sendFuelLoading: (tanks) => {
+    const { ws, wsConnected } = get()
+    if (!wsConnected || !ws) return
+    ws.send(JSON.stringify({ type: 'set_fuel_loading', data: { tanks } }))
+  },
+
   injectFailure: (failureId, paramsOverrideJson = '') => {
     const { ws, wsConnected } = get()
     if (!wsConnected || !ws) return false
