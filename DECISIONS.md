@@ -2557,3 +2557,69 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - AFFECTS: AircraftPanel.jsx (thin shell with tab bar),
   panels/aircraft/FuelTab.jsx, panels/aircraft/ElectricalTab.jsx,
   panels/aircraft/EnginesTab.jsx, panels/aircraft/RadiosTab.jsx
+
+### Weight & Balance — Fuel & W/B Tab Design
+
+- DECIDED: X-Plane style bottom-up loading approach for Weight & Balance.
+  Individual payload station sliders + per-tank fuel sliders. CG is a
+  consequence of loading, not a direct input. CG envelope chart shows
+  the resulting dot (read-only, plotted from JSBSim output). No EURAMEC-style
+  CG drag — it introduces back-calculation ambiguity and fights JSBSim's
+  mass model.
+- REASON: Maps 1:1 to JSBSim's pointmass model. Each IOS slider corresponds
+  to one JSBSim pointmass or fuel tank property. No inverse kinematics needed.
+  More realistic for training — instructors load actual stations (pilot,
+  copilot, pax, baggage), CG falls where physics says.
+
+- DECIDED: New aircraft config file `weight.yaml` per aircraft, defining:
+  empty_weight_lbs, empty_cg_arm_in, payload_stations[] (index, label, arm_in,
+  default_lbs, max_lbs), fuel_stations[] (tank_index, label, arm_in,
+  capacity_lbs, default_lbs), cg_envelope (forward[] and aft[] polylines),
+  max_ramp/takeoff/landing_weight_lbs, unit_label.
+- REASON: Config-driven — new aircraft just adds weight.yaml. Framework code
+  is aircraft-agnostic. CG envelope chart data comes from this file.
+
+- DECIDED: JSBSim adapter reads CG from `inertia/cg-x-in` and total weight
+  from `inertia/weight-lbs`. New FlightModelState.msg fields: float32 cg_x_in,
+  float32 cg_y_in. Other adapters populate from their own mass balance outputs.
+- REASON: JSBSim owns CG calculation. Framework just reads and displays.
+
+- DECIDED: Payload commands via WS `set_payload` → `/aircraft/payload/command`
+  (PayloadCommand.msg). JSBSimAdapter subscribes, writes
+  `inertia/pointmass-weight-lbs[N]`. Set once on scenario setup, not per-frame.
+- REASON: Payload changes are infrequent instructor actions, not continuous state.
+
+- DECIDED: Fuel loading via WS `set_fuel_loading` → fuel solver (not direct to
+  JSBSim). Fuel solver updates tanks, writeback pushes to JSBSim.
+- REASON: Fuel quantities must flow through fuel solver (starvation logic,
+  consumption tracking). Direct JSBSim writes would create state divergence.
+
+- DECIDED: Fuel sliders show lbs primary for US-type aircraft (C172, C208).
+  Unit toggle switches primary/secondary (lbs/kg). Gallons/liters as read-only
+  reference. Revised from earlier kg-primary decision.
+- REASON: POH, W&B charts, and JSBSim all use lbs. Unit toggle covers both
+  EASA (kg) and FAA (lbs) preferences.
+
+- DECIDED: CG envelope chart as SVG in FuelTab. X-axis: arm (in), Y-axis:
+  weight (lbs). Envelope polygon from weight.yaml polylines. Live CG dot
+  from FlightModelState (green inside, red outside). Reference lines for
+  max weights. Updates live as sliders move.
+- REASON: SVG renders crisp, data is simple, matches POH weight-vs-arm format.
+
+- DECIDED: "Total Payload" and "Total Internal Fuel" master sliders scale
+  individual stations proportionally. Individual sliders still adjustable.
+  "Restore Defaults" resets to weight.yaml defaults. Changes apply immediately.
+- REASON: Convenience for quick heavy/light scenarios. Immediate apply matches
+  existing IOS pattern.
+
+- DECIDED: Flight time estimate: total_fuel / cruise_fuel_flow, displayed as
+  HH:MM. Cruise fuel flow from engine.yaml (new optional cruise_fuel_flow_gph).
+  Frontend-only calculation.
+
+- DECIDED: Implementation phases:
+  Phase 1: weight.yaml + FlightModelState CG fields + JSBSimAdapter + backend
+  Phase 2: FuelTab UI — sliders, summary, WS commands, adapter writes
+  Phase 3: CG envelope SVG chart
+  Phase 4: Flight time estimate
+- AFFECTS: FlightModelState.msg (cg_x_in, cg_y_in), JSBSimAdapter.cpp,
+  ios_backend_node.py, weight.yaml (new), FuelTab.jsx, useSimStore.js
