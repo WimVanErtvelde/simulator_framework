@@ -72,13 +72,15 @@ function WeightDonut({ current, max, unit }) {
 }
 
 export default function FuelTab() {
-  const { fuel, fuelConfig, aircraftId, fdm, weightConfig, sendPayload } = useSimStore(useShallow(s => ({
+  const { fuel, fuelConfig, aircraftId, fdm, weightConfig, sendPayload, sendFuelLoading, simState } = useSimStore(useShallow(s => ({
     fuel: s.fuel, fuelConfig: s.fuelConfig, aircraftId: s.aircraftId,
     fdm: s.fdm, weightConfig: s.weightConfig, sendPayload: s.sendPayload,
+    sendFuelLoading: s.sendFuelLoading, simState: s.simState,
   })))
 
   const [unitLbs, setUnitLbs] = useState(true)
   const [payloadWeights, setPayloadWeights] = useState({})
+  const [fuelWeights, setFuelWeights] = useState({})
   const [initialized, setInitialized] = useState(false)
 
   // Initialize from weightConfig defaults on first load
@@ -89,14 +91,61 @@ export default function FuelTab() {
         pw[s.index] = s.default_lbs
       }
       setPayloadWeights(pw)
+      const fw = {}
+      for (const t of weightConfig.fuel_stations || []) {
+        fw[t.tank_index] = t.default_lbs
+      }
+      setFuelWeights(fw)
       setInitialized(true)
     }
   }, [weightConfig, initialized])
+
+  // Sync fuel weights from solver when sim is RUNNING (fuel being consumed)
+  useEffect(() => {
+    if (simState !== 'RUNNING' || !weightConfig) return
+    const fw = {}
+    const KG_TO_LBS = 1 / LBS_TO_KG
+    fuel.tanks.forEach((tank, i) => {
+      const fuelStation = (weightConfig.fuel_stations || [])[i]
+      if (fuelStation) {
+        fw[fuelStation.tank_index] = (tank.massKg ?? 0) * KG_TO_LBS
+      }
+    })
+    if (Object.keys(fw).length > 0) setFuelWeights(fw)
+  }, [simState, fuel.tanks, weightConfig])
 
   const updateStation = useCallback((index, lbs) => {
     setPayloadWeights(prev => ({ ...prev, [index]: lbs }))
     sendPayload([{ index, weight_lbs: lbs }])
   }, [sendPayload])
+
+  const updateFuelTank = useCallback((tankIndex, lbs) => {
+    setFuelWeights(prev => {
+      const next = { ...prev, [tankIndex]: lbs }
+      const tanks = Object.entries(next).map(([idx, qty]) => ({
+        index: parseInt(idx), quantity_lbs: qty
+      }))
+      sendFuelLoading(tanks)
+      return next
+    })
+  }, [sendFuelLoading])
+
+  const totalFuelCapacity = (weightConfig?.fuel_stations || []).reduce((s, t) => s + t.capacity_lbs, 0)
+  const totalFuel = Object.values(fuelWeights).reduce((s, v) => s + v, 0)
+
+  const setTotalFuel = useCallback((targetLbs) => {
+    const stations = weightConfig?.fuel_stations || []
+    const updates = {}
+    const wsTanks = []
+    for (const t of stations) {
+      const proportion = totalFuelCapacity > 0 ? t.capacity_lbs / totalFuelCapacity : 1 / stations.length
+      const v = Math.min(targetLbs * proportion, t.capacity_lbs)
+      updates[t.tank_index] = v
+      wsTanks.push({ index: t.tank_index, quantity_lbs: v })
+    }
+    setFuelWeights(prev => ({ ...prev, ...updates }))
+    sendFuelLoading(wsTanks)
+  }, [weightConfig, totalFuelCapacity, sendFuelLoading])
 
   const totalPayloadMax = (weightConfig?.payload_stations || []).reduce((s, p) => s + p.max_lbs, 0)
   const totalPayload = Object.values(payloadWeights).reduce((s, v) => s + v, 0)
@@ -140,7 +189,15 @@ export default function FuelTab() {
     }
     setPayloadWeights(pw)
     sendPayload(wsStations)
-  }, [weightConfig, sendPayload])
+    const fw = {}
+    const wsTanks = []
+    for (const t of weightConfig.fuel_stations || []) {
+      fw[t.tank_index] = t.default_lbs
+      wsTanks.push({ index: t.tank_index, quantity_lbs: t.default_lbs })
+    }
+    setFuelWeights(fw)
+    sendFuelLoading(wsTanks)
+  }, [weightConfig, sendPayload, sendFuelLoading])
 
   const conv = (lbs) => unitLbs ? lbs : lbs * LBS_TO_KG
   const unitLabel = unitLbs ? 'lbs' : 'kg'
@@ -165,9 +222,29 @@ export default function FuelTab() {
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
         {/* LEFT — sliders */}
         <div style={{ flex: 1, minWidth: 220 }}>
-          {/* Fuel display (read-only from solver) */}
+          {/* Fuel */}
           <SectionHeader title={`FUEL — ${fuelConfig.fuelType}`} />
-          {fuel.tanks.map((tank, i) => {
+          {weightConfig && (
+            <WbSlider
+              label="Total Fuel" value={conv(totalFuel)} max={conv(totalFuelCapacity)}
+              unit={unitLabel}
+              onChange={v => setTotalFuel(unitLbs ? v : v / LBS_TO_KG)}
+            />
+          )}
+          {weightConfig && (
+            <div style={{ paddingLeft: 8, borderLeft: '2px solid #1e293b', marginLeft: 4 }}>
+              {(weightConfig.fuel_stations || []).map(t => (
+                <WbSlider key={t.tank_index}
+                  label={t.label}
+                  value={conv(fuelWeights[t.tank_index] || 0)}
+                  max={conv(t.capacity_lbs)}
+                  unit={unitLabel}
+                  onChange={v => updateFuelTank(t.tank_index, unitLbs ? v : v / LBS_TO_KG)}
+                />
+              ))}
+            </div>
+          )}
+          {!weightConfig && fuel.tanks.map((tank, i) => {
             const cfgTank = fuelConfig.tanks?.[i] || {}
             const name = cfgTank.name || `Tank ${i + 1}`
             const massKg = tank.massKg ?? 0
