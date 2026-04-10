@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSimStore } from '../../../store/useSimStore'
 import { useShallow } from 'zustand/react/shallow'
 import { PanelRow, SectionHeader } from '../PanelUtils'
@@ -82,6 +82,10 @@ export default function FuelTab() {
   const [payloadWeights, setPayloadWeights] = useState({})
   const [fuelWeights, setFuelWeights] = useState({})
   const [initialized, setInitialized] = useState(false)
+  const [fuelDirty, setFuelDirty] = useState(false)
+  const fuelDirtyTimer = useRef(null)
+
+  useEffect(() => () => clearTimeout(fuelDirtyTimer.current), [])
 
   // Initialize from weightConfig defaults on first load
   useEffect(() => {
@@ -100,9 +104,15 @@ export default function FuelTab() {
     }
   }, [weightConfig, initialized])
 
-  // Sync fuel weights from solver when sim is RUNNING (fuel being consumed)
+  const markFuelDirty = useCallback(() => {
+    setFuelDirty(true)
+    clearTimeout(fuelDirtyTimer.current)
+    fuelDirtyTimer.current = setTimeout(() => setFuelDirty(false), 2000)
+  }, [])
+
+  // Sync fuel weights from solver when sim is RUNNING and user isn't dragging
   useEffect(() => {
-    if (simState !== 'RUNNING' || !weightConfig) return
+    if (fuelDirty || simState !== 'RUNNING' || !weightConfig) return
     const fw = {}
     const KG_TO_LBS = 1 / LBS_TO_KG
     fuel.tanks.forEach((tank, i) => {
@@ -112,7 +122,7 @@ export default function FuelTab() {
       }
     })
     if (Object.keys(fw).length > 0) setFuelWeights(fw)
-  }, [simState, fuel.tanks, weightConfig])
+  }, [fuelDirty, simState, fuel.tanks, weightConfig])
 
   const updateStation = useCallback((index, lbs) => {
     setPayloadWeights(prev => ({ ...prev, [index]: lbs }))
@@ -120,6 +130,7 @@ export default function FuelTab() {
   }, [sendPayload])
 
   const updateFuelTank = useCallback((tankIndex, lbs) => {
+    markFuelDirty()
     setFuelWeights(prev => {
       const next = { ...prev, [tankIndex]: lbs }
       const tanks = Object.entries(next).map(([idx, qty]) => ({
@@ -128,12 +139,13 @@ export default function FuelTab() {
       sendFuelLoading(tanks)
       return next
     })
-  }, [sendFuelLoading])
+  }, [sendFuelLoading, markFuelDirty])
 
   const totalFuelCapacity = (weightConfig?.fuel_stations || []).reduce((s, t) => s + t.capacity_lbs, 0)
   const totalFuel = Object.values(fuelWeights).reduce((s, v) => s + v, 0)
 
   const setTotalFuel = useCallback((targetLbs) => {
+    markFuelDirty()
     const stations = weightConfig?.fuel_stations || []
     const updates = {}
     const wsTanks = []
@@ -145,7 +157,7 @@ export default function FuelTab() {
     }
     setFuelWeights(prev => ({ ...prev, ...updates }))
     sendFuelLoading(wsTanks)
-  }, [weightConfig, totalFuelCapacity, sendFuelLoading])
+  }, [weightConfig, totalFuelCapacity, sendFuelLoading, markFuelDirty])
 
   const totalPayloadMax = (weightConfig?.payload_stations || []).reduce((s, p) => s + p.max_lbs, 0)
   const totalPayload = Object.values(payloadWeights).reduce((s, v) => s + v, 0)
@@ -202,6 +214,8 @@ export default function FuelTab() {
   const conv = (lbs) => unitLbs ? lbs : lbs * LBS_TO_KG
   const unitLabel = unitLbs ? 'lbs' : 'kg'
   const maxTow = weightConfig?.max_takeoff_weight_lbs || 2400
+  const emptyWeight = weightConfig?.empty_weight_lbs || 0
+  const localTotalWeight = emptyWeight + totalPayload + totalFuel
 
   return (
     <div>
@@ -309,11 +323,14 @@ export default function FuelTab() {
         {/* RIGHT — summary */}
         <div style={{ width: 130, flexShrink: 0 }}>
           <WeightDonut
-            current={conv(fdm.totalMassKg / LBS_TO_KG)}
+            current={conv(localTotalWeight)}
             max={conv(maxTow)}
             unit={unitLabel}
           />
-          <div style={{ marginTop: 12, fontSize: 11, fontFamily: 'monospace', textAlign: 'center' }}>
+          <div style={{ marginTop: 8, fontSize: 9, color: '#475569', fontFamily: 'monospace', textAlign: 'center' }}>
+            FDM: {conv(fdm.totalMassKg / LBS_TO_KG).toFixed(0)} {unitLabel}
+          </div>
+          <div style={{ marginTop: 8, fontSize: 11, fontFamily: 'monospace', textAlign: 'center' }}>
             <div style={{ color: '#64748b', fontSize: 9, letterSpacing: 1, marginBottom: 2 }}>CG POSITION</div>
             <div style={{ color: '#e2e8f0', fontWeight: 700 }}>
               {fdm.cgXIn?.toFixed(1) ?? '--'} in
