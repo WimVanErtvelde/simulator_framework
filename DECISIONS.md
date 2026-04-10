@@ -2542,3 +2542,18 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
   with raw SI values, not just the hand-coded subset.
 - AFFECTS: useSimStore.js (new state + handlers), InspectorPanel.jsx (rewritten).
   No backend changes, no other panel changes.
+
+## 2026-04-10 — Claude Chat
+
+- DECIDED: AircraftPanel split into config-driven horizontal sub-tabs:
+  Fuel & W/B (default) | Electrical | Engines | Radios. Each tab is a
+  separate .jsx file under `panels/aircraft/`. Tabs only render when
+  their corresponding config is non-null in the store.
+- REASON: AircraftPanel grew too large as a single component. Sub-tabs
+  match instructor workflow (fuel/weight setup first, then electrical).
+  Config-driven visibility ensures framework extensibility — future
+  aircraft systems (hydraulic, pressurization, ice protection) just add
+  a new tab component and config, no restructuring needed.
+- AFFECTS: AircraftPanel.jsx (thin shell with tab bar),
+  panels/aircraft/FuelTab.jsx, panels/aircraft/ElectricalTab.jsx,
+  panels/aircraft/EnginesTab.jsx, panels/aircraft/RadiosTab.jsx
