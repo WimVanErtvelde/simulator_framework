@@ -2623,3 +2623,74 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
   Phase 4: Flight time estimate
 - AFFECTS: FlightModelState.msg (cg_x_in, cg_y_in), JSBSimAdapter.cpp,
   ios_backend_node.py, weight.yaml (new), FuelTab.jsx, useSimStore.js
+
+## 2026-04-10 — Claude Chat + Claude Code
+
+### Weight & Balance — Full Implementation
+
+- DECIDED: X-Plane style bottom-up loading for Weight & Balance. Individual
+  payload station sliders + per-tank fuel sliders. CG is a consequence of
+  loading, not a direct input. Rejected EURAMEC top-down approach (set CG
+  directly) — it fights JSBSim's pointmass model.
+- REASON: Each IOS slider maps 1:1 to a JSBSim pointmass or fuel tank
+  property. No inverse kinematics needed. Matches real W&B sheets.
+
+- DECIDED: weight.yaml per aircraft with payload_stations, fuel_stations,
+  cg_envelope polylines, weight limits, empty weight/CG. Arms must match
+  JSBSim XML pointmass order.
+
+- DECIDED: FlightModelState.msg extended with cg_x_in and cg_y_in.
+  JSBSimAdapter reads inertia/cg-x-in and inertia/cg-y-in.
+
+- DECIDED: Payload commands: set_payload WS → PayloadCommand.msg on
+  /aircraft/payload/command → JSBSimAdapter writes pointmass-weight-lbs[N].
+
+- DECIDED: Fuel loading: set_fuel_loading WS → PayloadCommand.msg on
+  /aircraft/fuel/load_command → fuel_node → model_->set_tank_quantity() →
+  solver internal state → writeback → JSBSim. Fuel solver is authority.
+- REASON: Direct JSBSim writes (Bug #13a) caused solver state divergence.
+  InitialConditions path (Bug #13) triggered RunIC reset. Correct path goes
+  through solver. IFuelModel::set_tank_quantity() added to interface.
+
+- DECIDED: FuelTab layout: left column sliders (payload + fuel + masters +
+  Restore Defaults), right column summary (weight donut, CG readout, CG
+  envelope SVG chart, IN/OUT ENVELOPE status).
+
+- DECIDED: Fuel slider sync: fuelDirty flag with 2s cooldown prevents
+  solver state from fighting user input during drag.
+
+- DECIDED: Weight donut uses locally-computed total for instant feedback.
+  FDM confirmed weight as secondary readout.
+
+- DECIDED: CG envelope SVG chart: POH-standard orientation, envelope polygon
+  from weight.yaml, live CG dot (green/red), EW marker, ZFW diamond,
+  loading line, MTOW/MLW dashes, lbs/kg toggle.
+
+- DECIDED: Inside-envelope test: interpolate forward/aft arm limits at
+  current weight from envelope polylines.
+
+- AFFECTS: FlightModelState.msg (cg_x_in, cg_y_in), PayloadCommand.msg
+  (new), i_fuel_model.hpp (set_tank_quantity), JSBSimAdapter.cpp,
+  fuel_node.cpp, ios_backend_node.py, useSimStore.js, FuelTab.jsx,
+  weight.yaml (new per aircraft)
+
+### Bug fixes — #10, #11, #12, #13
+
+- BUG #10: Forced switch remembered pilot click after unlock. Fixed at 3
+  layers: frontend click guard, arbitrator discard during force, copy
+  force_value on release.
+
+- BUG #11: CB only popped when switch toggled afterward. First-ever input
+  matched uninitialized default — change detection missed it. Fixed: set
+  changed=true when has_virtual/has_hardware transitions false→true.
+
+- BUG #12 (a-f): Battery charging chain. (a) Multi-hop BFS for charge path.
+  (b) Charging voltage minus IR drop. (c) Previous-frame detection avoids
+  updateSources overwrite (reverted NodeState approach — ABI mismatch).
+  (d) Segfault guards on detectChargingVoltage. (e) ABI mismatch from
+  header member — removed, use local variable. (f) Removed discharge/charge
+  if/else split — net current (charge minus drain) instead.
+
+- BUG #13 (a-b): Fuel slider reset. (a) Replaced InitialConditions path
+  with direct /aircraft/fuel/load_command. (b) Moved subscription from
+  adapter to fuel_node — solver authority preserved via set_tank_quantity.
