@@ -141,8 +141,8 @@ function CgEnvelopeChart({ weightConfig, payloadWeights, fuelWeights, unitLbs, f
   const wMax = Math.max(mtow, ...allWeights) + 100
 
   // SVG layout
-  const pad = { top: 10, right: 10, bottom: 30, left: 40 }
-  const vw = 260, vh = 260
+  const pad = { top: 14, right: 14, bottom: 38, left: 50 }
+  const vw = 360, vh = 340
   const cw = vw - pad.left - pad.right
   const ch = vh - pad.top - pad.bottom
 
@@ -181,7 +181,7 @@ function CgEnvelopeChart({ weightConfig, payloadWeights, fuelWeights, unitLbs, f
   for (let w = Math.ceil(wMin / wStep) * wStep; w <= wMax; w += wStep) wTicks.push(w)
 
   return (
-    <svg viewBox={`0 0 ${vw} ${vh}`} style={{ width: '100%', maxHeight: 300 }}>
+    <svg viewBox={`0 0 ${vw} ${vh}`} style={{ width: '100%' }}>
       {/* Grid */}
       {armTicks.map(a => (
         <line key={`ga${a}`} x1={toX(a)} y1={pad.top} x2={toX(a)} y2={pad.top + ch}
@@ -199,7 +199,7 @@ function CgEnvelopeChart({ weightConfig, payloadWeights, fuelWeights, unitLbs, f
       <line x1={pad.left} y1={toY(mtow)} x2={pad.left + cw} y2={toY(mtow)}
         stroke="#f59e0b" strokeWidth={1} strokeDasharray="4,3" />
       <text x={pad.left + cw + 2} y={toY(mtow) + 3} fill="#f59e0b"
-        fontSize={7} fontFamily="monospace">MTOW</text>
+        fontSize={10} fontFamily="monospace">MTOW</text>
 
       {/* MLW line (if different) */}
       {mlw !== mtow && (
@@ -207,14 +207,14 @@ function CgEnvelopeChart({ weightConfig, payloadWeights, fuelWeights, unitLbs, f
           <line x1={pad.left} y1={toY(mlw)} x2={pad.left + cw} y2={toY(mlw)}
             stroke="#39d0d8" strokeWidth={1} strokeDasharray="4,3" />
           <text x={pad.left + cw + 2} y={toY(mlw) + 3} fill="#39d0d8"
-            fontSize={7} fontFamily="monospace">MLW</text>
+            fontSize={10} fontFamily="monospace">MLW</text>
         </>
       )}
 
       {/* Empty weight marker */}
-      <circle cx={toX(emptyArm)} cy={toY(emptyW)} r={3} fill="#64748b" />
+      <circle cx={toX(emptyArm)} cy={toY(emptyW)} r={4} fill="#64748b" />
       <text x={toX(emptyArm) + 5} y={toY(emptyW) + 3} fill="#64748b"
-        fontSize={7} fontFamily="monospace">EW</text>
+        fontSize={10} fontFamily="monospace">EW</text>
 
       {/* Loading line: EW → ZFW → live CG */}
       <line x1={toX(emptyArm)} y1={toY(emptyW)} x2={toX(zfwArm)} y2={toY(zfwWeight)}
@@ -228,7 +228,7 @@ function CgEnvelopeChart({ weightConfig, payloadWeights, fuelWeights, unitLbs, f
           <rect x={toX(zfwArm) - 3} y={toY(zfwWeight) - 3} width={6} height={6}
             fill="#39d0d8" transform={`rotate(45 ${toX(zfwArm)} ${toY(zfwWeight)})`} />
           <text x={toX(zfwArm) + 6} y={toY(zfwWeight) + 3} fill="#39d0d8"
-            fontSize={7} fontFamily="monospace">ZFW</text>
+            fontSize={10} fontFamily="monospace">ZFW</text>
         </>
       )}
 
@@ -239,25 +239,25 @@ function CgEnvelopeChart({ weightConfig, payloadWeights, fuelWeights, unitLbs, f
       )}
 
       {/* Live CG dot */}
-      <circle cx={toX(localArm)} cy={toY(localWeight)} r={5}
+      <circle cx={toX(localArm)} cy={toY(localWeight)} r={7}
         fill={localInside ? '#00ff88' : '#ff3b30'}
         stroke={localInside ? '#00ff8844' : '#ff3b3044'} strokeWidth={3} />
 
       {/* Axis labels */}
       {armTicks.map(a => (
         <text key={`la${a}`} x={toX(a)} y={pad.top + ch + 12} fill="#64748b"
-          fontSize={7} fontFamily="monospace" textAnchor="middle">{a}</text>
+          fontSize={10} fontFamily="monospace" textAnchor="middle">{a}</text>
       ))}
       {wTicks.map(w => (
         <text key={`lw${w}`} x={pad.left - 4} y={toY(w) + 3} fill="#64748b"
-          fontSize={7} fontFamily="monospace" textAnchor="end">{conv(w).toFixed(0)}</text>
+          fontSize={10} fontFamily="monospace" textAnchor="end">{conv(w).toFixed(0)}</text>
       ))}
       <text x={pad.left + cw / 2} y={vh - 2} fill="#475569"
-        fontSize={7} fontFamily="monospace" textAnchor="middle">
+        fontSize={10} fontFamily="monospace" textAnchor="middle">
         CG ({weightConfig.unit_label || 'inches'})
       </text>
       <text x={4} y={pad.top + ch / 2} fill="#475569"
-        fontSize={7} fontFamily="monospace" textAnchor="middle"
+        fontSize={10} fontFamily="monospace" textAnchor="middle"
         transform={`rotate(-90 4 ${pad.top + ch / 2})`}>
         {unitLabel}
       </text>
@@ -433,9 +433,9 @@ export default function FuelTab() {
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 16 }}>
         {/* LEFT — sliders */}
-        <div style={{ flex: 1, minWidth: 220 }}>
+        <div style={{ flex: 1, minWidth: 180, maxWidth: '50%' }}>
           {/* Fuel */}
           <SectionHeader title={`FUEL — ${fuelConfig.fuelType}`} />
           {weightConfig && (
@@ -521,7 +521,7 @@ export default function FuelTab() {
         </div>
 
         {/* RIGHT — summary + CG chart */}
-        <div style={{ width: 200, flexShrink: 0 }}>
+        <div style={{ flex: 1, minWidth: 200 }}>
           <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
             <WeightDonut
               current={conv(localTotalWeight)}
