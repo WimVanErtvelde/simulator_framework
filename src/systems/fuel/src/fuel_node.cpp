@@ -12,6 +12,7 @@
 #include <sim_msgs/msg/sim_alert.hpp>
 #include <sim_msgs/msg/panel_controls.hpp>
 #include <sim_msgs/msg/initial_conditions.hpp>
+#include <sim_msgs/msg/payload_command.hpp>
 #include <sim_msgs/msg/flight_model_capabilities.hpp>
 #include <ament_index_cpp/get_package_share_directory.hpp>
 
@@ -96,6 +97,21 @@ public:
           model_->apply_initial_conditions(msg->fuel_total_norm);
           RCLCPP_INFO(this->get_logger(), "Applied IC: fuel_total_norm=%.2f", msg->fuel_total_norm);
         }
+      });
+
+    // Fuel load command from IOS (per-tank quantity set)
+    fuel_load_sub_ = this->create_subscription<sim_msgs::msg::PayloadCommand>(
+      "/aircraft/fuel/load_command", 10,
+      [this](const sim_msgs::msg::PayloadCommand::SharedPtr msg) {
+        if (!model_) return;
+        for (size_t i = 0; i < msg->station_indices.size()
+             && i < msg->weights_lbs.size(); ++i) {
+          int tank_idx = msg->station_indices[i];
+          double kg = msg->weights_lbs[i] * 0.453592;
+          model_->set_tank_quantity(tank_idx, kg);
+        }
+        RCLCPP_INFO(this->get_logger(), "Fuel load: %zu tanks updated",
+          msg->station_indices.size());
       });
 
     // Capabilities subscription (transient_local to receive latched message)
@@ -260,6 +276,7 @@ public:
     sim_state_sub_.reset();
     panel_sub_.reset();
     ic_sub_.reset();
+    fuel_load_sub_.reset();
     caps_sub_.reset();
     fuel_writeback_pub_.reset();
     latest_caps_.reset();
@@ -342,6 +359,7 @@ private:
   rclcpp::Subscription<sim_msgs::msg::SimState>::SharedPtr sim_state_sub_;
   rclcpp::Subscription<sim_msgs::msg::PanelControls>::SharedPtr panel_sub_;
   rclcpp::Subscription<sim_msgs::msg::InitialConditions>::SharedPtr ic_sub_;
+  rclcpp::Subscription<sim_msgs::msg::PayloadCommand>::SharedPtr fuel_load_sub_;
   rclcpp::Subscription<sim_msgs::msg::FlightModelCapabilities>::SharedPtr caps_sub_;
 
   // Capabilities writeback

@@ -133,6 +133,13 @@ public:
     }
   }
 
+  void set_tank_quantity(int tank_index, double quantity_kg) override
+  {
+    if (tank_index >= 0 && tank_index < static_cast<int>(tanks_.size())) {
+      tank_qty_kg_[tank_index] = static_cast<float>(quantity_kg);
+    }
+  }
+
   sim_msgs::msg::FuelState get_state() const override
   {
     sim_msgs::msg::FuelState state;

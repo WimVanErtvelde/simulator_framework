@@ -137,6 +137,12 @@
   /aircraft/fuel/load_command. JSBSimAdapter subscribes and writes
   propulsion/tank[N]/contents-lbs directly. No RunIC, no reset.
   Fuel solver internal state may be stale until proper integration (deferred).
+- BUG #13b: Direct JSBSim tank write bypassed fuel solver. Fuel solver
+  overwrites tank contents every frame from its own internal state.
+- FIX: Moved /aircraft/fuel/load_command subscription from JSBSimAdapter
+  to fuel_node. Fuel solver receives command, updates internal tank state
+  via IFuelModel::set_tank_quantity(). Writeback naturally pushes
+  new value to JSBSim. Adapter no longer writes tank contents directly.
 
 ## Open
 

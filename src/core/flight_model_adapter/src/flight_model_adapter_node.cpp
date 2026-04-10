@@ -322,11 +322,7 @@ public:
         if (adapter_) adapter_->apply_payload_command(*msg);
       });
 
-    fuel_load_sub_ = this->create_subscription<sim_msgs::msg::PayloadCommand>(
-      "/aircraft/fuel/load_command", 10,
-      [this](const sim_msgs::msg::PayloadCommand::SharedPtr msg) {
-        if (adapter_) adapter_->apply_fuel_load_command(*msg);
-      });
+    // /aircraft/fuel/load_command handled by fuel_node (fuel solver owns tank state)
 
     heartbeat_timer_ = this->create_wall_timer(
       std::chrono::seconds(1),
@@ -590,7 +586,6 @@ private:
   rclcpp::Subscription<sim_msgs::msg::ElectricalState>::SharedPtr elec_writeback_sub_;
   rclcpp::Subscription<sim_msgs::msg::FuelState>::SharedPtr fuel_writeback_sub_;
   rclcpp::Subscription<sim_msgs::msg::PayloadCommand>::SharedPtr payload_command_sub_;
-  rclcpp::Subscription<sim_msgs::msg::PayloadCommand>::SharedPtr fuel_load_sub_;
   rclcpp::Subscription<sim_msgs::msg::HatHotResponse>::SharedPtr hat_response_sub_;
 
   sim_msgs::msg::FlightControls::SharedPtr latest_flight_controls_;

@@ -121,6 +121,22 @@ public:
     }
   }
 
+  void set_tank_quantity(int tank_index, double quantity_kg) override
+  {
+    if (!solver_) return;
+    // Map integer index to tank node ID
+    int idx = 0;
+    for (auto & node : solver_->getTopology().nodes) {
+      if (node.type == fuel_graph::NodeType::tank && node.tank) {
+        if (idx == tank_index) {
+          solver_->setTankQuantity(node.id, quantity_kg);
+          return;
+        }
+        idx++;
+      }
+    }
+  }
+
   sim_msgs::msg::FuelState get_state() const override
   {
     sim_msgs::msg::FuelState state;
