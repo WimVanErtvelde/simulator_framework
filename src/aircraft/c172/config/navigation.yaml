@@ -6,7 +6,6 @@ avionics:
   radios:
     - { id: com1, label: COM1, type: com }
     - { id: com2, label: COM2, type: com }
-    - { id: com3, label: COM3, type: com }
     - { id: nav1, label: NAV1, type: nav }
     - { id: nav2, label: NAV2, type: nav }
     - { id: obs1, label: OBS1, type: obs }

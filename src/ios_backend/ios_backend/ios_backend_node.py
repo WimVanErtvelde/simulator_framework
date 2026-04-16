@@ -138,6 +138,8 @@ class IosBackendNode(Node):
             PanelControls, '/aircraft/devices/virtual/panel', 10)
         self._raw_avionics_pub = self.create_publisher(
             RawAvionicsControls, '/aircraft/devices/instructor/controls/avionics', 10)
+        self._virtual_avionics_pub = self.create_publisher(
+            RawAvionicsControls, '/aircraft/devices/virtual/controls/avionics', 10)
         self._cmd_pub = self.create_publisher(
             SimCommand, '/sim/command', 10)
         # Instructor flight/engine controls — arbitrated by input_arbitrator
@@ -909,6 +911,29 @@ class IosBackendNode(Node):
         self.get_logger().debug(
             f'Published instructor avionics: NAV1={msg.nav1_freq_mhz} NAV2={msg.nav2_freq_mhz}')
 
+    def publish_virtual_avionics(self, data: dict):
+        """Publish RawAvionicsControls to /aircraft/devices/virtual/controls/avionics."""
+        msg = RawAvionicsControls()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.com1_freq_mhz = float(data.get('com1_mhz', 118.10))
+        msg.com2_freq_mhz = float(data.get('com2_mhz', 121.50))
+        msg.com3_freq_mhz = float(data.get('com3_mhz', 0.0))
+        msg.nav1_freq_mhz = float(data.get('nav1_mhz', 109.10))
+        msg.nav2_freq_mhz = float(data.get('nav2_mhz', 110.30))
+        msg.obs1_deg = float(data.get('obs1_deg', 0.0))
+        msg.obs2_deg = float(data.get('obs2_deg', 0.0))
+        msg.adf1_freq_khz = float(data.get('adf1_khz', 0.0))
+        msg.adf2_freq_khz = float(data.get('adf2_khz', 0.0))
+        msg.transponder_code = int(data.get('xpdr_code', 2000))
+        msg.transponder_mode = int(data.get('xpdr_mode', 0))
+        msg.dme_source = int(data.get('dme_source', 0))
+        msg.tacan_channel = int(data.get('tacan_channel', 0))
+        msg.tacan_band = int(data.get('tacan_band', 0))
+        msg.gps_source = int(data.get('gps_source', 0))
+        self._virtual_avionics_pub.publish(msg)
+        self.get_logger().debug(
+            f'Published virtual avionics: COM1={msg.com1_freq_mhz} NAV1={msg.nav1_freq_mhz}')
+
     def publish_flight_controls(self, data: dict):
         """Publish RawFlightControls to /aircraft/devices/instructor/controls/flight."""
         msg = RawFlightControls()
@@ -1508,6 +1533,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 elif msg.get('type') == 'set_avionics' and ros_node:
                     ros_node.publish_avionics(msg)
+
+                elif msg.get('type') == 'set_virtual_avionics' and ros_node:
+                    ros_node.publish_virtual_avionics(msg.get('data', msg))
 
                 elif msg.get('type') == 'set_panel' and ros_node:
                     ros_node.publish_panel(msg.get('data', msg))

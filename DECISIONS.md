@@ -56,7 +56,7 @@
 Architecture audit complete (2026-03-25). All bugs resolved (#1–#9). Bug #8 (FORCE checkbox) fixed — AircraftPanel now reads `forcedSwitchIds` from ArbitrationState round-trip instead of local React state. Dead wiring cleanup complete: removed 5 dead `/sim/failures/active` subscriptions, removed `/sim/failure/navaid_commands` publisher, removed unused `InitialConditions` import from ios_backend.
 
 ### Not yet implemented
-- IOS: COM/NAV freq entry, flight departure/arrival graphs, freeze pos/fuel toggles, debrief
+- IOS: COM/NAV freq entry, flight departure/arrival graphs, debrief
 - SimSnapshot save/load (designed, deferred)
 - QTG test runner
 - Audio system (RPi5/libpd architecture decided, not started)
@@ -64,6 +64,17 @@ Architecture audit complete (2026-03-25). All bugs resolved (#1–#9). Bug #8 (F
 - micro-ROS hardware bridge
 - Electrical: selector + potentiometer connection types (designed, not in solver). Ammeter reads total bus current instead of alternator output.
 - Ground station failure commands (IOS→navaid_sim via `/world/navaids/command`)
+- Realistic cockpit panel layouts (C172 analog, future G1000): absolute-positioned
+  sections over a panel background image. Reuses existing embeddable sections
+  (ElectricalSection, RadioSection, etc.) with a layout wrapper per aircraft.
+- Reusable instrument library: SVG gauge components (airspeed, altimeter, VSI,
+  attitude, HSI, turn coordinator, engine gauges, annunciators). Config-driven
+  via a new per-aircraft instruments.yaml defining ranges, color arcs, redlines.
+  Shared between analog panels, G1000 displays, IOS displays. Resolution-
+  independent and input-agnostic per the G1000 architecture decision.
+- Frontend JSX audit: review for file length, inline style cleanup, component
+  decomposition, prop drilling vs store access. Scheduled AFTER the instrument
+  library is built (will naturally rewrite engine gauge sections).
 
 ### Open decisions
 - [ ] CIGI library: raw encoding (current) or cigicl?
@@ -2694,3 +2705,25 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - BUG #13 (a-b): Fuel slider reset. (a) Replaced InitialConditions path
   with direct /aircraft/fuel/load_command. (b) Moved subscription from
   adapter to fuel_node — solver authority preserved via set_tank_quantity.
+## 2026-04-16 — Claude Code
+- DECIDED: Aircraft-specific electrical tests moved from sim_electrical
+  to aircraft_c172 package. sim_electrical/test/ contains only generic
+  solver tests (YAML validation + synthetic topology fixtures).
+- REASON: sim_electrical is framework code and should not carry C172
+  knowledge. Pattern extends cleanly to future aircraft packages.
+- AFFECTS: src/systems/electrical/test/test_graph_solver.cpp (trimmed),
+  src/systems/electrical/CMakeLists.txt (compile def removed),
+  src/aircraft/c172/test/test_c172_electrical.cpp (new),
+  src/aircraft/c172/CMakeLists.txt (new test target)
+
+## 2026-04-16 — Claude Code
+- DECIDED: C172-specific fuel tests moved from sim_fuel to aircraft_c172
+  package. sim_fuel/test/ now contains only generic solver tests using
+  synthetic inline topology. Matches the sim_electrical split.
+- REASON: sim_fuel is framework code and should not carry C172 knowledge.
+  Pattern extends cleanly to future aircraft packages.
+- AFFECTS: src/systems/fuel/test/test_fuel_graph_solver.cpp (rewritten
+  with synthetic topology), src/systems/fuel/CMakeLists.txt (compile def
+  removed), src/aircraft/c172/test/test_c172_fuel.cpp (new, 15 tests),
+  src/aircraft/c172/test/c172_fuel_v2.yaml (moved from sim_fuel),
+  src/aircraft/c172/CMakeLists.txt (new test target).

@@ -31,12 +31,9 @@ target_link_libraries(fuel_graph_solver
   yaml-cpp
 )
 
-# ─── Fuel Graph Solver Tests ────────────────────────────────────────
+# ─── Fuel Graph Solver Tests (generic only — aircraft tests in aircraft packages) ──
 add_executable(test_fuel_graph_solver test/test_fuel_graph_solver.cpp)
 target_link_libraries(test_fuel_graph_solver fuel_graph_solver)
-target_compile_definitions(test_fuel_graph_solver PRIVATE
-  TEST_YAML_PATH="${CMAKE_CURRENT_SOURCE_DIR}/test/c172_fuel_v2.yaml"
-)
 
 # ─── ROS2 Node ───────────────────────────────────────────────────────
 add_executable(fuel_node src/fuel_node.cpp)

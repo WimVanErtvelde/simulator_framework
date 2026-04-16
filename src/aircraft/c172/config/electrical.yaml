@@ -121,6 +121,11 @@ nodes:
     label: "NAV 1"
     nominal_current: 1.5
 
+  - id: adf
+    type: load
+    label: "ADF"
+    nominal_current: 0.5
+
   - id: pitot_heat
     type: load
     label: "PITOT HEAT"
@@ -142,7 +147,7 @@ nodes:
     label: "GPS"
     nominal_current: 2.0
 
-  - id: transponder
+  - id: xpdr
     type: load
     label: "XPDR"
     nominal_current: 2.0
@@ -300,6 +305,14 @@ connections:
     rating: 3.0
     pilot_controllable: true
 
+  # ADF: essential_bus → cb → load (no switch)
+  - id: cb_adf
+    type: circuit_breaker
+    from: essential_bus
+    to: adf
+    rating: 3.0
+    pilot_controllable: true
+
   # PITOT HEAT: essential_bus → cb → jct → switch → load
   - id: cb_pitot
     type: circuit_breaker
@@ -354,7 +367,7 @@ connections:
   - id: cb_xpdr
     type: circuit_breaker
     from: avionics_bus
-    to: transponder
+    to: xpdr
     rating: 5.0
     pilot_controllable: true
 

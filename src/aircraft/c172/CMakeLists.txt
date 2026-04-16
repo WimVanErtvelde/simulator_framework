@@ -38,4 +38,19 @@ install(TARGETS aircraft_c172_plugins
 install(DIRECTORY config/
   DESTINATION share/${PROJECT_NAME}/config)
 
+# ─── Tests ───────────────────────────────────────────────────────
+if(BUILD_TESTING)
+  add_executable(test_c172_electrical test/test_c172_electrical.cpp)
+  target_include_directories(test_c172_electrical PRIVATE ${sim_electrical_INCLUDE_DIRS})
+  target_link_libraries(test_c172_electrical ${sim_electrical_LIBRARIES})
+  target_compile_definitions(test_c172_electrical PRIVATE
+    TEST_YAML_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/electrical.yaml")
+
+  add_executable(test_c172_fuel test/test_c172_fuel.cpp)
+  target_include_directories(test_c172_fuel PRIVATE ${sim_fuel_INCLUDE_DIRS})
+  target_link_libraries(test_c172_fuel ${sim_fuel_LIBRARIES})
+  target_compile_definitions(test_c172_fuel PRIVATE
+    TEST_YAML_PATH="${CMAKE_CURRENT_SOURCE_DIR}/test/c172_fuel_v2.yaml")
+endif()
+
 ament_package()

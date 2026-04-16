@@ -181,7 +181,7 @@ function CgEnvelopeChart({ weightConfig, payloadWeights, fuelWeights, unitLbs, f
   for (let w = Math.ceil(wMin / wStep) * wStep; w <= wMax; w += wStep) wTicks.push(w)
 
   return (
-    <svg viewBox={`0 0 ${vw} ${vh}`} style={{ width: '100%' }}>
+    <svg viewBox={`0 0 ${vw} ${vh}`} style={{ width: '100%', maxWidth: 600 }}>
       {/* Grid */}
       {armTicks.map(a => (
         <line key={`ga${a}`} x1={toX(a)} y1={pad.top} x2={toX(a)} y2={pad.top + ch}

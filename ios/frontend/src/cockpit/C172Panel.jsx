@@ -15,10 +15,13 @@ import TurnCoordinator from './instruments/TurnCoordinator'
 import RoundGauge from './components/RoundGauge'
 import BarGauge from './components/BarGauge'
 import AnnunciatorLight from './components/AnnunciatorLight'
-import ToggleSwitch from './components/ToggleSwitch'
 import ControlPositionIndicator from './components/ControlPositionIndicator'
 import SelectorControl from './components/SelectorControl'
 import VerticalSlider from './components/VerticalSlider'
+
+// Embeddable sections
+import ElectricalSection from './sections/ElectricalSection'
+import RadioSection from './sections/RadioSection'
 
 const BG = '#0a0e14'
 const PANEL = '#111827'
@@ -96,33 +99,11 @@ export default function C172Panel() {
         <AnnunciatorLight label="PITOT HT" active={!airData.pitotHeatOn && !gear.onGround} color="#f59e0b" />
       </div>
 
-      {/* ── SWITCH PANEL (full-width horizontal row) ────────────── */}
+      {/* ── SWITCH PANEL (from ElectricalSection) ────────────────── */}
       <Section title="SWITCHES">
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center', alignItems: 'flex-end' }}>
-          <ToggleSwitch label="BATT" on={sw('sw_battery')}
-            onToggle={() => { if (!isForced('sw_battery')) sendVirtualPanel(['sw_battery'], [!sw('sw_battery')]) }} />
-          <ToggleSwitch label="ALT" on={sw('sw_alt')}
-            onToggle={() => { if (!isForced('sw_alt')) sendVirtualPanel(['sw_alt'], [!sw('sw_alt')]) }} />
-          <ToggleSwitch label="AVIONICS" on={sw('sw_avionics_master')}
-            onToggle={() => { if (!isForced('sw_avionics_master')) sendVirtualPanel(['sw_avionics_master'], [!sw('sw_avionics_master')]) }} />
-          <ToggleSwitch label="FUEL PUMP" on={sw('sw_fuel_pump')}
-            onToggle={() => { if (!isForced('sw_fuel_pump')) sendVirtualPanel(['sw_fuel_pump'], [!sw('sw_fuel_pump')]) }} />
-          <ToggleSwitch label="PITOT HT" on={sw('sw_pitot_heat')}
-            onToggle={() => { if (!isForced('sw_pitot_heat')) sendVirtualPanel(['sw_pitot_heat'], [!sw('sw_pitot_heat')]) }} />
-          <ToggleSwitch label="BCN" on={sw('sw_beacon')}
-            onToggle={() => { if (!isForced('sw_beacon')) sendVirtualPanel(['sw_beacon'], [!sw('sw_beacon')]) }} />
-          <ToggleSwitch label="NAV" on={sw('sw_nav_lt')}
-            onToggle={() => { if (!isForced('sw_nav_lt')) sendVirtualPanel(['sw_nav_lt'], [!sw('sw_nav_lt')]) }} />
-          <ToggleSwitch label="STROBE" on={sw('sw_strobe')}
-            onToggle={() => { if (!isForced('sw_strobe')) sendVirtualPanel(['sw_strobe'], [!sw('sw_strobe')]) }} />
-          <ToggleSwitch label="LAND" on={sw('sw_landing_lt')}
-            onToggle={() => { if (!isForced('sw_landing_lt')) sendVirtualPanel(['sw_landing_lt'], [!sw('sw_landing_lt')]) }} />
-          <ToggleSwitch label="TAXI" on={sw('sw_taxi_lt')}
-            onToggle={() => { if (!isForced('sw_taxi_lt')) sendVirtualPanel(['sw_taxi_lt'], [!sw('sw_taxi_lt')]) }} />
-          <div style={{ borderLeft: '1px solid #1e293b', height: 56, margin: '0 4px' }} />
-          <ToggleSwitch label="CARB HT" on={sw('sw_carb_heat')}
-            onToggle={() => { if (!isForced('sw_carb_heat')) sendVirtualPanel(['sw_carb_heat'], [!sw('sw_carb_heat')]) }} />
-          <div style={{ borderLeft: '1px solid #1e293b', height: 56, margin: '0 4px' }} />
+        <ElectricalSection compact />
+        {/* Magneto selector stays here — not part of electrical config */}
+        <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginTop: 6 }}>
           <SelectorControl label="MAGNETOS" value={magnetoPos}
             options={[
               { value: 0, label: 'OFF' }, { value: 1, label: 'R' },
@@ -131,7 +112,7 @@ export default function C172Panel() {
             ]}
             onChange={(v) => {
               setMagnetoPos(v)
-              kbSetMagneto(v)  // update shared state so keyboard tick doesn't overwrite
+              kbSetMagneto(v)
               sendVirtualPanel(['sw_starter_engage'], [v === 4], ['sel_magnetos'], [v])
             }} />
         </div>
@@ -273,20 +254,9 @@ export default function C172Panel() {
           </div>
         </Section>
 
-        {/* NAV info summary */}
-        <Section title="NAV INFO" style={{ flex: 1, minWidth: 200 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, fontSize: 11 }}>
-            <div><span style={{ color: '#64748b' }}>COM1</span> {(nav.com1Mhz || 0).toFixed(3)}</div>
-            <div><span style={{ color: '#64748b' }}>COM2</span> {(nav.com2Mhz || 0).toFixed(3)}</div>
-            <div><span style={{ color: '#64748b' }}>NAV1</span> {(nav.nav1Mhz || 0).toFixed(2)} {nav.nav1Ident || ''}</div>
-            <div><span style={{ color: '#64748b' }}>NAV2</span> {(nav.nav2Mhz || 0).toFixed(2)} {nav.nav2Ident || ''}</div>
-            <div><span style={{ color: '#64748b' }}>ADF</span> {(nav.adf1Khz || 0).toFixed(0)} kHz</div>
-            <div><span style={{ color: '#64748b' }}>DME</span> {nav.dmeValid ? `${nav.dmeDistanceNm?.toFixed(1)} NM` : '---'}</div>
-            <div><span style={{ color: '#64748b' }}>XPDR</span> {nav.xpdrCode?.toString().padStart(4, '0')}</div>
-            <div><span style={{ color: '#64748b' }}>OBS1</span> {(nav.nav1ObsDeg || 0).toFixed(0)}°</div>
-            <div><span style={{ color: '#64748b' }}>HDG</span> {hdgMagDeg.toFixed(0)}°M</div>
-            <div><span style={{ color: '#64748b' }}>VAR</span> {(nav.magVariationDeg || 0).toFixed(1)}°</div>
-          </div>
+        {/* RADIOS — virtual cockpit tuning with power gating */}
+        <Section title="RADIOS" style={{ width: 200 }}>
+          <RadioSection compact />
         </Section>
       </div>
 

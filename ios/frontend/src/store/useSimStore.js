@@ -269,6 +269,12 @@ export const useSimStore = create((set, get) => ({
     return true
   },
 
+  sendVirtualAvionics: (data) => {
+    const { ws, wsConnected } = get()
+    if (!wsConnected || !ws) return
+    ws.send(JSON.stringify({ type: 'set_virtual_avionics', data }))
+  },
+
   sendPayload: (stations) => {
     const { ws, wsConnected } = get()
     if (!wsConnected || !ws) return

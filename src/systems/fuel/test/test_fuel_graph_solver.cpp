@@ -1,3 +1,6 @@
+// Generic fuel graph solver tests — no aircraft-specific references.
+// Aircraft-specific tests live in src/aircraft/<type>/test/.
+
 #include "fuel/fuel_graph_solver.hpp"
 
 #include <cassert>
@@ -6,10 +9,6 @@
 #include <fstream>
 #include <iostream>
 #include <string>
-
-#ifndef TEST_YAML_PATH
-#error "TEST_YAML_PATH must be defined at compile time"
-#endif
 
 using namespace fuel_graph;
 
@@ -48,304 +47,106 @@ static int tests_total  = 0;
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
-static FuelGraphSolver makeSolver() {
-    FuelGraphSolver s;
-    bool ok = s.loadTopologyYaml(TEST_YAML_PATH);
-    assert(ok && "Failed to load c172_fuel_v2.yaml");
-    return s;
+/// Write YAML string to temp file, load into solver, clean up.
+static bool loadFromString(FuelGraphSolver& s, const std::string& yaml) {
+    const char* path = "/tmp/test_fuel_solver_tmp.yaml";
+    {
+        std::ofstream f(path);
+        f << yaml;
+    }
+    bool result = s.loadTopologyYaml(path);
+    std::remove(path);
+    return result;
 }
 
-/// Set engine running with fuel demand.
-static void setEngineRunning(FuelGraphSolver& s, double rpm_pct = 60.0, double demand_kgs = 0.01) {
-    FdmInputs fdm;
-    fdm.engine_rpm_pct = {rpm_pct};
-    fdm.engine_fuel_demand_kgs = {demand_kgs};
-    s.setFdmInputs(fdm);
+// Minimal synthetic topology: tank → line → pump → line → engine_inlet
+static const char* SYNTH_YAML = R"(
+fuel:
+  fuel_type: TEST
+  density_kg_per_liter: 0.72
+
+nodes:
+  - id: syn_tank
+    type: tank
+    label: "Test Tank"
+    capacity_kg: 50.0
+    unusable_kg: 0.0
+    arm_m: 0.0
+  - id: syn_pump
+    type: pump
+    label: "Test Pump"
+    subtype: engine
+    min_rpm_pct: 5.0
+  - id: syn_inlet
+    type: engine_inlet
+    engine_index: 0
+
+connections:
+  - id: line_tank_pump
+    type: line
+    from: syn_tank
+    to: syn_pump
+  - id: line_pump_inlet
+    type: line
+    from: syn_pump
+    to: syn_inlet
+)";
+
+static FuelGraphSolver makeSynth() {
+    FuelGraphSolver s;
+    bool ok = loadFromString(s, SYNTH_YAML);
+    assert(ok && "Failed to load synthetic fuel topology");
+    return s;
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────
 
 int main() {
 
-    // T1 ── Load C172 topology, verify counts ────────────────────────
-    TEST("Load C172 topology — 7 nodes, 8 connections, 1 selector group");
+    // T1 ── Load synthetic topology, verify counts ───────────────────
+    TEST("Synthetic: load topology — 3 nodes, 2 connections");
     {
-        FuelGraphSolver s = makeSolver();
+        FuelGraphSolver s = makeSynth();
         auto& topo = s.getTopology();
-        CHECK(topo.nodes.size() == 7);
-        CHECK(topo.connections.size() == 8);  // 2 selector + 5 line + 1 gravity feed
-        CHECK(topo.selectors.size() == 1);
+        CHECK(topo.nodes.size() == 3);
+        CHECK(topo.connections.size() == 2);
     }
     PASS();
 
-    // T2 ── Selector BOTH — both tanks feed engine ───────────────────
-    TEST("Selector BOTH — both tanks drain equally");
+    // T2 ── Engine fed when pump running (engine RPM > 0) ────────────
+    TEST("Synthetic: engine fed when pump running, tank drains");
     {
-        FuelGraphSolver s = makeSolver();
-        setEngineRunning(s);
-        // Default selector is BOTH
+        FuelGraphSolver s = makeSynth();
+        FdmInputs fdm;
+        fdm.engine_rpm_pct = {60.0};
+        fdm.engine_fuel_demand_kgs = {0.01};
+        s.setFdmInputs(fdm);
 
-        double left_before  = s.getNodeStates().at("tank_left").quantity_kg;
-        double right_before = s.getNodeStates().at("tank_right").quantity_kg;
+        double qty_before = s.getNodeStates().at("syn_tank").quantity_kg;
 
         for (int i = 0; i < 100; ++i) s.step(0.02);  // 2 seconds
 
-        double left_after  = s.getNodeStates().at("tank_left").quantity_kg;
-        double right_after = s.getNodeStates().at("tank_right").quantity_kg;
-
-        CHECK(s.getNodeStates().at("engine_inlet_0").fed);
-        CHECK(left_after < left_before);
-        CHECK(right_after < right_before);
-        // Equal drain: both tanks should lose same amount
-        CHECK_NEAR(left_before - left_after, right_before - right_after, 0.001);
+        CHECK(s.getNodeStates().at("syn_inlet").fed);
+        double qty_after = s.getNodeStates().at("syn_tank").quantity_kg;
+        CHECK(qty_after < qty_before);
     }
     PASS();
 
-    // T3 ── Selector LEFT — only left tank drains ────────────────────
-    TEST("Selector LEFT — only left tank drains, right unchanged");
+    // T3 ── Engine starved when pump not running (RPM = 0) ───────────
+    TEST("Synthetic: engine starved when pump not running, tank unchanged");
     {
-        FuelGraphSolver s = makeSolver();
-        setEngineRunning(s);
-        s.setSelector("sel_fuel", "LEFT");
-
-        double right_before = s.getNodeStates().at("tank_right").quantity_kg;
-
-        for (int i = 0; i < 100; ++i) s.step(0.02);
-
-        CHECK(s.getNodeStates().at("engine_inlet_0").fed);
-        CHECK(s.getNodeStates().at("tank_left").quantity_kg < 92.0);
-        CHECK_NEAR(s.getNodeStates().at("tank_right").quantity_kg, right_before, 0.001);
-    }
-    PASS();
-
-    // T4 ── Selector RIGHT — only right tank drains ──────────────────
-    TEST("Selector RIGHT — only right tank drains, left unchanged");
-    {
-        FuelGraphSolver s = makeSolver();
-        setEngineRunning(s);
-        s.setSelector("sel_fuel", "RIGHT");
-
-        double left_before = s.getNodeStates().at("tank_left").quantity_kg;
-
-        for (int i = 0; i < 100; ++i) s.step(0.02);
-
-        CHECK(s.getNodeStates().at("engine_inlet_0").fed);
-        CHECK_NEAR(s.getNodeStates().at("tank_left").quantity_kg, left_before, 0.001);
-        CHECK(s.getNodeStates().at("tank_right").quantity_kg < 92.0);
-    }
-    PASS();
-
-    // T5 ── Selector OFF — engine starved ────────────────────────────
-    TEST("Selector OFF — engine starved, no tank drain");
-    {
-        FuelGraphSolver s = makeSolver();
-        setEngineRunning(s);
-        s.setSelector("sel_fuel", "OFF");
-
-        double left_before  = s.getNodeStates().at("tank_left").quantity_kg;
-        double right_before = s.getNodeStates().at("tank_right").quantity_kg;
-
-        for (int i = 0; i < 100; ++i) s.step(0.02);
-
-        CHECK(!s.getNodeStates().at("engine_inlet_0").fed);
-        CHECK_NEAR(s.getNodeStates().at("tank_left").quantity_kg, left_before, 0.001);
-        CHECK_NEAR(s.getNodeStates().at("tank_right").quantity_kg, right_before, 0.001);
-    }
-    PASS();
-
-    // T6 ── Mechanical pump fail — engine still fed via gravity ────────
-    TEST("Mechanical pump fail — engine still fed (C172 gravity feed)");
-    {
-        FuelGraphSolver s = makeSolver();
-        setEngineRunning(s);
-        s.applyFailureEffect("pump_mechanical", "force", "online", "false");
-
-        s.step(0.02);
-
-        CHECK(s.getNodeStates().at("engine_inlet_0").fed);
-    }
-    PASS();
-
-    // T7 ── Both pumps fail — engine still fed via gravity ───────────
-    TEST("Both pumps fail — engine still fed (C172 high-wing gravity)");
-    {
-        FuelGraphSolver s = makeSolver();
-        setEngineRunning(s);
-        s.applyFailureEffect("pump_mechanical", "force", "online", "false");
-        s.applyFailureEffect("pump_electric", "force", "online", "false");
-        s.commandPump("sw_fuel_pump", true);  // switch on but forced offline
-
-        s.step(0.02);
-
-        CHECK(s.getNodeStates().at("engine_inlet_0").fed);
-    }
-    PASS();
-
-    // T8 ── Selector OFF still starves despite gravity feed ────────────
-    TEST("Selector OFF — engine starved even with gravity feed path");
-    {
-        FuelGraphSolver s = makeSolver();
-        setEngineRunning(s);
-        s.setSelector("sel_fuel", "OFF");
-
-        s.step(0.02);
-
-        // Gravity feed goes from strainer to inlet, but selector OFF
-        // means no fuel reaches strainer → gravity path is dry too
-        CHECK(!s.getNodeStates().at("engine_inlet_0").fed);
-    }
-    PASS();
-
-    // T9 ── Fuel exhaustion + selector switch ────────────────────────
-    TEST("Fuel exhaustion LEFT → switch to BOTH → engine fed from right");
-    {
-        FuelGraphSolver s = makeSolver();
-        setEngineRunning(s, 60.0, 10.0);  // very high demand for quick drain
-        s.setSelector("sel_fuel", "LEFT");
-
-        // Drain left tank to unusable: 90.6 usable kg / 10 kg/s = ~9s → 500 steps
-        for (int i = 0; i < 500; ++i) s.step(0.02);
-
-        // Left tank should be at or near unusable
-        double left_qty = s.getNodeStates().at("tank_left").quantity_kg;
-        CHECK_NEAR(left_qty, 1.4, 0.5);  // unusable_kg = 1.4
-        CHECK(!s.getNodeStates().at("engine_inlet_0").fed);
-
-        // Switch to BOTH — right tank still has fuel
-        s.setSelector("sel_fuel", "BOTH");
-        s.step(0.02);
-
-        CHECK(s.getNodeStates().at("engine_inlet_0").fed);
-    }
-    PASS();
-
-    // T10 ── Fuel leak ───────────────────────────────────────────────
-    TEST("Fuel leak — upstream tank loses fuel beyond engine consumption");
-    {
-        FuelGraphSolver s = makeSolver();
-        setEngineRunning(s, 60.0, 0.001);  // very low engine demand
-        s.setSelector("sel_fuel", "LEFT");
-
-        // Apply leak on strainer→manifold at 100 L/h (high rate for fast test)
-        s.applyFailureEffect("line_strainer_to_manifold", "set", "leak_rate_lph", "100.0");
-
-        double left_before = s.getNodeStates().at("tank_left").quantity_kg;
-
-        // Step for 1 second (50 steps × 0.02s)
-        for (int i = 0; i < 50; ++i) s.step(0.02);
-
-        double left_after = s.getNodeStates().at("tank_left").quantity_kg;
-        double drain = left_before - left_after;
-        // Expected leak drain: 100 L/h × 0.72 kg/L / 3600 s = 0.02 kg/s × 1s = 0.02 kg
-        // Plus tiny engine consumption: 0.001 kg/s × 1s = 0.001 kg
-        // Total ~0.021 kg. But mostly from leak.
-        CHECK(drain > 0.015);  // Leak dominates
-        // Right tank unchanged (only LEFT selected)
-        CHECK_NEAR(s.getNodeStates().at("tank_right").quantity_kg, 92.0, 0.001);
-    }
-    PASS();
-
-    // T11 ── Jam selector ────────────────────────────────────────────
-    TEST("Jam selector in LEFT — command to BOTH ignored, still LEFT");
-    {
-        FuelGraphSolver s = makeSolver();
-        setEngineRunning(s);
-        s.setSelector("sel_fuel", "LEFT");
-        s.step(0.02);
-
-        // Jam the selector
-        s.applyFailureEffect("sel_fuel", "jam", "jammed", "true");
-
-        // Try to change to BOTH
-        s.setSelector("sel_fuel", "BOTH");
-        s.step(0.02);
-
-        // Right tank should not be feeding (still LEFT)
-        double right_before = s.getNodeStates().at("tank_right").quantity_kg;
-        for (int i = 0; i < 50; ++i) s.step(0.02);
-        CHECK_NEAR(s.getNodeStates().at("tank_right").quantity_kg, right_before, 0.001);
-        // Left tank drains
-        CHECK(s.getNodeStates().at("tank_left").quantity_kg < 92.0);
-    }
-    PASS();
-
-    // T12 ── CAS: LOW FUEL ───────────────────────────────────────────
-    TEST("CAS LOW FUEL — drain both tanks below threshold");
-    {
-        FuelGraphSolver s = makeSolver();
-        setEngineRunning(s, 60.0, 5.0);  // very high demand
-
-        // Drain both tanks: 184 kg total, 5 kg/s → ~36 seconds
-        for (int i = 0; i < 2000; ++i) s.step(0.02);  // 40 seconds
-
-        bool found = false;
-        for (auto& msg : s.getCasMessages()) {
-            if (msg.text == "LOW FUEL") { found = true; break; }
-        }
-        CHECK(found);
-    }
-    PASS();
-
-    // T13 ── CAS: FUEL PRESS ─────────────────────────────────────────
-    TEST("CAS FUEL PRESS — engine starved");
-    {
-        FuelGraphSolver s = makeSolver();
-        setEngineRunning(s);
-        s.setSelector("sel_fuel", "OFF");
-
-        s.step(0.02);
-
-        bool found = false;
-        for (auto& msg : s.getCasMessages()) {
-            if (msg.text == "FUEL PRESS") { found = true; break; }
-        }
-        CHECK(found);
-    }
-    PASS();
-
-    // T14 ── Reset ───────────────────────────────────────────────────
-    TEST("Reset — tanks full, failures cleared, selector at default");
-    {
-        FuelGraphSolver s = makeSolver();
-        setEngineRunning(s, 60.0, 1.0);
-        s.setSelector("sel_fuel", "LEFT");
-        s.applyFailureEffect("pump_mechanical", "force", "online", "false");
-
-        // Drain some fuel
-        for (int i = 0; i < 100; ++i) s.step(0.02);
-
-        s.reset();
-
-        // Tanks at initial capacity
-        CHECK_NEAR(s.getNodeStates().at("tank_left").quantity_kg, 92.0, 0.01);
-        CHECK_NEAR(s.getNodeStates().at("tank_right").quantity_kg, 92.0, 0.01);
-        // Failures cleared
-        CHECK(s.getCasMessages().empty());
-        // Need to step after reset for state to be evaluated
-        setEngineRunning(s);
-        s.step(0.02);
-        CHECK(s.getNodeStates().at("engine_inlet_0").fed);
-    }
-    PASS();
-
-    // T15 ── No engine demand — tanks should not drain ───────────────
-    TEST("No engine demand — RPM high, pumps running, tanks don't drain");
-    {
-        FuelGraphSolver s = makeSolver();
+        FuelGraphSolver s = makeSynth();
         FdmInputs fdm;
-        fdm.engine_rpm_pct = {60.0};
-        fdm.engine_fuel_demand_kgs = {0.0};  // zero demand
+        fdm.engine_rpm_pct = {0.0};
+        fdm.engine_fuel_demand_kgs = {0.0};
         s.setFdmInputs(fdm);
 
-        double left_before  = s.getNodeStates().at("tank_left").quantity_kg;
-        double right_before = s.getNodeStates().at("tank_right").quantity_kg;
+        double qty_before = s.getNodeStates().at("syn_tank").quantity_kg;
 
         for (int i = 0; i < 100; ++i) s.step(0.02);
 
-        CHECK_NEAR(s.getNodeStates().at("tank_left").quantity_kg, left_before, 0.001);
-        CHECK_NEAR(s.getNodeStates().at("tank_right").quantity_kg, right_before, 0.001);
-        // Engine is still "fed" — path exists, just no consumption
-        CHECK(s.getNodeStates().at("engine_inlet_0").fed);
+        CHECK(!s.getNodeStates().at("syn_inlet").fed);
+        CHECK_NEAR(s.getNodeStates().at("syn_tank").quantity_kg, qty_before, 0.001);
     }
     PASS();
 
