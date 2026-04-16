@@ -47,6 +47,9 @@
 - `ios_frontend` — map, status strip (dynamic radio row), 9 panel tabs, action bar. Electrical switches (FORCE), ground services (tri-state), radio tuning. Failure panel with ATA grouping + navaid search. REPOSITIONING badge + button lockout. Dynamic A/C page from navigation.yaml. CB pull/reset/lock on IOS A/C page and virtual cockpit panel.
 - `xplanecigi plugin` — raw CIGI 3.3 IG plugin for X-Plane 12. Entity Control + HOT Response. IG Mode-driven terrain probing (4×0.5s stability). SOF Standby→Normal reporting.
 
+### Active gap — weather injection
+RESOLVED (designed) — weather_solver_node + JSBSimAtmosphereWriteback + CIGI weather encoder + xplanecigi weather decoder. Implementation pending. See 2026-04-16 CHANGE LOG entry.
+
 ### Stub / scaffold only
 - `microros_bridge` — skeleton lifecycle node
 - `sim_hydraulic`, `sim_ice_protection`, `sim_pressurization` — heartbeat only, no solver
@@ -75,6 +78,12 @@ Architecture audit complete (2026-03-25). All bugs resolved (#1–#9). Bug #8 (F
 - Frontend JSX audit: review for file length, inline style cleanup, component
   decomposition, prop drilling vs store access. Scheduled AFTER the instrument
   library is built (will naturally rewrite engine gauge sections).
+
+### On the horizon / Immediate next design work
+- weather_solver_node implementation (interpolation + Dryden + microburst),
+  JSBSimAtmosphereWriteback, CIGI weather packet encoder in cigi_bridge,
+  xplanecigi plugin weather decoder module, IOS WeatherPanel redesign
+  (altitude visualization, cloud/wind layers, XP-inspired layout)
 
 ### Open decisions
 - [ ] CIGI library: raw encoding (current) or cigicl?
@@ -2727,3 +2736,106 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
   removed), src/aircraft/c172/test/test_c172_fuel.cpp (new, 15 tests),
   src/aircraft/c172/test/c172_fuel_v2.yaml (moved from sim_fuel),
   src/aircraft/c172/CMakeLists.txt (new test target).
+
+## 2026-04-16 — Claude Chat (Weather Architecture Design Session)
+
+- DECIDED: **WeatherState.msg replaced in-place** — old flat single-layer message replaced with
+  layered CIGI-aligned structure. Same topic `/world/weather`, same package sim_msgs.
+  New structure: global atmosphere scalars + dynamic CloudLayer[] (max 3) + dynamic WindLayer[]
+  (max 13) + precipitation + surface conditions + FSTD control + turbulence model selector +
+  MicroburstHazard[] array. Units: SI on wire (m, m/s, Pa, K, deg). No mixed units.
+- REASON: Old WeatherState had dead wind pipeline (nothing wrote wind into JSBSim), mixed units
+  (kts, ft, deg, m, K, Pa), single-layer model that couldn't express the layered weather both
+  CIGI 3.3 and X-Plane 12 expect. New structure mirrors IOS/X-Plane mental model (separate
+  cloud and wind layers) while mapping cleanly to CIGI 0x0C Weather Control packets via
+  cigi_bridge composition.
+- AFFECTS: sim_msgs/msg/WeatherState.msg (breaking replacement), ios_backend, WeatherPanel.jsx,
+  atmosphere_node (renamed to weather_solver), cigi_bridge, xplanecigi plugin
+
+- DECIDED: **New sub-messages**: WeatherCloudLayer.msg, WeatherWindLayer.msg, MicroburstHazard.msg
+  in sim_msgs/msg/. Cloud layer: CIGI cloud_type enum (0-10), coverage_pct, base_elevation_m,
+  thickness_m, transition_band_m, scud_enable, scud_frequency_pct. Wind layer: altitude_msl_m,
+  wind_speed_ms, wind_direction_deg, vertical_wind_ms, gust_speed_ms, shear_direction_deg,
+  shear_speed_ms, turbulence_severity (0-1).
+- REASON: Sub-messages keep WeatherState readable and allow reuse in SimSnapshot JSON sections.
+
+- DECIDED: **AtmosphereState.msg extended** with NED wind vector (wind_north_ms, wind_east_ms,
+  wind_down_ms), visible_moisture bool, turbulence_intensity float (0-1). These fields make
+  AtmosphereState the single source of atmospheric truth at the aircraft position.
+  FlightModelState.wind_* fields become read-back only (what JSBSim reports after writeback).
+- REASON: Dual atmospheric truth problem — atmosphere_node and JSBSim computed independent
+  values. With writeback, AtmosphereState is truth, FlightModelState is verification.
+- AFFECTS: sim_msgs/msg/AtmosphereState.msg, all AtmosphereState consumers (air_data, engines,
+  ice_protection, audio, ios_backend)
+
+- DECIDED: **atmosphere_node renamed to weather_solver_node**, moves from src/core/atmosphere_node/
+  to src/world/weather_solver/. New responsibilities: interpolate authored WeatherState at aircraft
+  altitude, run external Dryden turbulence filter, sample Oseguera-Bowles microburst field,
+  sum all wind contributions into single NED vector, publish AtmosphereState at 50 Hz.
+  Standalone library + ROS2 node wrapper per framework convention.
+- REASON: atmosphere_node's ISA-from-altitude math is a subset of what's needed. The new node
+  owns interpolation + hazard composition + turbulence generation. Different job, different name.
+- AFFECTS: src/core/atmosphere_node/ (delete), src/world/weather_solver/ (create),
+  launch/sim_full.launch.py, CLAUDE.md node table
+
+- DECIDED: **JSBSimAtmosphereWriteback** — new writeback module parallel to JSBSimElectricalWriteback
+  and JSBSimFuelWriteback. Subscribes to /world/atmosphere, writes wind NED (fps), temperature
+  deviation (Rankine), pressure (psf) into JSBSim property tree each step. JSBSim's internal
+  atmosphere model is overridden every step.
+- REASON: Closes the "weather injection gap" — the #1 known architectural gap. Without this,
+  JSBSim always flies ISA regardless of what the instructor sets.
+- AFFECTS: src/core/flight_model_adapter/ (new files), JSBSim property tree writes
+
+- DECIDED: **External Dryden turbulence** computed in weather_solver, not JSBSim-native.
+  Configurable model: 0=None, 1=MIL-F-8785C, 2=MIL-HDBK-1797A, 3=ESDU-85020.
+  Selected per aircraft in weather config YAML. Deterministic via RNG seed field in WeatherState.
+  Perturbation wind vector summed into AtmosphereState before writeback.
+- REASON: Aircraft-independent, QTG-reproducible. JSBSim-native turbulence doesn't transfer to
+  Helisim or C208 external FDM. CS-FSTD(A) doesn't mandate a specific model for FTD Level 2
+  or FNPT II, but Leonardo SF260TW PRS-030390 requires Dryden per MIL-F-8785C. Selector
+  covers all customer contracts.
+- AFFECTS: src/world/weather_solver/ (Dryden solver library), aircraft config YAMLs
+
+- DECIDED: **Microburst FDM-only, no visual phase 1**. Oseguera-Bowles 1988 analytical model in
+  weather_solver standalone library. MicroburstHazard.msg carries field parameters (core_radius,
+  shaft_altitude, intensity, lifecycle_phase). Sampled at aircraft position each step, added to
+  wind sum. Visual via CIGI entity deferred to future phase.
+- REASON: CS-FSTD does not require microburst for FTD/FNPT. X-Plane has no microburst visual
+  primitive. FDM wind effect is the training point; visual is immersion.
+- AFFECTS: src/world/weather_solver/ (microburst solver library), sim_msgs/msg/MicroburstHazard.msg
+
+- DECIDED: **CIGI 3.3 standard packets for weather, user-defined for extensions**.
+  Standard: 0x0A Atmosphere Control (global scalars), 0x0C Weather Control (per cloud/wind layer),
+  0x0D/0x0E Maritime/Terrestrial Surface. User-defined: 0xC9 Dryden params, 0xCA Microburst field,
+  0xCB FSTD control (variability, change_mode, deterministic_seed).
+  cigi_bridge composes separate cloud/wind arrays from WeatherState into combined CIGI 0x0C packets.
+  IOS features scoped to what CIGI can express — X-Plane compatibility locked.
+- REASON: CIGI portability to non-XP IGs. Single transport layer. IOS doesn't expose anything the
+  CIGI wire format can't carry. User-defined packets carry framework extensions that standard
+  CIGI cannot express (turbulence model params, microburst field, FSTD determinism).
+- AFFECTS: src/core/cigi_bridge/ (weather encoder), xplanecigi plugin (weather decoder)
+
+- DECIDED: **xplanecigi plugin targets XP 12.4+**. Primary write path: XPLMSetWeatherAtLocation SDK
+  (12.3+). Fallback: sim/weather/region/* datarefs for fields SDK doesn't cover (runway_friction,
+  variability_pct, change_mode). Weather updates debounced via dirty flag in XPLM flight loop
+  callback (~1 Hz). On reposition: update_immediately=1, regen_weather command, then clear.
+  Cloud type remap: CIGI enum (0-10) → XP enum (0-3) via lookup table.
+- REASON: SDK is Laminar's direction, supports future multi-point weather (DEP/DEST). Region
+  datarefs as fallback for stability. XP weather updates are not per-frame (XP docs explicitly
+  say "not intended to be used per-frame") — event-driven architecture matches our authored
+  weather model.
+- AFFECTS: ~/x-plane_plugins/xplanecigi/ (new weather_decoder module)
+
+- DECIDED: **FSTD determinism controls** in WeatherState: variability_pct (0-1, forced 0 for QTG),
+  evolution_mode (0-7, forced Static for QTG), deterministic_seed (uint32 for Dryden RNG).
+  Maps to XP datarefs variability_pct and change_mode, and to CIGI user-defined packet 0xCB.
+- REASON: QTG requires reproducible conditions. X-Plane's weather engine adds randomness via
+  variability_pct and change_mode — must be zeroed/static for test runs.
+
+- DECIDED: **CS-FSTD(A) turbulence requirements confirmed** — no specific turbulence model or test
+  mandated for FTD Level 2 or FNPT II. Table 2 says "Control of atmospheric conditions" only.
+  Wind shear tests are FFS-only (not FTD/FNPT). Microburst not required at any level below FFS.
+  Customer contracts (e.g., Leonardo PRS-030390 citing MIL-F-8785C) are stricter than regulation.
+- REASON: Confirms turbulence model selector approach — framework provides options, aircraft
+  config specifies which model, customer contract determines minimum.
+- AFFECTS: documentation only (no code impact, confirms design)

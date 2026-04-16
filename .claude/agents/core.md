@@ -32,7 +32,7 @@ You are working on the core simulation backbone under `src/core/`.
 | sim_manager | `src/core/sim_manager/` | Clock (`/clock` 50Hz), state machine, heartbeat monitoring, CMD_REPOSITION |
 | flight_model_adapter | `src/core/flight_model_adapter/` | IFlightModelAdapter, JSBSimAdapter, capabilities, writeback, terrain refinement |
 | input_arbitrator | `src/core/input_arbitrator/` | 4-channel source selection (INSTRUCTOR>HARDWARE>VIRTUAL>FROZEN) |
-| atmosphere_node | `src/core/atmosphere_node/` | ISA + weather deviation → `/world/atmosphere` |
+| atmosphere_node | `src/core/atmosphere_node/` | ISA + weather deviation → `/world/atmosphere`. PENDING: rename to weather_solver_node, move to `src/world/weather_solver/` |
 | cigi_bridge | `src/core/cigi_bridge/` | CIGI 3.3 host, Entity Control, HOT terrain, IG Mode handshake |
 | navaid_sim | `src/core/navaid_sim/` | Ground navaids, airport/runway DB, terrain LOS, A424+XP parsers |
 | sim_interfaces | `src/core/sim_interfaces/` | Headers-only: IElectricalModel, IFuelModel, IEnginesModel, IGearModel, IAirDataModel |
