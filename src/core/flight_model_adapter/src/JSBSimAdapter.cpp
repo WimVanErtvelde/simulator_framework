@@ -1,6 +1,7 @@
 #include "flight_model_adapter/JSBSimAdapter.hpp"
 #include "flight_model_adapter/jsbsim/JSBSimElectricalWriteback.hpp"
 #include "flight_model_adapter/jsbsim/JSBSimFuelWriteback.hpp"
+#include "flight_model_adapter/jsbsim/JSBSimAtmosphereWriteback.hpp"
 
 #include <FGFDMExec.h>
 #include <models/FGPropulsion.h>
@@ -798,6 +799,20 @@ void JSBSimAdapter::write_back_fuel(const sim_msgs::msg::FuelState & state)
     log_error("[JSBSimAdapter] JSBSim error in write_back_fuel: " + s);
   } catch (...) {
     log_error("[JSBSimAdapter] Unknown exception in write_back_fuel");
+  }
+}
+
+void JSBSimAdapter::write_back_atmosphere(const sim_msgs::msg::AtmosphereState & state,
+                                          double altitude_msl_m)
+{
+  try {
+    jsbsim_writeback::write_atmosphere(exec_.get(), state, altitude_msl_m);
+  } catch (const std::exception & e) {
+    log_error(std::string("[JSBSimAdapter] Exception in write_back_atmosphere: ") + e.what());
+  } catch (const std::string & s) {
+    log_error("[JSBSimAdapter] JSBSim error in write_back_atmosphere: " + s);
+  } catch (...) {
+    log_error("[JSBSimAdapter] Unknown exception in write_back_atmosphere");
   }
 }
 

@@ -20,3 +20,14 @@ float64 qnh_pa                  # altimeter setting (Pa), ISA = 101325
 # Altitude references
 float64 density_altitude_m      # altitude from ISA density (m)
 float64 pressure_altitude_m     # altitude from ISA pressure (m)
+
+# Wind at aircraft position — single source of truth
+# Sum of ambient + Dryden perturbation + microburst outflow
+# Computed by weather_solver_node. Written to FDM via JSBSimAtmosphereWriteback.
+float64 wind_north_ms            # NED north component (m/s)
+float64 wind_east_ms             # NED east component (m/s)
+float64 wind_down_ms             # NED down component (m/s, + = downdraft)
+
+# Moisture and turbulence at aircraft position
+bool    visible_moisture          # true = in cloud or precipitation
+float32 turbulence_intensity      # 0.0-1.0 at aircraft position

@@ -54,7 +54,9 @@ export const useSimStore = create((set, get) => ({
   // Atmosphere
   atmosphere: {
     qnhHpa: 1013.25, oatCelsius: 15.0,
-    windDirDeg: 0, windSpeedKt: 0, visibilityM: 10000,
+    windDirDeg: 0, windSpeedKt: 0, visibilityM: 9999,
+    windNorthMs: 0, windEastMs: 0, windDownMs: 0,
+    visibleMoisture: false, turbulenceIntensity: 0,
   },
 
   // Fuel
@@ -441,6 +443,11 @@ export const useSimStore = create((set, get) => ({
                 windDirDeg: msg.wind_dir_deg ?? s.atmosphere.windDirDeg,
                 windSpeedKt: msg.wind_speed_kt ?? s.atmosphere.windSpeedKt,
                 visibilityM: msg.visibility_m ?? s.atmosphere.visibilityM,
+                windNorthMs: msg.wind_north_ms ?? s.atmosphere.windNorthMs,
+                windEastMs: msg.wind_east_ms ?? s.atmosphere.windEastMs,
+                windDownMs: msg.wind_down_ms ?? s.atmosphere.windDownMs,
+                visibleMoisture: msg.visible_moisture ?? s.atmosphere.visibleMoisture,
+                turbulenceIntensity: msg.turbulence_intensity ?? s.atmosphere.turbulenceIntensity,
               }
             })
             break

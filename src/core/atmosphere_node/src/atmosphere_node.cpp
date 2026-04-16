@@ -77,14 +77,32 @@ public:
     weather_sub_ = this->create_subscription<sim_msgs::msg::WeatherState>(
       "/world/weather", 10,
       [this](sim_msgs::msg::WeatherState::ConstSharedPtr msg) {
-        oat_deviation_k_ = msg->oat_deviation_k;
-        qnh_pa_ = msg->qnh_pa;
+        // v2: absolute sea-level temp → compute deviation from ISA
+        oat_deviation_k_ = msg->temperature_sl_k - ISA_T0;
+        qnh_pa_ = msg->pressure_sl_pa;
+
+        // Surface wind from first wind layer (if present)
+        if (!msg->wind_layers.empty()) {
+          const auto & wl = msg->wind_layers[0];
+          double dir_rad = wl.wind_direction_deg * M_PI / 180.0;
+          // Wind blows FROM dir, so NED components are opposite
+          wind_north_ms_ = -static_cast<double>(wl.wind_speed_ms) * std::cos(dir_rad);
+          wind_east_ms_  = -static_cast<double>(wl.wind_speed_ms) * std::sin(dir_rad);
+          wind_down_ms_  = -static_cast<double>(wl.vertical_wind_ms);
+        } else {
+          wind_north_ms_ = 0.0;
+          wind_east_ms_  = 0.0;
+          wind_down_ms_  = 0.0;
+        }
       });
 
     // ISA defaults until weather is received
     oat_deviation_k_ = 0.0;
     qnh_pa_ = ISA_P0;
     altitude_msl_m_ = 0.0;
+    wind_north_ms_ = 0.0;
+    wind_east_ms_  = 0.0;
+    wind_down_ms_  = 0.0;
 
     RCLCPP_INFO(this->get_logger(), "atmosphere_node configured");
     publish_lifecycle_state("inactive");
@@ -186,6 +204,15 @@ private:
     msg.density_altitude_m  = density_altitude;
     msg.pressure_altitude_m = pressure_altitude;
 
+    // Wind at aircraft position (stub: surface wind only, no interpolation)
+    msg.wind_north_ms       = wind_north_ms_;
+    msg.wind_east_ms        = wind_east_ms_;
+    msg.wind_down_ms        = wind_down_ms_;
+
+    // Moisture and turbulence (stubs — proper computation in weather_solver)
+    msg.visible_moisture     = false;
+    msg.turbulence_intensity = 0.0f;
+
     atmo_pub_->publish(msg);
   }
 
@@ -218,6 +245,9 @@ private:
   double altitude_msl_m_ = 0.0;
   double oat_deviation_k_ = 0.0;
   double qnh_pa_ = ISA_P0;
+  double wind_north_ms_ = 0.0;
+  double wind_east_ms_  = 0.0;
+  double wind_down_ms_  = 0.0;
 };
 
 int main(int argc, char ** argv)

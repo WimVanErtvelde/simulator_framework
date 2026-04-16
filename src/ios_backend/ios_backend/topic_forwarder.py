@@ -77,6 +77,7 @@ _OWN_TOPICS = frozenset((
     '/sim/command',
     '/sim/diagnostics/heartbeat',
     '/sim/diagnostics/lifecycle',
+    '/world/weather',
 ))
 
 # Skip internal ROS2 infrastructure topics

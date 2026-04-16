@@ -11,6 +11,8 @@ const PRESETS = {
   'CAT III':    { vis: 75,   qnh: 1013 },
 }
 
+const KT_TO_MS = 0.51444
+
 const inputBase = {
   width: '100%', height: 44, padding: '8px 12px',
   background: '#1c2333', border: '1px solid #1e293b',
@@ -23,6 +25,12 @@ const neutralBtn = {
   color: '#64748b', fontSize: 12, fontFamily: 'monospace', fontWeight: 700,
   letterSpacing: 1, textTransform: 'uppercase',
   cursor: 'pointer', touchAction: 'manipulation', transition: 'opacity 0.15s',
+}
+
+const stubStyle = {
+  padding: '12px 8px', margin: '8px 0', textAlign: 'center',
+  background: '#0d1117', border: '1px dashed #1e293b', borderRadius: 4,
+  color: '#475569', fontSize: 11, fontFamily: 'monospace',
 }
 
 function WeatherField({ label, field, form, update, placeholder, inputStyle, allowDecimal = false, hint = '' }) {
@@ -54,8 +62,8 @@ function WeatherField({ label, field, form, update, placeholder, inputStyle, all
 }
 
 export default function WeatherPanel() {
-  const { atmosphere, sendCommand } = useSimStore(useShallow(s => ({
-    atmosphere: s.atmosphere, sendCommand: s.sendCommand,
+  const { atmosphere, ws, wsConnected } = useSimStore(useShallow(s => ({
+    atmosphere: s.atmosphere, ws: s.ws, wsConnected: s.wsConnected,
   })))
   const [form, setForm] = useState({
     vis: '', qnh: '', oat: '', windDir: '', windSpd: '',
@@ -79,13 +87,20 @@ export default function WeatherPanel() {
   }
 
   const accept = () => {
+    if (!ws || !wsConnected) return
+    // Build WeatherState v2 data — convert UI units to SI wire units
     const data = {}
+    // Temperature: UI = °C, wire = K
+    if (form.oat) data.temperature_sl_k = Number(form.oat) + 273.15
+    // Pressure: UI = hPa, wire = Pa
+    if (form.qnh) data.pressure_sl_pa = Number(form.qnh) * 100
+    // Visibility: already in m
     if (form.vis) data.visibility_m = Number(form.vis)
-    if (form.qnh) data.qnh_hpa = Number(form.qnh)
-    if (form.oat) data.oat_celsius = Number(form.oat)
-    if (form.windDir) data.wind_dir_deg = Number(form.windDir)
-    if (form.windSpd) data.wind_speed_kt = Number(form.windSpd)
-    sendCommand(10, data)
+    // Wind: UI = deg/kt, wire = deg/m/s
+    if (form.windDir) data.wind_direction_deg = Number(form.windDir)
+    if (form.windSpd) data.wind_speed_ms = Number(form.windSpd) * KT_TO_MS
+
+    ws.send(JSON.stringify({ type: 'set_weather', data }))
     setForm({ vis: '', qnh: '', oat: '', windDir: '', windSpd: '' })
   }
 
@@ -93,10 +108,11 @@ export default function WeatherPanel() {
     <div>
       <SectionHeader title="CURRENT CONDITIONS" />
       <PanelRow label="QNH" value={atmosphere.qnhHpa.toFixed(1)} unit="hPa" />
-      <PanelRow label="OAT" value={atmosphere.oatCelsius.toFixed(1)} unit="°C" />
-      <PanelRow label="Wind Dir" value={atmosphere.windDirDeg.toFixed(0)} unit="°" />
+      <PanelRow label="OAT" value={atmosphere.oatCelsius.toFixed(1)} unit="\u00B0C" />
+      <PanelRow label="Wind Dir" value={atmosphere.windDirDeg.toFixed(0)} unit="\u00B0" />
       <PanelRow label="Wind Spd" value={atmosphere.windSpeedKt.toFixed(0)} unit="kt" />
       <PanelRow label="Visibility" value={atmosphere.visibilityM.toFixed(0)} unit="m" />
+      <PanelRow label="Turbulence" value={(atmosphere.turbulenceIntensity * 100).toFixed(0)} unit="%" />
 
       <SectionHeader title="SET CONDITIONS" />
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -130,6 +146,10 @@ export default function WeatherPanel() {
           onClick={accept}
         />
       )}
+
+      <div style={stubStyle}>CLOUD LAYERS — coming soon</div>
+      <div style={stubStyle}>PRECIPITATION — coming soon</div>
+      <div style={stubStyle}>MICROBURST — coming soon</div>
     </div>
   )
 }

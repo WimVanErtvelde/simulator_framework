@@ -33,6 +33,7 @@ FetchContent_GetProperties(jsbsim SOURCE_DIR JSBSIM_SOURCE_DIR)
 # --- Adapter library (links JSBSim + sim_msgs) ---
 add_library(jsbsim_adapter STATIC
   src/JSBSimAdapter.cpp
+  src/jsbsim/JSBSimAtmosphereWriteback.cpp
   src/jsbsim/JSBSimElectricalWriteback.cpp
   src/jsbsim/JSBSimFuelWriteback.cpp)
 target_include_directories(jsbsim_adapter PUBLIC

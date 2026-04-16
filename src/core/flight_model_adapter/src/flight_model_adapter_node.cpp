@@ -13,6 +13,7 @@
 #include <sim_msgs/msg/flight_model_capabilities.hpp>
 #include <sim_msgs/msg/electrical_state.hpp>
 #include <sim_msgs/msg/fuel_state.hpp>
+#include <sim_msgs/msg/atmosphere_state.hpp>
 #include <sim_msgs/msg/flight_controls.hpp>
 #include <sim_msgs/msg/engine_controls.hpp>
 #include <sim_msgs/msg/hat_hot_response.hpp>
@@ -316,6 +317,14 @@ public:
         if (adapter_) adapter_->write_back_fuel(*msg);
       });
 
+    // Atmosphere writeback — stored and applied synchronously before step()
+    atmosphere_sub_ = this->create_subscription<sim_msgs::msg::AtmosphereState>(
+      "/world/atmosphere", 10,
+      [this](sim_msgs::msg::AtmosphereState::ConstSharedPtr msg) {
+        latest_atmosphere_ = *msg;
+        atmosphere_received_ = true;
+      });
+
     payload_command_sub_ = this->create_subscription<sim_msgs::msg::PayloadCommand>(
       "/aircraft/payload/command", 10,
       [this](const sim_msgs::msg::PayloadCommand::SharedPtr msg) {
@@ -409,6 +418,12 @@ public:
         }
         prev_freeze_position_ = freeze_position_;
 
+        // Atmosphere writeback — wind/temperature/pressure into JSBSim before step
+        if (atmosphere_received_ && adapter_) {
+          adapter_->write_back_atmosphere(latest_atmosphere_,
+            adapter_->get_state().altitude_msl_m);
+        }
+
         if (should_step) {
           if (!adapter_->step(dt_sec)) {
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(),
@@ -457,8 +472,10 @@ public:
     update_timer_.reset();
     elec_writeback_sub_.reset();
     fuel_writeback_sub_.reset();
+    atmosphere_sub_.reset();
     latest_flight_controls_.reset();
     latest_engine_controls_.reset();
+    atmosphere_received_ = false;
     terrain_hot_.clear();
     pending_ic_.reset();
     RCLCPP_INFO(this->get_logger(), "flight_model_adapter deactivated");
@@ -480,6 +497,7 @@ public:
     engine_controls_sub_.reset();
     elec_writeback_sub_.reset();
     fuel_writeback_sub_.reset();
+    atmosphere_sub_.reset();
     hat_response_sub_.reset();
     terrain_source_pub_.reset();
     terrain_ready_pub_.reset();
@@ -585,11 +603,14 @@ private:
   rclcpp::Subscription<sim_msgs::msg::EngineControls>::SharedPtr engine_controls_sub_;
   rclcpp::Subscription<sim_msgs::msg::ElectricalState>::SharedPtr elec_writeback_sub_;
   rclcpp::Subscription<sim_msgs::msg::FuelState>::SharedPtr fuel_writeback_sub_;
+  rclcpp::Subscription<sim_msgs::msg::AtmosphereState>::SharedPtr atmosphere_sub_;
   rclcpp::Subscription<sim_msgs::msg::PayloadCommand>::SharedPtr payload_command_sub_;
   rclcpp::Subscription<sim_msgs::msg::HatHotResponse>::SharedPtr hat_response_sub_;
 
   sim_msgs::msg::FlightControls::SharedPtr latest_flight_controls_;
   sim_msgs::msg::EngineControls::SharedPtr latest_engine_controls_;
+  sim_msgs::msg::AtmosphereState latest_atmosphere_;
+  bool atmosphere_received_ = false;
 
   rclcpp::TimerBase::SharedPtr heartbeat_timer_;
   rclcpp::TimerBase::SharedPtr auto_start_timer_;

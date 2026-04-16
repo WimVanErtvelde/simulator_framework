@@ -46,7 +46,8 @@ from sim_msgs.msg import (FlightModelState, FuelState, SimState, SimCommand, Pan
                           ElectricalState, SimAlert, EngineState,
                           FailureCommand, FailureState, TerrainSource,
                           AirDataState, PayloadCommand,
-                          ArbitrationState, GearState)
+                          ArbitrationState, GearState,
+                          AtmosphereState, WeatherState, WeatherWindLayer)
 from std_msgs.msg import String
 from lifecycle_msgs.srv import ChangeState
 from lifecycle_msgs.msg import Transition
@@ -126,6 +127,10 @@ class IosBackendNode(Node):
         self._gear_sub = self.create_subscription(
             GearState, '/aircraft/gear/state', self._on_gear_state, 10)
 
+        # Atmosphere state (from weather_solver / atmosphere_node)
+        self._atmosphere_sub = self.create_subscription(
+            AtmosphereState, '/world/atmosphere', self._on_atmosphere_state, 10)
+
         # Failure command publisher → sim_failures
         self._failure_cmd_pub = self.create_publisher(
             FailureCommand, '/aircraft/devices/instructor/failure_command', 10)
@@ -151,6 +156,8 @@ class IosBackendNode(Node):
             PayloadCommand, '/aircraft/payload/command', 10)
         self._fuel_load_pub = self.create_publisher(
             PayloadCommand, '/aircraft/fuel/load_command', 10)
+        self._weather_pub = self.create_publisher(
+            WeatherState, '/world/weather', 10)
         self._heartbeat_pub = self.create_publisher(
             String, '/sim/diagnostics/heartbeat', 10)
         self._lifecycle_pub = self.create_publisher(
@@ -707,6 +714,86 @@ class IosBackendNode(Node):
         }
         with self._lock:
             self._latest['gear_state'] = data
+
+    def _on_atmosphere_state(self, msg: AtmosphereState):
+        import math
+        # Compute wind direction and speed from NED components for display
+        wind_n = float(msg.wind_north_ms)
+        wind_e = float(msg.wind_east_ms)
+        wind_d = float(msg.wind_down_ms)
+        wind_speed_ms = math.sqrt(wind_n ** 2 + wind_e ** 2)
+        wind_speed_kt = wind_speed_ms / 0.51444
+        # Wind direction is where it blows FROM — opposite of velocity vector
+        if wind_speed_ms > 0.1:
+            wind_dir_deg = (math.degrees(math.atan2(-wind_e, -wind_n)) + 360) % 360
+        else:
+            wind_dir_deg = 0.0
+        # Convert units for display: K→°C, Pa→hPa
+        oat_celsius = float(msg.oat_k) - 273.15
+        qnh_hpa = float(msg.qnh_pa) / 100.0
+        data = {
+            'type': 'atmosphere',
+            'qnh_hpa': round(qnh_hpa, 2),
+            'oat_celsius': round(oat_celsius, 1),
+            'wind_dir_deg': round(wind_dir_deg, 0),
+            'wind_speed_kt': round(wind_speed_kt, 1),
+            'visibility_m': 9999,  # not in AtmosphereState — default until weather authored
+            'wind_north_ms': round(wind_n, 2),
+            'wind_east_ms': round(wind_e, 2),
+            'wind_down_ms': round(wind_d, 2),
+            'visible_moisture': bool(msg.visible_moisture),
+            'turbulence_intensity': round(float(msg.turbulence_intensity), 2),
+        }
+        with self._lock:
+            self._latest['atmosphere'] = data
+
+    def publish_weather(self, data: dict):
+        """Publish WeatherState v2 to /world/weather."""
+        import math
+        msg = WeatherState()
+        msg.header.stamp = self.get_clock().now().to_msg()
+
+        # Global atmosphere (UI sends °C/hPa, convert to K/Pa)
+        msg.temperature_sl_k = float(data.get('temperature_sl_k', 288.15))
+        msg.pressure_sl_pa = float(data.get('pressure_sl_pa', 101325.0))
+        msg.visibility_m = float(data.get('visibility_m', 9999.0))
+        msg.humidity_pct = int(data.get('humidity_pct', 50))
+
+        # Surface wind layer (if direction/speed provided)
+        wind_dir = data.get('wind_direction_deg')
+        wind_spd = data.get('wind_speed_ms')
+        if wind_dir is not None or wind_spd is not None:
+            wl = WeatherWindLayer()
+            wl.altitude_msl_m = 0.0  # surface
+            wl.wind_speed_ms = float(wind_spd or 0.0)
+            wl.wind_direction_deg = float(wind_dir or 0.0)
+            wl.vertical_wind_ms = 0.0
+            wl.gust_speed_ms = float(data.get('gust_speed_ms', 0.0))
+            wl.shear_direction_deg = 0.0
+            wl.shear_speed_ms = 0.0
+            wl.turbulence_severity = 0.0
+            msg.wind_layers.append(wl)
+
+        # Precipitation — sensible defaults
+        msg.precipitation_rate = float(data.get('precipitation_rate', 0.0))
+        msg.precipitation_type = int(data.get('precipitation_type', 0))
+
+        # Surface conditions
+        msg.wave_height_m = 0.0
+        msg.wave_direction_deg = 0.0
+        msg.runway_friction = int(data.get('runway_friction', 0))
+
+        # FSTD control — deterministic defaults
+        msg.variability_pct = float(data.get('variability_pct', 0.0))
+        msg.evolution_mode = int(data.get('evolution_mode', 3))  # Static
+        msg.deterministic_seed = int(data.get('deterministic_seed', 0))
+        msg.turbulence_model = int(data.get('turbulence_model', 0))  # None
+
+        self._weather_pub.publish(msg)
+        self.get_logger().info(
+            f'Published WeatherState v2: T={msg.temperature_sl_k:.1f}K '
+            f'P={msg.pressure_sl_pa:.0f}Pa vis={msg.visibility_m:.0f}m '
+            f'wind_layers={len(msg.wind_layers)}')
 
     def _load_failures_config(self, aircraft_id: str):
         """Load failure catalog from aircraft package failures.yaml."""
@@ -1617,6 +1704,9 @@ async def websocket_endpoint(websocket: WebSocket):
                         fuel_msg.station_indices.append(int(t['index']))
                         fuel_msg.weights_lbs.append(float(t.get('quantity_lbs', 0)))
                     ros_node._fuel_load_pub.publish(fuel_msg)
+
+                elif msg.get('type') == 'set_weather' and ros_node:
+                    ros_node.publish_weather(msg.get('data', msg))
 
             except json.JSONDecodeError:
                 pass

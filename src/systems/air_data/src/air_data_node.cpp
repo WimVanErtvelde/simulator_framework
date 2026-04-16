@@ -15,7 +15,6 @@
 #include <sim_msgs/msg/flight_model_state.hpp>
 #include <sim_msgs/msg/flight_model_capabilities.hpp>
 #include <sim_msgs/msg/atmosphere_state.hpp>
-#include <sim_msgs/msg/weather_state.hpp>
 #include <sim_msgs/msg/electrical_state.hpp>
 
 #include <fstream>
@@ -87,12 +86,6 @@ public:
       "/world/atmosphere", 10,
       [this](const sim_msgs::msg::AtmosphereState::SharedPtr msg) {
         latest_atmos_ = msg;
-      });
-
-    weather_sub_ = this->create_subscription<sim_msgs::msg::WeatherState>(
-      "/world/weather", 10,
-      [this](const sim_msgs::msg::WeatherState::SharedPtr msg) {
-        latest_weather_ = msg;
       });
 
     electrical_sub_ = this->create_subscription<sim_msgs::msg::ElectricalState>(
@@ -224,11 +217,9 @@ public:
           inputs.temperature_k    = latest_atmos_->oat_k;
           inputs.density_kgm3     = latest_atmos_->density_kgm3;
           inputs.qnh_pa           = latest_atmos_->qnh_pa;
-        }
-
-        if (latest_weather_) {
-          inputs.turbulence_intensity = latest_weather_->turbulence_intensity;
-          inputs.visible_moisture = latest_weather_->visible_moisture;
+          // v2: visible_moisture and turbulence_intensity moved from WeatherState to AtmosphereState
+          inputs.turbulence_intensity = latest_atmos_->turbulence_intensity;
+          inputs.visible_moisture = latest_atmos_->visible_moisture;
         }
 
         // Resolve pitot heat powered state from ElectricalState
@@ -322,14 +313,12 @@ public:
     sim_state_sub_.reset();
     flight_model_sub_.reset();
     atmosphere_sub_.reset();
-    weather_sub_.reset();
     electrical_sub_.reset();
     panel_sub_.reset();
     failure_injection_sub_.reset();
     caps_sub_.reset();
     latest_fms_.reset();
     latest_atmos_.reset();
-    latest_weather_.reset();
     latest_electrical_.reset();
     latest_panel_.reset();
     latest_caps_.reset();
@@ -374,7 +363,6 @@ private:
   rclcpp::Subscription<sim_msgs::msg::SimState>::SharedPtr sim_state_sub_;
   rclcpp::Subscription<sim_msgs::msg::FlightModelState>::SharedPtr flight_model_sub_;
   rclcpp::Subscription<sim_msgs::msg::AtmosphereState>::SharedPtr atmosphere_sub_;
-  rclcpp::Subscription<sim_msgs::msg::WeatherState>::SharedPtr weather_sub_;
   rclcpp::Subscription<sim_msgs::msg::ElectricalState>::SharedPtr electrical_sub_;
   rclcpp::Subscription<sim_msgs::msg::PanelControls>::SharedPtr panel_sub_;
   rclcpp::Subscription<sim_msgs::msg::FailureInjection>::SharedPtr failure_injection_sub_;
@@ -391,7 +379,6 @@ private:
   // Cached latest messages
   sim_msgs::msg::FlightModelState::SharedPtr latest_fms_;
   sim_msgs::msg::AtmosphereState::SharedPtr latest_atmos_;
-  sim_msgs::msg::WeatherState::SharedPtr latest_weather_;
   sim_msgs::msg::ElectricalState::SharedPtr latest_electrical_;
   sim_msgs::msg::PanelControls::SharedPtr latest_panel_;
   sim_msgs::msg::FlightModelCapabilities::SharedPtr latest_caps_;
