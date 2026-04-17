@@ -59,6 +59,9 @@ export const useSimStore = create((set, get) => ({
     visibleMoisture: false, turbulenceIntensity: 0,
   },
 
+  // Active microbursts (from backend)
+  microbursts: [],
+
   // Fuel
   fuel: {
     tanks: [], totalFuelKg: 0, totalFuelLiters: 0, totalFuelPct: 0,
@@ -450,6 +453,10 @@ export const useSimStore = create((set, get) => ({
                 turbulenceIntensity: msg.turbulence_intensity ?? s.atmosphere.turbulenceIntensity,
               }
             })
+            break
+
+          case 'microbursts':
+            set({ microbursts: msg.hazards ?? [] })
             break
 
           case 'fuel_state':

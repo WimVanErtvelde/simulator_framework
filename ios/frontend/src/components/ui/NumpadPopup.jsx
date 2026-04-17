@@ -92,6 +92,14 @@ export default function NumpadPopup({
   const popupRef = useRef(null)
   const errorTimerRef = useRef(null)
   const [flashError, setFlashError] = useState(false)
+  const mountedRef = useRef(false)
+
+  // Allow digit input starting next frame — prevents the opening
+  // click from propagating into the "7" button
+  useEffect(() => {
+    requestAnimationFrame(() => { mountedRef.current = true })
+    return () => { mountedRef.current = false }
+  }, [])
 
   // Flash error when error prop goes true
   useEffect(() => {
@@ -109,6 +117,7 @@ export default function NumpadPopup({
   }, [])
 
   const appendDigit = useCallback((d) => {
+    if (!mountedRef.current) return
     if (!allowedDigits.includes(d)) return
     if (pristine) {
       setDisplay(d)
@@ -128,6 +137,7 @@ export default function NumpadPopup({
   }, [allowedDigits, pristine, autoDecimalAfter])
 
   const appendDecimal = useCallback(() => {
+    if (!mountedRef.current) return
     if (!allowDecimal) return
     if (pristine) {
       setDisplay('.')

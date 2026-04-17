@@ -39,8 +39,8 @@ def generate_launch_description():
              }]),
         Node(package='input_arbitrator', executable='input_arbitrator_node',
              name='input_arbitrator', parameters=[sim_time]),
-        Node(package='atmosphere_node', executable='atmosphere_node',
-             name='atmosphere_node', parameters=[sim_time]),
+        Node(package='weather_solver', executable='weather_solver_node',
+             name='weather_solver', parameters=[sim_time, {'update_rate_hz': 50.0}]),
         Node(package='sim_cigi_bridge', executable='cigi_bridge_node',
              name='cigi_bridge', parameters=[
                  'src/core/cigi_bridge/config/cigi_bridge.yaml',

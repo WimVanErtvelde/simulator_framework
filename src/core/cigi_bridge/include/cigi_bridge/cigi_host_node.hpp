@@ -7,6 +7,7 @@
 #include <sim_msgs/msg/hat_hot_response.hpp>
 #include <sim_msgs/msg/sim_state.hpp>
 #include <sim_msgs/msg/sim_alert.hpp>
+#include <sim_msgs/msg/weather_state.hpp>
 
 #include "cigi_bridge/hat_request_tracker.hpp"
 
@@ -119,9 +120,14 @@ private:
     // ── HAT tracking ──────────────────────────────────────────────────────
     HatRequestTracker hat_tracker_;
 
+    // ── Weather state ────────────────────────────────────────────────────
+    sim_msgs::msg::WeatherState latest_weather_;
+    bool weather_dirty_ = false;
+
     // ── ROS2 interfaces ───────────────────────────────────────────────────
     rclcpp::Subscription<sim_msgs::msg::FlightModelState>::SharedPtr      fms_sub_;
     rclcpp::Subscription<sim_msgs::msg::SimState>::SharedPtr              state_sub_;
+    rclcpp::Subscription<sim_msgs::msg::WeatherState>::SharedPtr          weather_sub_;
     rclcpp_lifecycle::LifecyclePublisher<sim_msgs::msg::HatHotResponse>::SharedPtr hat_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr heartbeat_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr lifecycle_pub_;

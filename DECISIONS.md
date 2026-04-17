@@ -32,9 +32,9 @@
 ### Implemented (functional)
 - `sim_manager` — clock, state machine, heartbeat monitoring, CMD_REPOSITION with terrain wait
 - `input_arbitrator` — 4-channel arbitration (flight, engine, avionics, panel)
-- `flight_model_adapter` — JSBSim adapter, CapabilityMode, writeback, terrain refinement via RunIC, pending_ic_ gating
-- `atmosphere_node` — full ISA model, OAT deviation, QNH override
-- `cigi_bridge` — CIGI 3.3 host, multi-point HOT (3 gear points), IG Mode repositioning handshake, SOF parsing
+- `flight_model_adapter` — JSBSim adapter, CapabilityMode, writeback (electrical, fuel, atmosphere), terrain refinement via RunIC, pending_ic_ gating. JSBSimAtmosphereWriteback: wind NED (fps), delta-T (Rankine), pressure (psf) into JSBSim property tree each step.
+- `weather_solver` — replaces atmosphere_node. ISA model + OAT/QNH deviation + altitude-interpolated wind layers (angular shortest-arc) + MIL-F-8785C Dryden turbulence (deterministic seed, altitude-scaled) + Oseguera-Bowles microburst wind field. 19 unit tests (5 Dryden, 7 solver, 7 microburst). Standalone libraries + ROS2 node wrapper.
+- `cigi_bridge` — CIGI 3.3 host, multi-point HOT (3 gear points), IG Mode repositioning handshake, SOF parsing. Weather encoder: Atmosphere Control (0x0A) + Weather Control (0x0C) packets for cloud/wind/precip layers, dirty-flag gated.
 - `navaid_sim` — VOR/ILS/NDB/DME/Marker, terrain LOS, A424 + XP12 parsers. Airport/runway DB (SearchAirports/GetRunways/GetTerrainElevation services)
 - `sim_electrical` — pluginlib. C172 on **GraphSolver** (elec_graph): graph topology (39 nodes, 38 connections), unified connection model, failure effects (force/jam/disable/multiply), YAML validation, interactive CBs on IOS + cockpit, 15 standalone unit tests. EC135 stubbed (no-op, awaiting v2 YAML). Old ElectricalSolver deleted. Capability gating + writeback.
 - `sim_engine_systems` — pluginlib → IEnginesModel. C172 piston + EC135 turboshaft plugins. EngineCommands published (zeros for current aircraft, pre-wired for turboprop/FADEC).
@@ -45,10 +45,10 @@
 - `sim_air_data` — pluginlib → IAirDataModel. Pitot-static with icing, turbulence noise, alternate static. C172 plugin.
 - `ios_backend` — dynamic node discovery, FDM/fuel/nav/electrical/sim state WS forwarding. Panel + avionics commands. Failure catalog + injection/clear/clear_all. Navaid search API. Electrical config parser supports v1 + v2 YAML formats.
 - `ios_frontend` — map, status strip (dynamic radio row), 9 panel tabs, action bar. Electrical switches (FORCE), ground services (tri-state), radio tuning. Failure panel with ATA grouping + navaid search. REPOSITIONING badge + button lockout. Dynamic A/C page from navigation.yaml. CB pull/reset/lock on IOS A/C page and virtual cockpit panel.
-- `xplanecigi plugin` — raw CIGI 3.3 IG plugin for X-Plane 12. Entity Control + HOT Response. IG Mode-driven terrain probing (4×0.5s stability). SOF Standby→Normal reporting.
+- `xplanecigi plugin` — raw CIGI 3.3 IG plugin for X-Plane 12. Entity Control + HOT Response. IG Mode-driven terrain probing (4×0.5s stability). SOF Standby→Normal reporting. Weather decoder: parses 0x0A/0x0C packets, writes to XP region datarefs (cloud/wind/vis/temp/precip) via 1Hz flight loop.
 
 ### Active gap — weather injection
-RESOLVED (designed) — weather_solver_node + JSBSimAtmosphereWriteback + CIGI weather encoder + xplanecigi weather decoder. Implementation pending. See 2026-04-16 CHANGE LOG entry.
+RESOLVED (implemented) — weather_solver_node + JSBSimAtmosphereWriteback + CIGI weather encoder + xplanecigi weather decoder. Dryden turbulence (MIL-F-8785C) and Oseguera-Bowles microburst model operational. 24 packages, 19 solver tests.
 
 ### Stub / scaffold only
 - `microros_bridge` — skeleton lifecycle node
@@ -80,10 +80,8 @@ Architecture audit complete (2026-03-25). All bugs resolved (#1–#9). Bug #8 (F
   library is built (will naturally rewrite engine gauge sections).
 
 ### On the horizon / Immediate next design work
-- weather_solver_node implementation (interpolation + Dryden + microburst),
-  JSBSimAtmosphereWriteback, CIGI weather packet encoder in cigi_bridge,
-  xplanecigi plugin weather decoder module, IOS WeatherPanel redesign
-  (altitude visualization, cloud/wind layers, XP-inspired layout)
+- IOS WeatherPanel redesign (cloud layers UI, airport station reference,
+  altitude visualization, XP-inspired layout)
 
 ### Open decisions
 - [ ] CIGI library: raw encoding (current) or cigicl?
@@ -2839,3 +2837,48 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 - REASON: Confirms turbulence model selector approach — framework provides options, aircraft
   config specifies which model, customer contract determines minimum.
 - AFFECTS: documentation only (no code impact, confirms design)
+
+## 2026-04-17 — Claude Code (Weather Implementation Steps 1-8)
+
+- DECIDED: **WeatherState v2 messages implemented** — WeatherCloudLayer, WeatherWindLayer,
+  MicroburstHazard sub-messages created. WeatherState.msg replaced with layered structure.
+  AtmosphereState.msg extended with wind NED + visible_moisture + turbulence_intensity.
+- AFFECTS: sim_msgs (3 new .msg, 2 modified), all WeatherState/AtmosphereState consumers
+
+- DECIDED: **atmosphere_node replaced by weather_solver_node** — new package at
+  src/world/weather_solver/. Standalone libraries (no rclcpp): WeatherSolver (ISA +
+  altitude-interpolated wind layers + angular interpolation), DrydenTurbulence (MIL-F-8785C
+  forming filters, deterministic seed, altitude-scaled), MicroburstModel (Oseguera-Bowles 1988).
+  ROS2 node wrapper publishes /world/atmosphere at 50 Hz.
+- REASON: atmosphere_node was surface-wind-only with no interpolation or turbulence.
+  weather_solver implements full altitude interpolation, Dryden turbulence generation,
+  and microburst wind field sampling.
+- AFFECTS: src/world/weather_solver/ (new), src/core/atmosphere_node/ (superseded),
+  launch/sim_full.launch.py (swapped), 19 GoogleTest unit tests
+
+- DECIDED: **JSBSimAtmosphereWriteback implemented** — writes wind NED (fps), temperature
+  deviation delta-T (Rankine), and pressure (psf) into JSBSim property tree each step
+  before Run(). Closes the weather injection gap. Pattern follows JSBSimElectricalWriteback.
+- AFFECTS: src/core/flight_model_adapter/ (new writeback module + node integration)
+
+- DECIDED: **CIGI weather encoder implemented** — cigi_bridge appends Atmosphere Control
+  (0x0A, 32B) + Weather Control (0x0C, 56B) packets to UDP datagram. Cloud layers (id 1-3),
+  precipitation (id 4-5), wind-only layers (id 10+). Dirty-flag gated (not every frame).
+- AFFECTS: src/core/cigi_bridge/ (weather_encoder.hpp/cpp + node integration)
+
+- DECIDED: **xplanecigi weather decoder implemented** — parses 0x0A/0x0C packets from CIGI
+  datagram. PendingWeather struct stores decoded state. 1Hz XPLMFlightLoop writes to
+  sim/weather/region/* datarefs (cloud base/top/coverage/type, wind layers, visibility,
+  temperature, pressure, rain). Cloud type remap CIGI→XP via lookup table.
+- AFFECTS: x-plane_plugins/xplanecigi/XPluginMain.cpp
+
+- DECIDED: **air_data_node migrated from WeatherState to AtmosphereState** for turbulence
+  and moisture fields. WeatherState subscription removed entirely from air_data_node.
+- REASON: turbulence_intensity and visible_moisture moved to AtmosphereState in v2 design.
+- AFFECTS: src/systems/air_data/src/air_data_node.cpp
+
+- DECIDED: **IOS WeatherPanel v2 operational** — set_weather WS message (not sendCommand),
+  unit conversion (°C→K, hPa→Pa, kt→m/s). Turbulence severity slider (0-100% UI → 0-1 wire).
+  Microburst placement by bearing/distance from aircraft. activate/clear/clear_all WS handlers.
+  Backend computes microburst lat/lon, caches and republishes with full WeatherState.
+- AFFECTS: ios/frontend WeatherPanel, ios_backend weather + microburst handlers

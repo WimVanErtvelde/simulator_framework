@@ -92,6 +92,67 @@ static XPLMDataRef g_psi                = nullptr;  // yaw   (degrees, X-Plane c
 static XPLMDataRef g_override_planepath = nullptr;  // int[20] — index 0 = override user aircraft
 static XPLMProbeRef g_terrain_probe    = nullptr;  // terrain elevation probe for HOT requests + stability
 
+// ── Weather datarefs ─────────────────────────────────────────────────────────
+static XPLMDataRef dr_sealevel_temp_c       = nullptr;
+static XPLMDataRef dr_sealevel_pressure_pas = nullptr;
+static XPLMDataRef dr_visibility_sm         = nullptr;
+static XPLMDataRef dr_rain_percent          = nullptr;
+static XPLMDataRef dr_cloud_base            = nullptr;
+static XPLMDataRef dr_cloud_tops            = nullptr;
+static XPLMDataRef dr_cloud_coverage        = nullptr;
+static XPLMDataRef dr_cloud_type            = nullptr;
+static XPLMDataRef dr_wind_alt              = nullptr;
+static XPLMDataRef dr_wind_dir              = nullptr;
+static XPLMDataRef dr_wind_spd              = nullptr;
+static XPLMDataRef dr_wind_turb             = nullptr;
+static XPLMDataRef dr_update_immediately    = nullptr;
+
+// ── Weather state (decoded from CIGI packets, written to XP by flight loop) ──
+struct PendingWeather {
+    // From 0x0A Atmosphere Control
+    float temperature_c = 15.0f;
+    float visibility_m  = 9999.0f;
+    float wind_speed_ms = 0.0f;
+    float vert_wind_ms  = 0.0f;
+    float wind_dir_deg  = 0.0f;
+    float pressure_hpa  = 1013.25f;
+    uint8_t humidity_pct = 0;
+    float rain_pct      = 0.0f;
+
+    struct CloudLayer {
+        float type_xp   = 0.0f;
+        float coverage  = 0.0f;
+        float base_m    = 0.0f;
+        float top_m     = 0.0f;
+        bool  valid     = false;
+    } cloud[3];
+
+    struct WindLayer {
+        float alt_m     = 0.0f;
+        float speed_ms  = 0.0f;
+        float dir_deg   = 0.0f;
+        float vert_ms   = 0.0f;
+        float turb      = 0.0f;
+        bool  valid     = false;
+    } wind[13];
+
+    bool dirty = false;
+};
+
+static PendingWeather      pending_wx;
+static XPLMFlightLoopID    weather_flight_loop_id = nullptr;
+
+static float remap_cloud_type(uint8_t cigi_type)
+{
+    switch (cigi_type) {
+        case 5: case 3: case 4:             return 0.0f;  // Cirrus
+        case 2: case 8: case 10: case 9:    return 1.0f;  // Stratus
+        case 1: case 7:                     return 2.0f;  // Cumulus
+        case 6:                             return 3.0f;  // Cumulonimbus
+        default:                            return 2.0f;  // fallback Cumulus
+    }
+}
+
 // ── Frame counters ────────────────────────────────────────────────────────────
 static uint32_t g_host_frame = 0;
 static uint32_t g_ig_frame   = 0;
@@ -350,6 +411,68 @@ static void process_packet(const uint8_t * pkt, int len)
         }
         break;
 
+    // ── Atmosphere Control (host → IG) ──────────────────────────────────────
+    // Packet ID = 0x0A, Size = 32 bytes
+    case 0x0A:
+        if (packet_size >= 32) {
+            pending_wx.humidity_pct  = pkt[3];
+            pending_wx.temperature_c = read_be_float(pkt + 4);
+            pending_wx.visibility_m  = read_be_float(pkt + 8);
+            pending_wx.wind_speed_ms = read_be_float(pkt + 12);
+            pending_wx.vert_wind_ms  = read_be_float(pkt + 16);
+            pending_wx.wind_dir_deg  = read_be_float(pkt + 20);
+            pending_wx.pressure_hpa  = read_be_float(pkt + 24);
+            pending_wx.dirty = true;
+        }
+        break;
+
+    // ── Weather Control (host → IG) ──────────────────────────────────────────
+    // Packet ID = 0x0C, Size = 56 bytes
+    case 0x0C:
+        if (packet_size >= 56) {
+            uint8_t layer_id = pkt[4];
+            uint8_t flags1   = pkt[6];
+            uint8_t flags2   = pkt[7];
+            bool weather_enable      = (flags1 & 0x01) != 0;
+            uint8_t cloud_type_cigi  = (flags1 >> 4) & 0x0F;
+            uint8_t severity         = (flags2 >> 2) & 0x07;
+
+            float coverage_pct = read_be_float(pkt + 20);
+            float base_elev_m  = read_be_float(pkt + 24);
+            float thickness_m  = read_be_float(pkt + 28);
+            float h_wind_ms    = read_be_float(pkt + 36);
+            float v_wind_ms    = read_be_float(pkt + 40);
+            float wind_dir     = read_be_float(pkt + 44);
+
+            if (!weather_enable) break;
+
+            if (layer_id >= 1 && layer_id <= 3) {
+                // Cloud layer
+                int idx = layer_id - 1;
+                pending_wx.cloud[idx].type_xp  = remap_cloud_type(cloud_type_cigi);
+                pending_wx.cloud[idx].coverage  = coverage_pct / 100.0f;
+                pending_wx.cloud[idx].base_m    = base_elev_m;
+                pending_wx.cloud[idx].top_m     = base_elev_m + thickness_m;
+                pending_wx.cloud[idx].valid     = true;
+            } else if (layer_id == 4 || layer_id == 5) {
+                // Precipitation
+                pending_wx.rain_pct = coverage_pct / 100.0f;
+            } else if (layer_id >= 10) {
+                // Wind-only layer
+                int wind_idx = layer_id - 10;
+                if (wind_idx < 13) {
+                    pending_wx.wind[wind_idx].alt_m    = base_elev_m;
+                    pending_wx.wind[wind_idx].speed_ms  = h_wind_ms;
+                    pending_wx.wind[wind_idx].dir_deg   = wind_dir;
+                    pending_wx.wind[wind_idx].vert_ms   = v_wind_ms;
+                    pending_wx.wind[wind_idx].turb      = severity / 5.0f;
+                    pending_wx.wind[wind_idx].valid     = true;
+                }
+            }
+            pending_wx.dirty = true;
+        }
+        break;
+
     default:
         break;
     }
@@ -370,6 +493,77 @@ static void process_datagram(const uint8_t * buf, int len)
     }
     ++g_ig_frame;
     send_sof();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Weather flight loop: write decoded CIGI weather to X-Plane datarefs (~1 Hz)
+// ─────────────────────────────────────────────────────────────────────────────
+static float WeatherFlightLoopCb(float, float, int, void *)
+{
+    if (!pending_wx.dirty) return 1.0f;
+
+    if (dr_update_immediately)
+        XPLMSetDatai(dr_update_immediately, 1);
+
+    // Global atmosphere
+    if (dr_sealevel_temp_c)
+        XPLMSetDataf(dr_sealevel_temp_c, pending_wx.temperature_c);
+    if (dr_sealevel_pressure_pas)
+        XPLMSetDataf(dr_sealevel_pressure_pas, pending_wx.pressure_hpa * 100.0f);
+    if (dr_visibility_sm)
+        XPLMSetDataf(dr_visibility_sm, pending_wx.visibility_m / 1609.34f);
+    if (dr_rain_percent)
+        XPLMSetDataf(dr_rain_percent, pending_wx.rain_pct);
+
+    // Cloud layers [3]
+    float cloud_base[3] = {}, cloud_top[3] = {}, cloud_cov[3] = {}, cloud_tp[3] = {};
+    for (int i = 0; i < 3; i++) {
+        if (pending_wx.cloud[i].valid) {
+            cloud_base[i] = pending_wx.cloud[i].base_m;
+            cloud_top[i]  = pending_wx.cloud[i].top_m;
+            cloud_cov[i]  = pending_wx.cloud[i].coverage;
+            cloud_tp[i]   = pending_wx.cloud[i].type_xp;
+        }
+    }
+    if (dr_cloud_base)     XPLMSetDatavf(dr_cloud_base,     cloud_base, 0, 3);
+    if (dr_cloud_tops)     XPLMSetDatavf(dr_cloud_tops,     cloud_top,  0, 3);
+    if (dr_cloud_coverage) XPLMSetDatavf(dr_cloud_coverage, cloud_cov,  0, 3);
+    if (dr_cloud_type)     XPLMSetDatavf(dr_cloud_type,     cloud_tp,   0, 3);
+
+    // Wind layers [13]
+    float w_alt[13]={}, w_dir[13]={}, w_spd[13]={}, w_turb[13]={};
+    int valid_winds = 0;
+    for (int i = 0; i < 13; i++) {
+        if (pending_wx.wind[i].valid) {
+            w_alt[i]  = pending_wx.wind[i].alt_m;
+            w_dir[i]  = pending_wx.wind[i].dir_deg;
+            w_spd[i]  = pending_wx.wind[i].speed_ms / 0.51444f;  // m/s → kts
+            w_turb[i] = pending_wx.wind[i].turb * 10.0f;         // 0-1 → 0-10
+            valid_winds++;
+        }
+    }
+    if (valid_winds > 0) {
+        if (dr_wind_alt)  XPLMSetDatavf(dr_wind_alt,  w_alt,  0, 13);
+        if (dr_wind_dir)  XPLMSetDatavf(dr_wind_dir,  w_dir,  0, 13);
+        if (dr_wind_spd)  XPLMSetDatavf(dr_wind_spd,  w_spd,  0, 13);
+        if (dr_wind_turb) XPLMSetDatavf(dr_wind_turb, w_turb, 0, 13);
+    }
+
+    if (dr_update_immediately)
+        XPLMSetDatai(dr_update_immediately, 0);
+
+    // Log once on change
+    char dbg[256];
+    snprintf(dbg, sizeof(dbg),
+        "xplanecigi: WX applied — vis=%.0fm temp=%.1fC wind=%03.0f/%.1fms clouds=%d rain=%.0f%%\n",
+        pending_wx.visibility_m, pending_wx.temperature_c,
+        pending_wx.wind_dir_deg, pending_wx.wind_speed_ms,
+        (int)(pending_wx.cloud[0].valid + pending_wx.cloud[1].valid + pending_wx.cloud[2].valid),
+        pending_wx.rain_pct * 100.0f);
+    XPLMDebugString(dbg);
+
+    pending_wx.dirty = false;
+    return 1.0f;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -497,6 +691,30 @@ PLUGIN_API int XPluginStart(char * outName, char * outSig, char * outDesc)
     // Create terrain probe for HOT requests
     g_terrain_probe = XPLMCreateProbe(xplm_ProbeY);
 
+    // Weather region datarefs (writable since XP 12.0)
+    dr_sealevel_temp_c       = XPLMFindDataRef("sim/weather/region/sealevel_temperature_c");
+    dr_sealevel_pressure_pas = XPLMFindDataRef("sim/weather/region/sealevel_pressure_pas");
+    dr_visibility_sm         = XPLMFindDataRef("sim/weather/region/visibility_reported_sm");
+    dr_rain_percent          = XPLMFindDataRef("sim/weather/region/rain_percent");
+    dr_cloud_base            = XPLMFindDataRef("sim/weather/region/cloud_base_msl_m");
+    dr_cloud_tops            = XPLMFindDataRef("sim/weather/region/cloud_tops_msl_m");
+    dr_cloud_coverage        = XPLMFindDataRef("sim/weather/region/cloud_coverage_percent");
+    dr_cloud_type            = XPLMFindDataRef("sim/weather/region/cloud_type");
+    dr_wind_alt              = XPLMFindDataRef("sim/weather/region/wind_altitude_msl_m");
+    dr_wind_dir              = XPLMFindDataRef("sim/weather/region/wind_direction_degt");
+    dr_wind_spd              = XPLMFindDataRef("sim/weather/region/wind_speed_msc");
+    dr_wind_turb             = XPLMFindDataRef("sim/weather/region/turbulence");
+    dr_update_immediately    = XPLMFindDataRef("sim/weather/region/update_immediately");
+
+    // Register weather flight loop (1 Hz, writes datarefs only when dirty)
+    XPLMCreateFlightLoop_t wx_fl;
+    wx_fl.structSize   = sizeof(wx_fl);
+    wx_fl.phase        = xplm_FlightLoop_Phase_BeforeFlightModel;
+    wx_fl.callbackFunc = WeatherFlightLoopCb;
+    wx_fl.refcon       = nullptr;
+    weather_flight_loop_id = XPLMCreateFlightLoop(&wx_fl);
+    XPLMScheduleFlightLoop(weather_flight_loop_id, 1.0f, true);
+
     // Override X-Plane's FDM so it doesn't overwrite our position each frame
     g_override_planepath = XPLMFindDataRef("sim/operation/override/override_planepath");
     if (g_override_planepath) {
@@ -526,6 +744,10 @@ PLUGIN_API void XPluginStop()
     }
 
     XPLMUnregisterFlightLoopCallback(FlightLoopCallback, nullptr);
+    if (weather_flight_loop_id) {
+        XPLMDestroyFlightLoop(weather_flight_loop_id);
+        weather_flight_loop_id = nullptr;
+    }
     if (g_terrain_probe) { XPLMDestroyProbe(g_terrain_probe); g_terrain_probe = nullptr; }
     if (g_recv_sock != INVALID_SOCKET) { closesocket(g_recv_sock); g_recv_sock = INVALID_SOCKET; }
     if (g_send_sock != INVALID_SOCKET) { closesocket(g_send_sock); g_send_sock = INVALID_SOCKET; }

@@ -47,7 +47,8 @@ from sim_msgs.msg import (FlightModelState, FuelState, SimState, SimCommand, Pan
                           FailureCommand, FailureState, TerrainSource,
                           AirDataState, PayloadCommand,
                           ArbitrationState, GearState,
-                          AtmosphereState, WeatherState, WeatherWindLayer)
+                          AtmosphereState, WeatherState, WeatherWindLayer,
+                          MicroburstHazard)
 from std_msgs.msg import String
 from lifecycle_msgs.srv import ChangeState
 from lifecycle_msgs.msg import Transition
@@ -85,6 +86,9 @@ class IosBackendNode(Node):
         self._latest = {}
         self._lock = threading.Lock()
         self._loaded_aircraft_id = ''
+        self._active_microbursts = []   # list of MicroburstHazard-like dicts
+        self._mb_next_id = 1
+        self._last_weather_data = {}    # cache last set_weather data for republish
 
         self._flight_model_sub = self.create_subscription(
             FlightModelState, '/aircraft/fdm/state', self._on_flight_model_state, 10)
@@ -750,6 +754,7 @@ class IosBackendNode(Node):
     def publish_weather(self, data: dict):
         """Publish WeatherState v2 to /world/weather."""
         import math
+        self._last_weather_data = data
         msg = WeatherState()
         msg.header.stamp = self.get_clock().now().to_msg()
 
@@ -759,10 +764,11 @@ class IosBackendNode(Node):
         msg.visibility_m = float(data.get('visibility_m', 9999.0))
         msg.humidity_pct = int(data.get('humidity_pct', 50))
 
-        # Surface wind layer (if direction/speed provided)
+        # Surface wind layer (if direction/speed/turbulence provided)
         wind_dir = data.get('wind_direction_deg')
         wind_spd = data.get('wind_speed_ms')
-        if wind_dir is not None or wind_spd is not None:
+        turb_sev = data.get('turbulence_severity')
+        if wind_dir is not None or wind_spd is not None or turb_sev is not None:
             wl = WeatherWindLayer()
             wl.altitude_msl_m = 0.0  # surface
             wl.wind_speed_ms = float(wind_spd or 0.0)
@@ -771,7 +777,7 @@ class IosBackendNode(Node):
             wl.gust_speed_ms = float(data.get('gust_speed_ms', 0.0))
             wl.shear_direction_deg = 0.0
             wl.shear_speed_ms = 0.0
-            wl.turbulence_severity = 0.0
+            wl.turbulence_severity = float(turb_sev or 0.0)
             msg.wind_layers.append(wl)
 
         # Precipitation — sensible defaults
@@ -787,13 +793,101 @@ class IosBackendNode(Node):
         msg.variability_pct = float(data.get('variability_pct', 0.0))
         msg.evolution_mode = int(data.get('evolution_mode', 3))  # Static
         msg.deterministic_seed = int(data.get('deterministic_seed', 0))
-        msg.turbulence_model = int(data.get('turbulence_model', 0))  # None
+        # Default turbulence_model: MIL_F_8785C (1) if severity set, else None (0)
+        default_turb_model = 1 if turb_sev and float(turb_sev) > 0 else 0
+        msg.turbulence_model = int(data.get('turbulence_model', default_turb_model))
+
+        # Append active microbursts
+        for mb in self._active_microbursts:
+            mb_msg = MicroburstHazard()
+            mb_msg.hazard_id = int(mb['hazard_id'])
+            mb_msg.latitude_deg = float(mb['latitude_deg'])
+            mb_msg.longitude_deg = float(mb['longitude_deg'])
+            mb_msg.core_radius_m = float(mb['core_radius_m'])
+            mb_msg.shaft_altitude_m = float(mb['shaft_altitude_m'])
+            mb_msg.intensity = float(mb['intensity'])
+            mb_msg.lifecycle_phase = int(mb['lifecycle_phase'])
+            mb_msg.activation_time_sec = float(mb['activation_time_sec'])
+            msg.microbursts.append(mb_msg)
 
         self._weather_pub.publish(msg)
         self.get_logger().info(
             f'Published WeatherState v2: T={msg.temperature_sl_k:.1f}K '
             f'P={msg.pressure_sl_pa:.0f}Pa vis={msg.visibility_m:.0f}m '
-            f'wind_layers={len(msg.wind_layers)}')
+            f'wind_layers={len(msg.wind_layers)} microbursts={len(msg.microbursts)}')
+
+    def activate_microburst(self, data: dict):
+        """Compute lat/lon from bearing/distance relative to aircraft, add to active list."""
+        import math
+        with self._lock:
+            fms = self._latest.get('flight_model_state', {})
+            sim = self._latest.get('sim_state', {})
+
+        ac_lat = fms.get('lat', 0.0)
+        ac_lon = fms.get('lon', 0.0)
+        bearing_deg = float(data.get('bearing_deg', 0))
+        distance_nm = float(data.get('distance_nm', 3))
+        bearing_rad = math.radians(bearing_deg)
+        ac_lat_rad = math.radians(ac_lat)
+
+        # Compute microburst lat/lon from aircraft position + bearing + distance
+        mb_lat = ac_lat + (distance_nm / 60.0) * math.cos(bearing_rad)
+        mb_lon = ac_lon + (distance_nm / 60.0) * math.sin(bearing_rad) / math.cos(ac_lat_rad)
+
+        mb = {
+            'hazard_id': self._mb_next_id,
+            'latitude_deg': mb_lat,
+            'longitude_deg': mb_lon,
+            'core_radius_m': float(data.get('core_radius_m', 1000)),
+            'shaft_altitude_m': float(data.get('shaft_altitude_m', 300)),
+            'intensity': float(data.get('intensity', 10.0)),
+            'lifecycle_phase': 2,  # Mature
+            'activation_time_sec': float(sim.get('sim_time_sec', 0)),
+        }
+        self._mb_next_id += 1
+        self._active_microbursts.append(mb)
+
+        self.get_logger().info(
+            f'Microburst #{mb["hazard_id"]} activated: lat={mb_lat:.5f} lon={mb_lon:.5f} '
+            f'R={mb["core_radius_m"]:.0f}m lambda={mb["intensity"]:.1f}')
+
+        # Republish weather with updated microbursts
+        self.publish_weather(self._last_weather_data)
+        self._broadcast_microbursts()
+
+    def clear_microburst(self, hazard_id: int):
+        """Remove a specific microburst by ID."""
+        self._active_microbursts = [
+            mb for mb in self._active_microbursts if mb['hazard_id'] != hazard_id
+        ]
+        self.get_logger().info(f'Microburst #{hazard_id} cleared')
+        self.publish_weather(self._last_weather_data)
+        self._broadcast_microbursts()
+
+    def clear_all_microbursts(self):
+        """Remove all active microbursts."""
+        self._active_microbursts.clear()
+        self.get_logger().info('All microbursts cleared')
+        self.publish_weather(self._last_weather_data)
+        self._broadcast_microbursts()
+
+    def _broadcast_microbursts(self):
+        """Send current microburst list to all WS clients."""
+        data = {
+            'type': 'microbursts',
+            'hazards': [
+                {
+                    'hazard_id': mb['hazard_id'],
+                    'core_radius_m': mb['core_radius_m'],
+                    'intensity': mb['intensity'],
+                    'latitude_deg': mb['latitude_deg'],
+                    'longitude_deg': mb['longitude_deg'],
+                }
+                for mb in self._active_microbursts
+            ],
+        }
+        with self._lock:
+            self._latest['microbursts'] = data
 
     def _load_failures_config(self, aircraft_id: str):
         """Load failure catalog from aircraft package failures.yaml."""
@@ -1707,6 +1801,16 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 elif msg.get('type') == 'set_weather' and ros_node:
                     ros_node.publish_weather(msg.get('data', msg))
+
+                elif msg.get('type') == 'activate_microburst' and ros_node:
+                    ros_node.activate_microburst(msg.get('data', {}))
+
+                elif msg.get('type') == 'clear_microburst' and ros_node:
+                    hid = msg.get('data', {}).get('hazard_id', 0)
+                    ros_node.clear_microburst(int(hid))
+
+                elif msg.get('type') == 'clear_all_microbursts' and ros_node:
+                    ros_node.clear_all_microbursts()
 
             except json.JSONDecodeError:
                 pass

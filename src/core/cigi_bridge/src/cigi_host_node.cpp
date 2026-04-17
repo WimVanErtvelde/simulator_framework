@@ -1,4 +1,5 @@
 #include "cigi_bridge/cigi_host_node.hpp"
+#include "cigi_bridge/weather_encoder.hpp"
 #include <lifecycle_msgs/msg/state.hpp>
 
 #include <arpa/inet.h>
@@ -146,6 +147,13 @@ CallbackReturn CigiHostNode::on_activate(const rclcpp_lifecycle::State &)
             }
         });
 
+    weather_sub_ = create_subscription<sim_msgs::msg::WeatherState>(
+        "/world/weather", 10,
+        [this](sim_msgs::msg::WeatherState::ConstSharedPtr msg) {
+            latest_weather_ = *msg;
+            weather_dirty_ = true;
+        });
+
     auto period_ms = static_cast<int>(1000.0 / publish_rate_hz_);
     send_timer_ = create_wall_timer(
         std::chrono::milliseconds(period_ms),
@@ -171,6 +179,7 @@ CallbackReturn CigiHostNode::on_deactivate(const rclcpp_lifecycle::State &)
     heartbeat_timer_.reset();
     fms_sub_.reset();
     state_sub_.reset();
+    weather_sub_.reset();
     hat_pub_->on_deactivate();
     RCLCPP_INFO(get_logger(), "cigi_bridge deactivated");
     publish_lifecycle_state("inactive");
@@ -432,18 +441,30 @@ void CigiHostNode::send_cigi_frame()
         RCLCPP_INFO(get_logger(), "Sending IG Mode = Reset (one frame)");
     }
 
-    // Build a single UDP datagram: IG Control followed by Entity Control
-    constexpr int total = CigiHostNode::CIGI_IG_CTRL_SIZE + CigiHostNode::CIGI_ENTITY_CTRL_SIZE;
-    uint8_t datagram[total];
+    // Build a single UDP datagram: IG Control + Entity Control + optional Weather
+    // Max: 24 (IG) + 48 (Entity) + 32 (Atmo) + 56*17 (3 cloud + 1 precip + 13 wind) = 1056
+    uint8_t datagram[1088];
+    size_t offset = 0;
 
     encode_ig_ctrl(datagram, frame_counter_, timestamp_s, ig_mode);
-    encode_entity_ctrl(datagram + CIGI_IG_CTRL_SIZE,
+    offset += CIGI_IG_CTRL_SIZE;
+
+    encode_entity_ctrl(datagram + offset,
                        static_cast<uint16_t>(entity_id_),
                        roll_deg, pitch_deg, yaw_deg,
                        lat_deg, lon_deg, alt_m);
+    offset += CIGI_ENTITY_CTRL_SIZE;
+
+    // Append weather packets only when weather has changed
+    if (weather_dirty_) {
+        size_t weather_bytes = cigi_bridge::encode_weather_packets(
+            datagram + offset, sizeof(datagram) - offset, latest_weather_);
+        offset += weather_bytes;
+        weather_dirty_ = false;
+    }
 
     if (send_fd_ >= 0) {
-        sendto(send_fd_, datagram, total, 0,
+        sendto(send_fd_, datagram, offset, 0,
                reinterpret_cast<struct sockaddr *>(&ig_addr_), sizeof(ig_addr_));
     }
 

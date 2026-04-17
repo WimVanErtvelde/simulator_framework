@@ -17,6 +17,7 @@ find_package(std_msgs REQUIRED)
 add_executable(cigi_bridge_node
   src/cigi_host_node.cpp
   src/hat_request_tracker.cpp
+  src/weather_encoder.cpp
 )
 
 target_include_directories(cigi_bridge_node PRIVATE

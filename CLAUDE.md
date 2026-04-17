@@ -201,7 +201,7 @@ simulator_framework/
 │   │   ├── sim_manager/             ← ROS2 node: sim clock, state machine, lifecycle mgmt
 │   │   ├── flight_model_adapter/    ← ROS2 node: IFlightModelAdapter interface + implementations
 │   │   ├── input_arbitrator/        ← ROS2 node: per-channel source selection
-│   │   ├── atmosphere_node/         ← ROS2 node: ISA + weather deviation → /world/atmosphere (PENDING RENAME to weather_solver_node → src/world/weather_solver/)
+│   │   ├── atmosphere_node/         ← SUPERSEDED by src/world/weather_solver/ (kept as dead code, not launched)
 │   │   ├── navaid_sim/              ← ROS2 node: VOR/ILS/NDB/DME/markers, DTED LOS, A424+XP format
 │   │   ├── cigi_bridge/             ← ROS2 node: CIGI host implementation
 │   │   └── sim_interfaces/          ← headers-only: shared C++ interfaces (no node)
@@ -223,6 +223,8 @@ simulator_framework/
 │   │   ├── c172/                    ← ROS2 package: config YAML, flight model data, panel layout, plugins
 │   │   └── ec135/                   ← ROS2 package: rotary-wing example
 │   ├── sim_msgs/                    ← ROS2 package: all custom message definitions
+│   ├── world/
+│   │   └── weather_solver/          ← ROS2 node: wind interpolation, Dryden turbulence, microburst sampling → /world/atmosphere
 │   └── qtg/
 │       └── engine/                  ← ROS2 ament_python package: test runner + QTG reports
 ├── ios/
@@ -404,7 +406,7 @@ All topics use `snake_case`. No abbreviations unless universally understood (e.g
 
 | Topic | Type | Publisher | Notes |
 |---|---|---|---|
-| `/world/atmosphere` | AtmosphereState | atmosphere_node | Pressure, temp, density at aircraft position |
+| `/world/atmosphere` | AtmosphereState | weather_solver | ISA + weather deviation + interpolated wind + Dryden turbulence + microburst at aircraft position |
 | `/world/weather` | WeatherState (v2 — layered, replaces flat v1) | sim_manager | Cloud layers, wind layers, precipitation, surface, turbulence model, microbursts |
 | `/world/hazards/microburst` | MicroburstHazard | weather_solver | Active microburst fields (Oseguera-Bowles parameters) |
 | `/world/nav_signals` | NavSignalTable | navaid_sim | Receivable navaids, signal strength, LOS |

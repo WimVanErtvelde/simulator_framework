@@ -33,6 +33,12 @@ const stubStyle = {
   color: '#475569', fontSize: 11, fontFamily: 'monospace',
 }
 
+const INTENSITY_MAP = {
+  Light: 5.0,
+  Moderate: 10.0,
+  Severe: 15.0,
+}
+
 function WeatherField({ label, field, form, update, placeholder, inputStyle, allowDecimal = false, hint = '' }) {
   const [open, setOpen] = useState(false)
   return (
@@ -62,11 +68,15 @@ function WeatherField({ label, field, form, update, placeholder, inputStyle, all
 }
 
 export default function WeatherPanel() {
-  const { atmosphere, ws, wsConnected } = useSimStore(useShallow(s => ({
+  const { atmosphere, ws, wsConnected, microbursts } = useSimStore(useShallow(s => ({
     atmosphere: s.atmosphere, ws: s.ws, wsConnected: s.wsConnected,
+    microbursts: s.microbursts ?? [],
   })))
   const [form, setForm] = useState({
-    vis: '', qnh: '', oat: '', windDir: '', windSpd: '',
+    vis: '', qnh: '', oat: '', windDir: '', windSpd: '', turb: '',
+  })
+  const [mbForm, setMbForm] = useState({
+    bearing: '', distance: '', radius: '1000', intensity: 'Moderate',
   })
 
   const hasPending = Object.values(form).some(v => v !== '')
@@ -76,7 +86,13 @@ export default function WeatherPanel() {
     borderColor: form[field] !== '' ? '#bc4fcb' : '#1e293b',
   })
 
+  const mbInputStyle = (field) => ({
+    ...inputBase,
+    borderColor: mbForm[field] !== '' ? '#f59e0b' : '#1e293b',
+  })
+
   const update = (field, val) => setForm(prev => ({ ...prev, [field]: val }))
+  const mbUpdate = (field, val) => setMbForm(prev => ({ ...prev, [field]: val }))
 
   const applyPreset = (preset) => {
     setForm(prev => ({
@@ -88,28 +104,52 @@ export default function WeatherPanel() {
 
   const accept = () => {
     if (!ws || !wsConnected) return
-    // Build WeatherState v2 data — convert UI units to SI wire units
     const data = {}
-    // Temperature: UI = °C, wire = K
     if (form.oat) data.temperature_sl_k = Number(form.oat) + 273.15
-    // Pressure: UI = hPa, wire = Pa
     if (form.qnh) data.pressure_sl_pa = Number(form.qnh) * 100
-    // Visibility: already in m
     if (form.vis) data.visibility_m = Number(form.vis)
-    // Wind: UI = deg/kt, wire = deg/m/s
     if (form.windDir) data.wind_direction_deg = Number(form.windDir)
     if (form.windSpd) data.wind_speed_ms = Number(form.windSpd) * KT_TO_MS
+    if (form.turb) data.turbulence_severity = Number(form.turb) / 100
 
     ws.send(JSON.stringify({ type: 'set_weather', data }))
-    setForm({ vis: '', qnh: '', oat: '', windDir: '', windSpd: '' })
+    setForm({ vis: '', qnh: '', oat: '', windDir: '', windSpd: '', turb: '' })
+  }
+
+  const activateMicroburst = () => {
+    if (!ws || !wsConnected) return
+    if (microbursts.length >= 4) return
+    if (!mbForm.bearing || !mbForm.distance) return
+
+    ws.send(JSON.stringify({
+      type: 'activate_microburst',
+      data: {
+        bearing_deg: Number(mbForm.bearing),
+        distance_nm: Number(mbForm.distance),
+        intensity: INTENSITY_MAP[mbForm.intensity] ?? 10.0,
+        core_radius_m: Number(mbForm.radius) || 1000,
+        shaft_altitude_m: 300.0,
+      }
+    }))
+    setMbForm(prev => ({ ...prev, bearing: '', distance: '' }))
+  }
+
+  const clearMicroburst = (hazardId) => {
+    if (!ws || !wsConnected) return
+    ws.send(JSON.stringify({ type: 'clear_microburst', data: { hazard_id: hazardId } }))
+  }
+
+  const clearAllMicrobursts = () => {
+    if (!ws || !wsConnected) return
+    ws.send(JSON.stringify({ type: 'clear_all_microbursts' }))
   }
 
   return (
     <div>
       <SectionHeader title="CURRENT CONDITIONS" />
       <PanelRow label="QNH" value={atmosphere.qnhHpa.toFixed(1)} unit="hPa" />
-      <PanelRow label="OAT" value={atmosphere.oatCelsius.toFixed(1)} unit="\u00B0C" />
-      <PanelRow label="Wind Dir" value={atmosphere.windDirDeg.toFixed(0)} unit="\u00B0" />
+      <PanelRow label="OAT" value={atmosphere.oatCelsius.toFixed(1)} unit="°C" />
+      <PanelRow label="Wind Dir" value={atmosphere.windDirDeg.toFixed(0)} unit="°" />
       <PanelRow label="Wind Spd" value={atmosphere.windSpeedKt.toFixed(0)} unit="kt" />
       <PanelRow label="Visibility" value={atmosphere.visibilityM.toFixed(0)} unit="m" />
       <PanelRow label="Turbulence" value={(atmosphere.turbulenceIntensity * 100).toFixed(0)} unit="%" />
@@ -120,12 +160,14 @@ export default function WeatherPanel() {
           placeholder={atmosphere.visibilityM} inputStyle={inputStyle} hint="metres" />
         <WeatherField label="QNH (hPa)" field="qnh" form={form} update={update}
           placeholder={atmosphere.qnhHpa} inputStyle={inputStyle} allowDecimal hint="hPa" />
-        <WeatherField label="OAT (\u00B0C)" field="oat" form={form} update={update}
-          placeholder={atmosphere.oatCelsius} inputStyle={inputStyle} allowDecimal hint="\u00B0C" />
-        <WeatherField label="Wind Dir (\u00B0)" field="windDir" form={form} update={update}
-          placeholder={atmosphere.windDirDeg} inputStyle={inputStyle} hint="0\u2013360" />
+        <WeatherField label="OAT (°C)" field="oat" form={form} update={update}
+          placeholder={atmosphere.oatCelsius} inputStyle={inputStyle} allowDecimal hint="°C" />
+        <WeatherField label="Wind Dir (°)" field="windDir" form={form} update={update}
+          placeholder={atmosphere.windDirDeg} inputStyle={inputStyle} hint="0–360" />
         <WeatherField label="Wind Spd (kt)" field="windSpd" form={form} update={update}
           placeholder={atmosphere.windSpeedKt} inputStyle={inputStyle} hint="knots" />
+        <WeatherField label="Turbulence (%)" field="turb" form={form} update={update}
+          placeholder={(atmosphere.turbulenceIntensity * 100).toFixed(0)} inputStyle={inputStyle} hint="0–100" />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, margin: '12px 0' }}>
@@ -149,7 +191,75 @@ export default function WeatherPanel() {
 
       <div style={stubStyle}>CLOUD LAYERS — coming soon</div>
       <div style={stubStyle}>PRECIPITATION — coming soon</div>
-      <div style={stubStyle}>MICROBURST — coming soon</div>
+
+      {/* ── MICROBURST ───────────────────────────────────────────── */}
+      <SectionHeader title="MICROBURST" />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <WeatherField label="Bearing (°)" field="bearing" form={mbForm} update={mbUpdate}
+            placeholder="---" inputStyle={mbInputStyle} hint="0–360" />
+          <WeatherField label="Distance (NM)" field="distance" form={mbForm} update={mbUpdate}
+            placeholder="---" inputStyle={mbInputStyle} allowDecimal hint="0.1–20" />
+        </div>
+        <WeatherField label="Radius (m)" field="radius" form={mbForm} update={mbUpdate}
+          placeholder="1000" inputStyle={mbInputStyle} hint="100–5000" />
+
+        <div style={{ fontSize: 11, color: '#64748b', fontFamily: 'monospace', marginBottom: 2 }}>
+          INTENSITY
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4 }}>
+          {Object.keys(INTENSITY_MAP).map(label => (
+            <button key={label} style={{
+              ...neutralBtn, height: 32, fontSize: 11,
+              background: mbForm.intensity === label ? '#1c2333' : '#111827',
+              borderColor: mbForm.intensity === label ? '#f59e0b' : '#1e293b',
+              color: mbForm.intensity === label ? '#f59e0b' : '#64748b',
+            }}
+              onClick={() => mbUpdate('intensity', label)}
+            >{label}</button>
+          ))}
+        </div>
+
+        <FullWidthBtn
+          label={microbursts.length >= 4 ? 'MAX 4 ACTIVE' : 'ACTIVATE'}
+          style={{
+            background: microbursts.length >= 4 ? '#1c2333' : 'rgba(245, 158, 11, 0.12)',
+            color: microbursts.length >= 4 ? '#475569' : '#f59e0b',
+            borderColor: microbursts.length >= 4 ? '#1e293b' : '#f59e0b',
+            cursor: microbursts.length >= 4 ? 'not-allowed' : 'pointer',
+          }}
+          onClick={activateMicroburst}
+        />
+
+        {/* Active microbursts */}
+        {microbursts.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+            {microbursts.map(mb => (
+              <div key={mb.hazard_id} style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '4px 8px', background: '#0d1117', borderRadius: 3,
+                border: '1px solid #f59e0b33', fontSize: 11, fontFamily: 'monospace',
+              }}>
+                <span style={{ color: '#f59e0b' }}>
+                  MB#{mb.hazard_id} R={mb.core_radius_m}m {'\u03BB'}={mb.intensity}
+                </span>
+                <button style={{
+                  background: 'transparent', border: 'none', color: '#ff3b30',
+                  fontFamily: 'monospace', fontSize: 11, cursor: 'pointer',
+                  padding: '2px 6px',
+                }} onClick={() => clearMicroburst(mb.hazard_id)}>CLEAR</button>
+              </div>
+            ))}
+            {microbursts.length > 1 && (
+              <FullWidthBtn
+                label="CLEAR ALL"
+                style={{ background: 'rgba(255, 59, 48, 0.08)', color: '#ff3b30', borderColor: '#ff3b3044' }}
+                onClick={clearAllMicrobursts}
+              />
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
