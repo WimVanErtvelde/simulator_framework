@@ -229,7 +229,7 @@ private:
       RCLCPP_WARN(this->get_logger(),
         "No config.yaml found for aircraft '%s', using defaults", aircraft_id_.c_str());
       required_nodes_ = {
-        "flight_model_adapter", "atmosphere_node", "input_arbitrator"
+        "flight_model_adapter", "weather_solver", "input_arbitrator"
       };
       return;
     }
@@ -264,7 +264,7 @@ private:
         "Aircraft config loaded: %zu required nodes", required_nodes_.size());
     } catch (const std::exception & e) {
       RCLCPP_ERROR(this->get_logger(), "Failed to parse config: %s", e.what());
-      required_nodes_ = {"flight_model_adapter", "atmosphere_node", "input_arbitrator"};
+      required_nodes_ = {"flight_model_adapter", "weather_solver", "input_arbitrator"};
     }
   }
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { useSimStore } from '../store/useSimStore'
 
-const AXIS_STEP = 0.03
+const AXIS_STEP = 0.01
 const TRIM_STEP = 0.005
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)) }
@@ -47,8 +47,8 @@ export default function useKeyboardControls() {
     const interval = setInterval(() => {
       const s = state.current
       const keys = keysDown.current
-      if (keys.has('w')) s.elevator = clamp(s.elevator + AXIS_STEP, -1, 1)
-      if (keys.has('s')) s.elevator = clamp(s.elevator - AXIS_STEP, -1, 1)
+      if (keys.has('w')) s.elevator = clamp(s.elevator - AXIS_STEP, -1, 1)
+      if (keys.has('s')) s.elevator = clamp(s.elevator + AXIS_STEP, -1, 1)
       if (keys.has('a')) s.aileron = clamp(s.aileron - AXIS_STEP, -1, 1)
       if (keys.has('d')) s.aileron = clamp(s.aileron + AXIS_STEP, -1, 1)
       if (keys.has('q')) s.rudder = clamp(s.rudder + AXIS_STEP, -1, 1)

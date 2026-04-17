@@ -4,7 +4,7 @@ aircraft:
   name: Eurocopter EC135
   required_nodes:
     - flight_model_adapter
-    - atmosphere_node
+    - weather_solver
     - input_arbitrator
     - sim_fuel
     - sim_electrical
