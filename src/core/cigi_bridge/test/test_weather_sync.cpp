@@ -184,7 +184,7 @@ TEST(WeatherSync, PartialRemovalOnlyDestroysMissing)
     uint8_t buf[2048] = {};
     sync.process_update(ws1, buf, sizeof buf);
 
-    // Frame 2: keep 1 and 3, drop 2
+    // Frame 2: keep 1 and 3 with identical content, drop 2
     sim_msgs::msg::WeatherState ws2;
     ws2.patches.push_back(make_patch(1));
     ws2.patches.push_back(make_patch(3));
@@ -192,17 +192,15 @@ TEST(WeatherSync, PartialRemovalOnlyDestroysMissing)
     size_t n = sync.process_update(ws2, buf, sizeof buf);
 
     EXPECT_EQ(sync.sent_count(), 2u);
+
+    // Post-2c.1: regions 1 and 3 are short-circuited (unchanged content)
+    // and are NOT re-emitted. Only region 2's Destroy should appear.
+    EXPECT_EQ(count_packets(buf, n, 11), 1u);
+
     // Destroyed for region_id=2
     size_t off2 = find_packet(buf, n, 11, 2);
     ASSERT_NE(off2, SIZE_MAX);
     EXPECT_EQ(buf[off2 + 4] & 0x03, 2);
-    // Active re-emit for region_ids 1 and 3
-    size_t off1 = find_packet(buf, n, 11, 1);
-    size_t off3 = find_packet(buf, n, 11, 3);
-    ASSERT_NE(off1, SIZE_MAX);
-    ASSERT_NE(off3, SIZE_MAX);
-    EXPECT_EQ(buf[off1 + 4] & 0x03, 1);
-    EXPECT_EQ(buf[off3 + 4] & 0x03, 1);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -482,6 +480,126 @@ TEST(WeatherSyncDestroyRetry, FlushOnRepositionClearsRetries)
     sync.flush_on_reposition();
     EXPECT_FALSE(sync.has_pending_destroys());
     EXPECT_EQ(sync.sent_count(), 0u);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Slice 2c.1 — Content-hash short-circuit on process_update
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST(WeatherSyncShortCircuit, UnchangedPatchDoesNotReEmit)
+{
+    WeatherSync sync;
+    sim_msgs::msg::WeatherState ws;
+    ws.patches.push_back(make_patch(1));
+
+    uint8_t buf[2048] = {};
+    size_t n1 = sync.process_update(ws, buf, sizeof buf);
+    EXPECT_GT(n1, 0u);
+    ASSERT_EQ(sync.sent_count(), 1u);
+
+    // Second call with identical content — should produce zero bytes (no Active emit,
+    // no pending destroys, no new state).
+    std::memset(buf, 0, sizeof buf);
+    size_t n2 = sync.process_update(ws, buf, sizeof buf);
+    EXPECT_EQ(n2, 0u);
+    EXPECT_EQ(sync.sent_count(), 1u);
+}
+
+TEST(WeatherSyncShortCircuit, ChangedPatchReEmits)
+{
+    WeatherSync sync;
+    sim_msgs::msg::WeatherState ws;
+    ws.patches.push_back(make_patch(1, /*lat=*/50.9, /*lon=*/4.5, /*radius_m=*/5556.0f));
+
+    uint8_t buf[2048] = {};
+    sync.process_update(ws, buf, sizeof buf);
+    ASSERT_EQ(sync.sent_count(), 1u);
+
+    // Change radius → should re-emit
+    ws.patches[0].radius_m = 10000.0f;
+    std::memset(buf, 0, sizeof buf);
+    size_t n = sync.process_update(ws, buf, sizeof buf);
+
+    EXPECT_GT(n, 0u);
+    // Should contain a Region Control packet for region 1 (Active)
+    size_t off = find_packet(buf, n, 11 /*Region*/, 1);
+    ASSERT_NE(off, SIZE_MAX);
+    EXPECT_EQ(buf[off + 4] & 0x03, 1);  // Active, not Destroyed
+}
+
+TEST(WeatherSyncShortCircuit, CloudLayerChangeTriggersReEmit)
+{
+    WeatherSync sync;
+    sim_msgs::msg::WeatherState ws;
+    auto p = make_patch(7);
+    sim_msgs::msg::WeatherCloudLayer cl;
+    cl.cloud_type = 6;
+    cl.coverage_pct = 50.0f;
+    cl.base_elevation_m = 2000.0f;
+    cl.thickness_m = 5000.0f;
+    p.cloud_layers.push_back(cl);
+    ws.patches.push_back(p);
+
+    uint8_t buf[2048] = {};
+    sync.process_update(ws, buf, sizeof buf);
+
+    // Same radius/geometry, but change coverage_pct
+    ws.patches[0].cloud_layers[0].coverage_pct = 75.0f;
+    std::memset(buf, 0, sizeof buf);
+    size_t n = sync.process_update(ws, buf, sizeof buf);
+
+    EXPECT_GT(n, 0u);  // re-emit fired
+}
+
+TEST(WeatherSyncShortCircuit, RemovedThenReAddedPatchEmitsFresh)
+{
+    // Re-add-during-destroy-retry-window scenario: after a removal, the
+    // destroy-retry queue still has pending Destroy retries. A re-add of
+    // the same patch in the next process_update call produces BOTH a
+    // Destroyed packet (drained from retry queue in step 1) AND an Active
+    // packet (fresh emit in step 3). Order matters: Destroyed first, Active
+    // second, so the IG's final state is Active.
+    WeatherSync sync;
+    sim_msgs::msg::WeatherState ws1;
+    ws1.patches.push_back(make_patch(5));
+    uint8_t buf[2048] = {};
+    sync.process_update(ws1, buf, sizeof buf);
+
+    // Remove — queues destroy retries for region 5
+    sim_msgs::msg::WeatherState ws_empty;
+    sync.process_update(ws_empty, buf, sizeof buf);
+    ASSERT_EQ(sync.sent_count(), 0u);
+    ASSERT_TRUE(sync.has_pending_destroys());
+
+    // Re-add same content — sent_patches_ is empty so short-circuit does NOT apply
+    std::memset(buf, 0, sizeof buf);
+    size_t n = sync.process_update(ws1, buf, sizeof buf);
+    EXPECT_GT(n, 0u);
+    EXPECT_EQ(sync.sent_count(), 1u);
+
+    // Expect exactly 2 Region Control packets for region 5: one Destroyed
+    // (drained retry) and one Active (re-add).
+    EXPECT_EQ(count_packets(buf, n, 11, 5), 2u);
+
+    // Walk the buffer in order: first packet for region 5 is Destroyed,
+    // second is Active. This ordering means IG's final state is Active.
+    size_t offset = 0;
+    int seen = 0;
+    uint8_t first_state = 0, second_state = 0;
+    while (offset + 2 <= n) {
+        uint8_t pkt_id   = buf[offset];
+        uint8_t pkt_size = buf[offset + 1];
+        if (pkt_size == 0 || offset + pkt_size > n) break;
+        if (pkt_id == 11 && read_be16(&buf[offset + 2]) == 5) {
+            if (seen == 0) first_state  = buf[offset + 4] & 0x03;
+            else           second_state = buf[offset + 4] & 0x03;
+            ++seen;
+        }
+        offset += pkt_size;
+    }
+    ASSERT_EQ(seen, 2);
+    EXPECT_EQ(first_state,  2);  // Destroyed (from drained retry)
+    EXPECT_EQ(second_state, 1);  // Active (fresh re-add)
 }
 
 int main(int argc, char ** argv)
