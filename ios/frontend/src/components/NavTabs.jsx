@@ -9,6 +9,7 @@ const TABS = [
   null, // divider
   { id: 'failures',  icon: '◉',  label: 'FAIL' },
   { id: 'weather',   icon: '≋',  label: 'WX' },
+  { id: 'weather_v2', icon: '☁',  label: 'WX2' },
   { id: 'time',      icon: '◷',  label: 'TIME' },
   { id: 'scenarios', icon: '▤',  label: 'SCEN' },
   null, // divider
