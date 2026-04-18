@@ -97,29 +97,33 @@ export default function RunwayField() {
         })}
       </div>
 
-      {runwayActive.categoryId !== 'DRY' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4 }}>
-          {SEVERITIES.map(sev => {
-            const active = runwayActive.severity === sev
-            const cat    = RUNWAY_CATEGORIES.find(c => c.id === runwayActive.categoryId)
-            const color  = cat?.color ?? COLOR_ACCENT_TEAL
-            return (
-              <button
-                key={sev}
-                type="button"
-                onClick={() => selectRunwaySeverity(sev)}
-                onTouchEnd={(e) => { e.preventDefault(); selectRunwaySeverity(sev) }}
-                style={{
-                  ...neutralBtn, height: 32, fontSize: 10,
-                  background:  active ? `${color}22` : COLOR_BG_CARD,
-                  borderColor: active ? color : COLOR_BORDER,
-                  color:       active ? color : COLOR_TEXT_MUTED,
-                }}
-              >{sev}</button>
-            )
-          })}
-        </div>
-      )}
+      {/* Severity row stays mounted (disabled for DRY) so the card height
+          doesn't jitter when the category changes. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4 }}>
+        {SEVERITIES.map(sev => {
+          const dry    = runwayActive.categoryId === 'DRY'
+          const active = !dry && runwayActive.severity === sev
+          const cat    = RUNWAY_CATEGORIES.find(c => c.id === runwayActive.categoryId)
+          const color  = cat?.color ?? COLOR_ACCENT_TEAL
+          return (
+            <button
+              key={sev}
+              type="button"
+              disabled={dry}
+              onClick={() => selectRunwaySeverity(sev)}
+              onTouchEnd={(e) => { e.preventDefault(); if (!dry) selectRunwaySeverity(sev) }}
+              style={{
+                ...neutralBtn, height: 32, fontSize: 10,
+                background:  active ? `${color}22` : COLOR_BG_CARD,
+                borderColor: active ? color : COLOR_BORDER,
+                color:       active ? color : COLOR_TEXT_MUTED,
+                opacity: dry ? 0.35 : 1,
+                cursor: dry ? 'not-allowed' : 'pointer',
+              }}
+            >{sev}</button>
+          )
+        })}
+      </div>
     </div>
   )
 }
