@@ -11,7 +11,7 @@ export default function useKeyboardControls() {
   const state = useRef({
     aileron: 0, elevator: 0, rudder: 0,
     throttle: 0, mixture: 1.0,
-    trimElevator: 0, brakeHeld: false,
+    trimElevator: 0, brakeHeld: false, parkingBrake: false,
     magnetoLeft: false, magnetoRight: false, starter: false,
   })
 
@@ -31,6 +31,7 @@ export default function useKeyboardControls() {
       keysDown.current.add(k)
       if (k === ' ') { state.current.aileron = 0; state.current.elevator = 0; state.current.rudder = 0; e.preventDefault() }
       if (k === 'b') state.current.brakeHeld = true
+      if (k === 'p') state.current.parkingBrake = !state.current.parkingBrake  // toggle on press
     }
     const onKeyUp = (e) => {
       const k = e.key.toLowerCase()
@@ -47,8 +48,8 @@ export default function useKeyboardControls() {
     const interval = setInterval(() => {
       const s = state.current
       const keys = keysDown.current
-      if (keys.has('w')) s.elevator = clamp(s.elevator - AXIS_STEP, -1, 1)
-      if (keys.has('s')) s.elevator = clamp(s.elevator + AXIS_STEP, -1, 1)
+      if (keys.has('w')) s.elevator = clamp(s.elevator + AXIS_STEP, -1, 1)
+      if (keys.has('s')) s.elevator = clamp(s.elevator - AXIS_STEP, -1, 1)
       if (keys.has('a')) s.aileron = clamp(s.aileron - AXIS_STEP, -1, 1)
       if (keys.has('d')) s.aileron = clamp(s.aileron + AXIS_STEP, -1, 1)
       if (keys.has('q')) s.rudder = clamp(s.rudder + AXIS_STEP, -1, 1)
@@ -64,17 +65,21 @@ export default function useKeyboardControls() {
       const ws = useSimStore.getState().ws
       if (!ws || ws.readyState !== WebSocket.OPEN) return
 
+      // Virtual cockpit publishes to VIRTUAL priority (non-sticky, below
+      // INSTRUCTOR) so IOS overrides still work and the cockpit doesn't
+      // permanently take the channel on first keypress.
       ws.send(JSON.stringify({
-        type: 'set_flight_controls',
+        type: 'set_virtual_flight_controls',
         data: {
           aileron_norm: s.aileron, elevator_norm: s.elevator, rudder_norm: s.rudder,
           collective_norm: 0, trim_aileron_norm: 0, trim_elevator_norm: s.trimElevator, trim_rudder_norm: 0,
           brake_left_norm: s.brakeHeld ? 1.0 : 0.0,
           brake_right_norm: s.brakeHeld ? 1.0 : 0.0,
+          parking_brake: s.parkingBrake,
         }
       }))
       ws.send(JSON.stringify({
-        type: 'set_engine_controls',
+        type: 'set_virtual_engine_controls',
         data: {
           throttle_norm: [s.throttle], mixture_norm: [s.mixture],
           magneto_left: [s.magnetoLeft], magneto_right: [s.magnetoRight],

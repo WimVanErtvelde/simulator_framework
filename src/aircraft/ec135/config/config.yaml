@@ -24,3 +24,37 @@ initial_conditions:
   qnh_pa: 101325.0
   fuel_total_norm: 0.80
   configuration: cold_and_dark
+
+# Ground friction lookup tables — same structure as c172; rotor-wing taxi is
+# rare but JSBSim still reads these globals during ground contact.
+ground_friction:
+  surface_type_factors:             # indexed by HatHotResponse.surface_type (0-10)
+    - { name: UNKNOWN,      static: 1.00, rolling: 1.00 }
+    - { name: ASPHALT,      static: 1.00, rolling: 1.00 }
+    - { name: CONCRETE,     static: 0.95, rolling: 0.90 }
+    - { name: GRASS,        static: 0.50, rolling: 3.00 }
+    - { name: DIRT,         static: 0.40, rolling: 4.00 }
+    - { name: GRAVEL,       static: 0.45, rolling: 3.50 }
+    - { name: WATER,        static: 0.05, rolling: 0.10 }
+    - { name: SNOW_COVERED, static: 0.30, rolling: 2.00 }
+    - { name: ICE_SURFACE,  static: 0.10, rolling: 0.80 }
+    - { name: SAND,         static: 0.35, rolling: 5.00 }
+    - { name: MARSH,        static: 0.30, rolling: 6.00 }
+
+  contamination_factors:            # indexed by WeatherState.runway_friction (0-15)
+    - { name: dry,                   static: 1.00, rolling: 1.00 }
+    - { name: wet_light,             static: 0.80, rolling: 1.20 }
+    - { name: wet_medium,            static: 0.65, rolling: 1.50 }
+    - { name: wet_max,               static: 0.50, rolling: 2.00 }
+    - { name: standing_water_light,  static: 0.40, rolling: 2.50 }
+    - { name: standing_water_medium, static: 0.30, rolling: 3.50 }
+    - { name: standing_water_max,    static: 0.20, rolling: 5.00 }
+    - { name: snow_light,            static: 0.40, rolling: 1.50 }
+    - { name: snow_medium,           static: 0.30, rolling: 2.00 }
+    - { name: snow_max,              static: 0.20, rolling: 2.50 }
+    - { name: ice_light,             static: 0.20, rolling: 1.00 }
+    - { name: ice_medium,            static: 0.10, rolling: 0.90 }
+    - { name: ice_max,               static: 0.05, rolling: 0.80 }
+    - { name: snow_ice_light,        static: 0.15, rolling: 1.20 }
+    - { name: snow_ice_medium,       static: 0.08, rolling: 1.00 }
+    - { name: snow_ice_max,          static: 0.04, rolling: 0.90 }

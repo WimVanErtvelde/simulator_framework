@@ -13,7 +13,7 @@ function fpmToAngle(fpm) {
   const clamped = Math.max(-2000, Math.min(2000, fpm))
   // Non-linear scale: compress near center, expand near limits
   // Using a simple approach: the first 1000 fpm takes 70°, next 1000 takes 80°
-  const sign = clamped >= 0 ? -1 : 1  // CW = negative angle change
+  const sign = clamped >= 0 ? 1 : -1  // climb → angle increases toward 12 o'clock (270°)
   const abs = Math.abs(clamped)
   let offset
   if (abs <= 1000) {

@@ -30,17 +30,33 @@
 #include <cmath>
 #include <string>
 #include <fstream>
+#include <set>
 
 // ── Network config (loaded from xplanecigi.ini, fallback to defaults) ─────────
 static char     g_host_ip[64] = "127.0.0.1";
 static uint16_t g_ig_port     = 8002;
 static uint16_t g_host_port   = 8001;
 
+// regen_weather gating: "always" | "ground_only" | "never"
+enum class RegenMode { Always, GroundOnly, Never };
+static RegenMode g_regen_mode = RegenMode::GroundOnly;
+
+static const char * regen_mode_name(RegenMode m)
+{
+    switch (m) {
+        case RegenMode::Always:     return "always";
+        case RegenMode::GroundOnly: return "ground_only";
+        case RegenMode::Never:      return "never";
+    }
+    return "unknown";
+}
+
 // Read config from <plugin_dir>/xplanecigi.ini
 // Format (all optional, unknown keys ignored):
 //   host_ip=192.168.1.100
 //   ig_port=8002
 //   host_port=8001
+//   regen_weather=ground_only   (always | ground_only | never)
 static void load_config()
 {
     char plugin_path[512] = {};
@@ -70,10 +86,17 @@ static void load_config()
         if      (key == "host_ip")   { std::snprintf(g_host_ip, sizeof(g_host_ip), "%s", val.c_str()); }
         else if (key == "ig_port")   { g_ig_port   = (uint16_t)std::stoi(val); }
         else if (key == "host_port") { g_host_port = (uint16_t)std::stoi(val); }
+        else if (key == "regen_weather") {
+            if      (val == "always")      g_regen_mode = RegenMode::Always;
+            else if (val == "ground_only") g_regen_mode = RegenMode::GroundOnly;
+            else if (val == "never")       g_regen_mode = RegenMode::Never;
+        }
     }
 
     char msg[256];
-    std::snprintf(msg, sizeof(msg), "xplanecigi: config loaded from %s\n", config_path.c_str());
+    std::snprintf(msg, sizeof(msg),
+        "xplanecigi: config loaded from %s (regen_weather=%s)\n",
+        config_path.c_str(), regen_mode_name(g_regen_mode));
     XPLMDebugString(msg);
 }
 
@@ -91,6 +114,7 @@ static XPLMDataRef g_theta              = nullptr;  // pitch (degrees, X-Plane c
 static XPLMDataRef g_psi                = nullptr;  // yaw   (degrees, X-Plane convention)
 static XPLMDataRef g_override_planepath = nullptr;  // int[20] — index 0 = override user aircraft
 static XPLMProbeRef g_terrain_probe    = nullptr;  // terrain elevation probe for HOT requests + stability
+static XPLMDataRef g_surface_type       = nullptr;  // int, XP surface enum under aircraft CG
 
 // ── Weather datarefs ─────────────────────────────────────────────────────────
 static XPLMDataRef dr_sealevel_temp_c       = nullptr;
@@ -105,7 +129,10 @@ static XPLMDataRef dr_wind_alt              = nullptr;
 static XPLMDataRef dr_wind_dir              = nullptr;
 static XPLMDataRef dr_wind_spd              = nullptr;
 static XPLMDataRef dr_wind_turb             = nullptr;
+static XPLMDataRef dr_runway_friction       = nullptr;
 static XPLMDataRef dr_update_immediately    = nullptr;
+static XPLMDataRef dr_onground_any          = nullptr;
+static XPLMCommandRef cmd_regen_weather     = nullptr;
 
 // ── Weather state (decoded from CIGI packets, written to XP by flight loop) ──
 struct PendingWeather {
@@ -118,6 +145,7 @@ struct PendingWeather {
     float pressure_hpa  = 1013.25f;
     uint8_t humidity_pct = 0;
     float rain_pct      = 0.0f;
+    uint8_t runway_friction = 0;  // 0=Dry, 1-3=Wet, 4-6=Puddly, 7-9=Snowy, 10-12=Icy, 13-15=Snowy/Icy
 
     struct CloudLayer {
         float type_xp   = 0.0f;
@@ -137,6 +165,7 @@ struct PendingWeather {
     } wind[13];
 
     bool dirty = false;
+    bool cloud_changed = false;  // gates regen_weather command — only on cloud/precip edits
 };
 
 static PendingWeather      pending_wx;
@@ -228,6 +257,76 @@ static void write_be_double(uint8_t * p, double v)
     p[2] = (uint8_t)(u >> 40); p[3] = (uint8_t)(u >> 32);
     p[4] = (uint8_t)(u >> 24); p[5] = (uint8_t)(u >> 16);
     p[6] = (uint8_t)(u >>  8); p[7] = (uint8_t) u;
+}
+
+static void write_be_float(uint8_t * p, float v)
+{
+    uint32_t u;
+    std::memcpy(&u, &v, sizeof u);
+    write_be32(p, u);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Surface type mapping: X-Plane enum → framework enum (see HatHotResponse.msg)
+//
+// X-Plane surface enum:
+//   0=surf_none, 1=surf_water, 2=surf_concrete, 3=surf_asphalt, 4=surf_grass,
+//   5=surf_dirt, 6=surf_gravel, 7=surf_lake, 8=surf_snow, 9=surf_shoulder,
+//   10=surf_blastpad, 11=surf_grnd, 12=surf_object
+//
+// Framework enum:
+//   0=UNKNOWN, 1=ASPHALT, 2=CONCRETE, 3=GRASS, 4=DIRT, 5=GRAVEL,
+//   6=WATER, 7=SNOW_COVERED, 8=ICE_SURFACE, 9=SAND, 10=MARSH
+// ─────────────────────────────────────────────────────────────────────────────
+static uint8_t xp_surface_to_framework(int xp_type)
+{
+    switch (xp_type) {
+        case 0:  return 0;   // surf_none      → UNKNOWN
+        case 1:  return 6;   // surf_water     → WATER
+        case 2:  return 2;   // surf_concrete  → CONCRETE
+        case 3:  return 1;   // surf_asphalt   → ASPHALT
+        case 4:  return 3;   // surf_grass     → GRASS
+        case 5:  return 4;   // surf_dirt      → DIRT
+        case 6:  return 5;   // surf_gravel    → GRAVEL
+        case 7:  return 6;   // surf_lake      → WATER
+        case 8:  return 7;   // surf_snow      → SNOW_COVERED
+        case 9:  return 1;   // surf_shoulder  → ASPHALT (paved shoulder)
+        case 10: return 2;   // surf_blastpad  → CONCRETE
+        case 11: return 4;   // surf_grnd      → DIRT (generic ground)
+        case 12: return 0;   // surf_object    → UNKNOWN
+        default: {
+            static std::set<int> s_seen;
+            if (s_seen.insert(xp_type).second) {
+                char dbg[128];
+                std::snprintf(dbg, sizeof(dbg),
+                    "xplanecigi: unknown XP surface_type=%d → UNKNOWN(0) "
+                    "(add to xp_surface_to_framework mapping)\n", xp_type);
+                XPLMDebugString(dbg);
+            }
+            return 0;  // UNKNOWN
+        }
+    }
+}
+
+// Default friction factors per framework surface enum.
+// Values match HatHotResponse.msg convention (JSBSim-style multipliers):
+//   static_friction_factor  — braking/static grip   (1.0 = dry pavement baseline)
+//   rolling_friction_factor — rolling drag multiplier (>1.0 = softer surface)
+static void default_friction_for_surface(uint8_t fw_surface, float & static_ff, float & rolling_ff)
+{
+    switch (fw_surface) {
+        case 1:  static_ff = 1.00f; rolling_ff = 1.00f; return;  // ASPHALT
+        case 2:  static_ff = 0.95f; rolling_ff = 0.90f; return;  // CONCRETE
+        case 3:  static_ff = 0.50f; rolling_ff = 3.00f; return;  // GRASS
+        case 4:  static_ff = 0.40f; rolling_ff = 4.00f; return;  // DIRT
+        case 5:  static_ff = 0.45f; rolling_ff = 3.50f; return;  // GRAVEL
+        case 6:  static_ff = 0.05f; rolling_ff = 0.10f; return;  // WATER
+        case 7:  static_ff = 0.30f; rolling_ff = 2.00f; return;  // SNOW_COVERED
+        case 8:  static_ff = 0.10f; rolling_ff = 0.80f; return;  // ICE_SURFACE
+        case 9:  static_ff = 0.35f; rolling_ff = 5.00f; return;  // SAND
+        case 10: static_ff = 0.30f; rolling_ff = 6.00f; return;  // MARSH
+        default: static_ff = 1.00f; rolling_ff = 1.00f; return;  // UNKNOWN → asphalt
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -395,7 +494,19 @@ static void process_packet(const uint8_t * pkt, int len)
                 hot_msl = out_alt;
             }
 
-            // Send HOT Response (0x02, 48 bytes)
+            // Look up surface type under aircraft CG (same for all gear points,
+            // since XP's terrain probe API doesn't expose surface type per lat/lon)
+            uint8_t fw_surface = 0;
+            float   static_ff  = 1.0f;
+            float   rolling_ff = 1.0f;
+            if (g_surface_type) {
+                int xp_surface = XPLMGetDatai(g_surface_type);
+                fw_surface = xp_surface_to_framework(xp_surface);
+                default_friction_for_surface(fw_surface, static_ff, rolling_ff);
+            }
+
+            // Send HOT Response (0x02, 48 bytes — standard 16 + HAT placeholder +
+            // extended fields: surface_type at 24, friction factors at 28/32)
             uint8_t resp[48] = {};
             resp[0] = 0x02;        // Packet ID = HAT/HOT Response
             resp[1] = 48;          // Packet Size
@@ -403,6 +514,11 @@ static void process_packet(const uint8_t * pkt, int len)
             resp[4] = valid ? 0x01 : 0x00;         // Valid flag
             write_be_double(resp + 8, hot_msl);     // HOT (terrain MSL, metres)
             write_be_double(resp + 16, 0.0);        // HAT placeholder
+            resp[24] = fw_surface;                  // framework surface enum
+            // resp[25..27] reserved (zeroed)
+            write_be_float(resp + 28, static_ff);   // static friction factor
+            write_be_float(resp + 32, rolling_ff);  // rolling friction factor
+            // resp[36..47] reserved (zeroed)
 
             sendto(g_send_sock,
                    reinterpret_cast<const char *>(resp), 48, 0,
@@ -444,19 +560,40 @@ static void process_packet(const uint8_t * pkt, int len)
             float v_wind_ms    = read_be_float(pkt + 40);
             float wind_dir     = read_be_float(pkt + 44);
 
-            if (!weather_enable) break;
-
             if (layer_id >= 1 && layer_id <= 3) {
-                // Cloud layer
+                // Cloud layer — respect enable flag so host can disable a removed layer
                 int idx = layer_id - 1;
-                pending_wx.cloud[idx].type_xp  = remap_cloud_type(cloud_type_cigi);
-                pending_wx.cloud[idx].coverage  = coverage_pct / 100.0f;
-                pending_wx.cloud[idx].base_m    = base_elev_m;
-                pending_wx.cloud[idx].top_m     = base_elev_m + thickness_m;
-                pending_wx.cloud[idx].valid     = true;
+                auto & slot = pending_wx.cloud[idx];
+                if (weather_enable) {
+                    float new_type = remap_cloud_type(cloud_type_cigi);
+                    float new_cov  = coverage_pct / 100.0f;
+                    float new_top  = base_elev_m + thickness_m;
+                    bool differs = !slot.valid
+                        || slot.type_xp  != new_type
+                        || slot.coverage != new_cov
+                        || slot.base_m   != base_elev_m
+                        || slot.top_m    != new_top;
+                    slot.type_xp  = new_type;
+                    slot.coverage = new_cov;
+                    slot.base_m   = base_elev_m;
+                    slot.top_m    = new_top;
+                    slot.valid    = true;
+                    if (differs) pending_wx.cloud_changed = true;
+                } else {
+                    if (slot.valid) pending_wx.cloud_changed = true;
+                    slot.type_xp  = 0.0f;
+                    slot.coverage = 0.0f;
+                    slot.base_m   = 0.0f;
+                    slot.top_m    = 0.0f;
+                    slot.valid    = false;
+                }
+            } else if (!weather_enable) {
+                break;  // precipitation/wind layers — legacy behavior
             } else if (layer_id == 4 || layer_id == 5) {
                 // Precipitation
-                pending_wx.rain_pct = coverage_pct / 100.0f;
+                float new_rain = coverage_pct / 100.0f;
+                if (new_rain != pending_wx.rain_pct) pending_wx.cloud_changed = true;
+                pending_wx.rain_pct = new_rain;
             } else if (layer_id >= 10) {
                 // Wind-only layer
                 int wind_idx = layer_id - 10;
@@ -469,6 +606,15 @@ static void process_packet(const uint8_t * pkt, int len)
                     pending_wx.wind[wind_idx].valid     = true;
                 }
             }
+            pending_wx.dirty = true;
+        }
+        break;
+
+    // ── Runway Friction (user-defined, host → IG) ───────────────────────────
+    // Packet ID = 0xCB, Size = 8 bytes
+    case 0xCB:
+        if (packet_size >= 8) {
+            pending_wx.runway_friction = pkt[2];
             pending_wx.dirty = true;
         }
         break;
@@ -549,17 +695,42 @@ static float WeatherFlightLoopCb(float, float, int, void *)
         if (dr_wind_turb) XPLMSetDatavf(dr_wind_turb, w_turb, 0, 13);
     }
 
+    // Runway friction — direct passthrough (XP enum matches our 0-15).
+    // Dataref is typed float, not int.
+    if (dr_runway_friction)
+        XPLMSetDataf(dr_runway_friction, static_cast<float>(pending_wx.runway_friction));
+
     if (dr_update_immediately)
         XPLMSetDatai(dr_update_immediately, 0);
+
+    // Cloud/precipitation changes need a regen to push the edit through
+    // X-Plane's weather pipeline (dataref writes alone don't update visuals fast).
+    // Wind/visibility/temperature changes apply immediately — no regen needed.
+    // Gated by g_regen_mode config so instructors can trade responsiveness for
+    // smoothness in flight.
+    if (pending_wx.cloud_changed && cmd_regen_weather) {
+        bool fire = false;
+        switch (g_regen_mode) {
+            case RegenMode::Always:     fire = true;  break;
+            case RegenMode::Never:      fire = false; break;
+            case RegenMode::GroundOnly:
+                fire = dr_onground_any
+                    && XPLMGetDatai(dr_onground_any) != 0;
+                break;
+        }
+        if (fire) XPLMCommandOnce(cmd_regen_weather);
+        pending_wx.cloud_changed = false;
+    }
 
     // Log once on change
     char dbg[256];
     snprintf(dbg, sizeof(dbg),
-        "xplanecigi: WX applied — vis=%.0fm temp=%.1fC wind=%03.0f/%.1fms clouds=%d rain=%.0f%%\n",
+        "xplanecigi: WX applied — vis=%.0fm temp=%.1fC wind=%03.0f/%.1fms clouds=%d rain=%.0f%% rwy_fric=%u\n",
         pending_wx.visibility_m, pending_wx.temperature_c,
         pending_wx.wind_dir_deg, pending_wx.wind_speed_ms,
         (int)(pending_wx.cloud[0].valid + pending_wx.cloud[1].valid + pending_wx.cloud[2].valid),
-        pending_wx.rain_pct * 100.0f);
+        pending_wx.rain_pct * 100.0f,
+        (unsigned)pending_wx.runway_friction);
     XPLMDebugString(dbg);
 
     pending_wx.dirty = false;
@@ -691,6 +862,16 @@ PLUGIN_API int XPluginStart(char * outName, char * outSig, char * outDesc)
     // Create terrain probe for HOT requests
     g_terrain_probe = XPLMCreateProbe(xplm_ProbeY);
 
+    // Surface type under aircraft CG (for HAT response).
+    // X-Plane has two candidate datarefs in different versions — probe both.
+    g_surface_type = XPLMFindDataRef("sim/flightmodel/ground/surface_texture_type");
+    if (!g_surface_type) {
+        g_surface_type = XPLMFindDataRef("sim/flightmodel2/ground/surface_texture_type");
+    }
+    XPLMDebugString(g_surface_type
+        ? "xplanecigi: surface_type dataref bound\n"
+        : "xplanecigi: WARNING — no surface_type dataref found, HAT surface=UNKNOWN\n");
+
     // Weather region datarefs (writable since XP 12.0)
     dr_sealevel_temp_c       = XPLMFindDataRef("sim/weather/region/sealevel_temperature_c");
     dr_sealevel_pressure_pas = XPLMFindDataRef("sim/weather/region/sealevel_pressure_pas");
@@ -704,7 +885,17 @@ PLUGIN_API int XPluginStart(char * outName, char * outSig, char * outDesc)
     dr_wind_dir              = XPLMFindDataRef("sim/weather/region/wind_direction_degt");
     dr_wind_spd              = XPLMFindDataRef("sim/weather/region/wind_speed_msc");
     dr_wind_turb             = XPLMFindDataRef("sim/weather/region/turbulence");
+    dr_runway_friction       = XPLMFindDataRef("sim/weather/region/runway_friction");
     dr_update_immediately    = XPLMFindDataRef("sim/weather/region/update_immediately");
+    dr_onground_any          = XPLMFindDataRef("sim/flightmodel/failures/onground_any");
+    cmd_regen_weather        = XPLMFindCommand("sim/operation/regen_weather");
+
+    {
+        char msg[128];
+        std::snprintf(msg, sizeof(msg),
+            "xplanecigi: regen_weather = %s\n", regen_mode_name(g_regen_mode));
+        XPLMDebugString(msg);
+    }
 
     // Register weather flight loop (1 Hz, writes datarefs only when dirty)
     XPLMCreateFlightLoop_t wx_fl;

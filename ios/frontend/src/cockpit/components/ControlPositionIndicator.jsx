@@ -5,7 +5,7 @@ export default function ControlPositionIndicator({ aileron = 0, elevator = 0, ru
   // aileron: -1(left) to +1(right), elevator: -1(nose down) to +1(nose up), rudder: -1(left) to +1(right)
   const dotX = CX + aileron * R
   const dotY = CY - elevator * R  // invert: nose up = up on screen
-  const rudderX = CX + rudder * R
+  const rudderX = CX - rudder * R  // inverted so slider movement matches Q(left)/E(right) key layout
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>

@@ -1,6 +1,7 @@
 #ifndef FLIGHT_MODEL_ADAPTER__IFLIGHT_MODEL_ADAPTER_HPP_
 #define FLIGHT_MODEL_ADAPTER__IFLIGHT_MODEL_ADAPTER_HPP_
 
+#include <array>
 #include <string>
 #include <sim_msgs/msg/flight_model_state.hpp>
 #include <sim_msgs/msg/initial_conditions.hpp>
@@ -12,6 +13,32 @@
 
 namespace flight_model_adapter
 {
+
+/// Per-surface friction multipliers. One entry per framework surface enum
+/// (HatHotResponse.surface_type: UNKNOWN=0..MARSH=10) and per contamination
+/// level (WeatherState.runway_friction 0=Dry..15=Snowy/Icy max).
+/// The effective factor applied to JSBSim's ground solver is the product
+/// of the surface and contamination entries.
+struct GroundFrictionTables {
+  struct Factors {
+    double static_ff  = 1.0;   // braking / static grip multiplier
+    double rolling_ff = 1.0;   // rolling-drag multiplier
+  };
+
+  static constexpr std::size_t kSurfaceCount       = 11;  // 0..10
+  static constexpr std::size_t kContaminationCount = 16;  // 0..15
+
+  std::array<Factors, kSurfaceCount>       surface{};        // indexed by surface_type
+  std::array<Factors, kContaminationCount> contamination{};  // indexed by runway_friction
+
+  /// Clamped lookup: if the enum index is out of range, index 0 (UNKNOWN/Dry) is used.
+  Factors lookup_surface(uint8_t idx) const {
+    return surface[idx < kSurfaceCount ? idx : 0];
+  }
+  Factors lookup_contamination(uint8_t idx) const {
+    return contamination[idx < kContaminationCount ? idx : 0];
+  }
+};
 
 /// Three-way capability mode per subsystem.
 /// Determines whether the FDM or external systems nodes own a subsystem,
@@ -114,6 +141,19 @@ public:
   /// Called each step before Run() so the FDM sees authored weather.
   virtual void write_back_atmosphere(const sim_msgs::msg::AtmosphereState & /*state*/,
                                      double /*altitude_msl_m*/) {}
+
+  /// Install the ground-friction lookup tables (loaded from aircraft
+  /// config.yaml). Called once after initialize(). If never called, the
+  /// adapter falls back to baseline factors (1.0 × 1.0) for every input.
+  virtual void set_ground_friction_tables(const GroundFrictionTables & /*tables*/) {}
+
+  /// Write-back surface friction to the FDM ground solver. Combines terrain
+  /// surface type (from HAT responses, framework enum 0..10) and runway
+  /// contamination (WeatherState 0..15) into a single effective factor.
+  /// Called each step before Run().
+  virtual void write_back_surface(uint8_t /*surface_type*/,
+                                   uint8_t /*runway_friction*/,
+                                   bool /*on_ground*/) {}
 
   /// Apply payload station weight command from IOS.
   virtual void apply_payload_command(const sim_msgs::msg::PayloadCommand & /*cmd*/) {}

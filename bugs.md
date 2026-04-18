@@ -144,6 +144,53 @@
   via IFuelModel::set_tank_quantity(). Writeback naturally pushes
   new value to JSBSim. Adapter no longer writes tank contents directly.
 
+### Bug #14: NumpadPopup "7" touch-through
+- Tapping NumpadPopup open immediately registered a "7" keypress — the
+  same tap that opened the popup bled through to the newly mounted numpad.
+- FIX: requestAnimationFrame mount guard — numpad ignores tap events until
+  the frame after mount.
+
+### Bug #15: Partial weather wipe on ACCEPT
+- ACCEPT replaced _last_weather_data wholesale; previously set fields
+  (clouds, microbursts, precip) were wiped when only atmosphere was updated.
+- FIX: Backend publish_weather() does dict.update() merge instead of
+  replacement. Cloud-layer writes go through dedicated add/remove WS
+  messages so ACCEPT cannot touch them.
+
+### Bug #16: Cloud layer feedback loop broken
+- Frontend never saw cloud layers reflected after ACCEPT — store.activeWeather
+  stayed empty despite backend logs showing the data was cached and republished.
+- ROOT CAUSE: stale ament_python build artifacts. `colcon build` without
+  `--symlink-install` left an older copy of ios_backend_node.py in
+  install/ios_backend/.../site-packages/; the running backend imported that
+  stale copy and never sent the weather_state broadcast.
+- FIX: rebuild with --symlink-install. Documented as a permanent workflow
+  constraint in CLAUDE.md and the session checklist.
+
+### Bug #17: Stale cloud layers in X-Plane
+- Removing a cloud layer in IOS left the old layer rendered in X-Plane.
+- ROOT CAUSE: weather_encoder emitted N packets for N current cloud layers;
+  xplanecigi kept slot `valid = true` for any slot that stopped receiving
+  packets. Removing layer 2 meant slot 2 was never written → stale visuals.
+- FIX: encoder always emits 3 cloud packets (layer_id 1, 2, 3). Missing
+  layers emit weather_enable=0. xplanecigi clears the slot whenever
+  weather_enable=0 is received.
+
+### Bug #18: XP runway_friction dataref type mismatch
+- XPLMSetDatai(dr_runway_friction, ...) silently failed to change the
+  visual wetness/ice on the runway.
+- ROOT CAUSE: sim/weather/region/runway_friction is a float dataref, not
+  int. XPLMSetDatai() silently no-ops on float-typed datarefs.
+- FIX: xplanecigi uses XPLMSetDataf((float)runway_friction). Cast is
+  cheap; float representation of 0–15 is exact.
+
+### Bug #19: XP surface_texture_type dataref name
+- xplanecigi bound sim/flightmodel/ground/surface_type and always reported
+  xp_surf=0 regardless of what the aircraft was parked on.
+- ROOT CAUSE: the dataref we need is called surface_texture_type (not
+  surface_type). Confirmed in DataRefTool.
+- FIX: primary and fallback lookups updated to use surface_texture_type.
+
 ## Open
 
 (none)

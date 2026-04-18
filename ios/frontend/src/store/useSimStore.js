@@ -174,6 +174,19 @@ export const useSimStore = create((set, get) => ({
   airportSearchResults: [],
   runwayResults: null,  // full airport object with runways
 
+  // Weather station (WX page) — weather is authored relative to this airport
+  weatherStation: { icao: '', elevation_m: 0, lat_deg: 0, lon_deg: 0 },
+
+  // Full active weather state (published by backend after set_weather)
+  activeWeather: {
+    stationIcao: '', stationElevationM: 0,
+    visibilityM: 9999, temperatureSlK: 288.15, pressureSlPa: 101325, humidityPct: 50,
+    cloudLayers: [],
+    windLayers: [],
+    precipitationRate: 0, precipitationType: 0,
+    runwayFriction: 0,
+  },
+
   // Node health
   nodes: {},
 
@@ -354,6 +367,12 @@ export const useSimStore = create((set, get) => ({
     ws.send(JSON.stringify({ type: 'get_runways', icao }))
   },
 
+  setWeatherStation: (icao) => {
+    const { ws, wsConnected } = get()
+    if (!wsConnected || !ws || !icao) return
+    ws.send(JSON.stringify({ type: 'set_weather_station', data: { icao } }))
+  },
+
   setDeparture: (data) => {
     const { ws, wsConnected, icConfiguration } = get()
     if (!wsConnected || !ws) return false
@@ -458,6 +477,37 @@ export const useSimStore = create((set, get) => ({
           case 'microbursts':
             set({ microbursts: msg.hazards ?? [] })
             break
+
+          case 'weather_station':
+            set({
+              weatherStation: {
+                icao: msg.icao ?? '',
+                elevation_m: msg.elevation_m ?? 0,
+                lat_deg: msg.lat_deg ?? 0,
+                lon_deg: msg.lon_deg ?? 0,
+              }
+            })
+            break
+
+          case 'weather_state': {
+            const d = msg.data ?? {}
+            set({
+              activeWeather: {
+                stationIcao: d.station_icao ?? '',
+                stationElevationM: d.station_elevation_m ?? 0,
+                visibilityM: d.visibility_m ?? 9999,
+                temperatureSlK: d.temperature_sl_k ?? 288.15,
+                pressureSlPa: d.pressure_sl_pa ?? 101325,
+                humidityPct: d.humidity_pct ?? 50,
+                cloudLayers: d.cloud_layers ?? [],
+                windLayers: d.wind_layers ?? [],
+                precipitationRate: d.precipitation_rate ?? 0,
+                precipitationType: d.precipitation_type ?? 0,
+                runwayFriction: d.runway_friction ?? 0,
+              }
+            })
+            break
+          }
 
           case 'fuel_state':
           case 'fuel': {

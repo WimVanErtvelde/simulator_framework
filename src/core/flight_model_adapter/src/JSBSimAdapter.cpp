@@ -2,6 +2,7 @@
 #include "flight_model_adapter/jsbsim/JSBSimElectricalWriteback.hpp"
 #include "flight_model_adapter/jsbsim/JSBSimFuelWriteback.hpp"
 #include "flight_model_adapter/jsbsim/JSBSimAtmosphereWriteback.hpp"
+#include "flight_model_adapter/jsbsim/JSBSimSurfaceWriteback.hpp"
 
 #include <FGFDMExec.h>
 #include <models/FGPropulsion.h>
@@ -813,6 +814,27 @@ void JSBSimAdapter::write_back_atmosphere(const sim_msgs::msg::AtmosphereState &
     log_error("[JSBSimAdapter] JSBSim error in write_back_atmosphere: " + s);
   } catch (...) {
     log_error("[JSBSimAdapter] Unknown exception in write_back_atmosphere");
+  }
+}
+
+void JSBSimAdapter::set_ground_friction_tables(const GroundFrictionTables & tables)
+{
+  ground_friction_tables_ = tables;
+}
+
+void JSBSimAdapter::write_back_surface(uint8_t surface_type,
+                                       uint8_t runway_friction,
+                                       bool on_ground)
+{
+  try {
+    jsbsim_writeback::write_surface(exec_.get(), surface_type, runway_friction,
+                                    on_ground, ground_friction_tables_);
+  } catch (const std::exception & e) {
+    log_error(std::string("[JSBSimAdapter] Exception in write_back_surface: ") + e.what());
+  } catch (const std::string & s) {
+    log_error("[JSBSimAdapter] JSBSim error in write_back_surface: " + s);
+  } catch (...) {
+    log_error("[JSBSimAdapter] Unknown exception in write_back_surface");
   }
 }
 

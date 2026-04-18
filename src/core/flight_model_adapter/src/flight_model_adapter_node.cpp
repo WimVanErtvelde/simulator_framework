@@ -14,6 +14,7 @@
 #include <sim_msgs/msg/electrical_state.hpp>
 #include <sim_msgs/msg/fuel_state.hpp>
 #include <sim_msgs/msg/atmosphere_state.hpp>
+#include <sim_msgs/msg/weather_state.hpp>
 #include <sim_msgs/msg/flight_controls.hpp>
 #include <sim_msgs/msg/engine_controls.hpp>
 #include <sim_msgs/msg/hat_hot_response.hpp>
@@ -86,6 +87,11 @@ public:
       "/sim/cigi/hat_responses", 10,
       [this](const sim_msgs::msg::HatHotResponse::SharedPtr msg) {
         if (!msg->valid || msg->point_name.empty()) return;
+
+        // Always cache the latest reported surface type for the ground-friction
+        // writeback (global factor — most recent response wins even if this
+        // response is the same point_name as the previous one).
+        latest_surface_type_ = msg->surface_type;
 
         terrain_hot_[msg->point_name] = msg->hot_m;
         last_hot_time_ = std::chrono::steady_clock::now();
@@ -249,6 +255,9 @@ public:
       }
       RCLCPP_INFO(this->get_logger(), "JSBSim model loaded successfully");
       caps_ = adapter_->get_capabilities();
+
+      // Install the ground-friction lookup tables (surface_type × contamination)
+      adapter_->set_ground_friction_tables(load_ground_friction_tables(pkg_dir));
     } else {
       RCLCPP_ERROR(this->get_logger(), "Unknown flight model type: %s", fdm_type.c_str());
       auto alert = sim_msgs::msg::SimAlert();
@@ -325,6 +334,14 @@ public:
         atmosphere_received_ = true;
       });
 
+    // Weather — runway friction drives surface writeback (ground handling)
+    weather_sub_ = this->create_subscription<sim_msgs::msg::WeatherState>(
+      "/world/weather", 10,
+      [this](sim_msgs::msg::WeatherState::ConstSharedPtr msg) {
+        latest_runway_friction_ = msg->runway_friction;
+        weather_received_ = true;
+      });
+
     payload_command_sub_ = this->create_subscription<sim_msgs::msg::PayloadCommand>(
       "/aircraft/payload/command", 10,
       [this](const sim_msgs::msg::PayloadCommand::SharedPtr msg) {
@@ -379,8 +396,18 @@ public:
           adapter_->set_property("fcs/aileron-trim-cmd-norm",  fc.trim_aileron_norm);
           adapter_->set_property("fcs/pitch-trim-cmd-norm",    fc.trim_elevator_norm);
           adapter_->set_property("fcs/yaw-trim-cmd-norm",      fc.trim_rudder_norm);
-          adapter_->set_property("fcs/left-brake-cmd-norm",    fc.brake_left_norm);
-          adapter_->set_property("fcs/right-brake-cmd-norm",   fc.brake_right_norm);
+          // Parking brake: when set, force both pedal brake commands to 1.0
+          // (max pressure) before writing to JSBSim. This is the simplest
+          // way to hold the aircraft across any JSBSim model without having
+          // to know the specific parking-brake property name per aircraft.
+          // Also write the JSBSim-standard gear/brake-parking bool for models
+          // that reference it directly.
+          double bl = fc.brake_left_norm;
+          double br = fc.brake_right_norm;
+          if (fc.parking_brake) { bl = 1.0; br = 1.0; }
+          adapter_->set_property("fcs/left-brake-cmd-norm",    bl);
+          adapter_->set_property("fcs/right-brake-cmd-norm",   br);
+          adapter_->set_property("gear/brake-parking",         fc.parking_brake ? 1.0 : 0.0);
           adapter_->set_property("fcs/flap-cmd-norm",          fc.flaps_norm);
           adapter_->set_property("gear/gear-cmd-norm",         fc.gear_down ? 1.0 : 0.0);
         }
@@ -422,6 +449,14 @@ public:
         if (atmosphere_received_ && adapter_) {
           adapter_->write_back_atmosphere(latest_atmosphere_,
             adapter_->get_state().altitude_msl_m);
+        }
+
+        // Surface writeback — combined terrain-type × contamination factor,
+        // applied to JSBSim's global rolling/static friction multipliers.
+        if (adapter_) {
+          adapter_->write_back_surface(latest_surface_type_,
+            latest_runway_friction_,
+            adapter_->get_state().on_ground);
         }
 
         if (should_step) {
@@ -473,9 +508,11 @@ public:
     elec_writeback_sub_.reset();
     fuel_writeback_sub_.reset();
     atmosphere_sub_.reset();
+    weather_sub_.reset();
     latest_flight_controls_.reset();
     latest_engine_controls_.reset();
     atmosphere_received_ = false;
+    weather_received_ = false;
     terrain_hot_.clear();
     pending_ic_.reset();
     RCLCPP_INFO(this->get_logger(), "flight_model_adapter deactivated");
@@ -498,6 +535,7 @@ public:
     elec_writeback_sub_.reset();
     fuel_writeback_sub_.reset();
     atmosphere_sub_.reset();
+    weather_sub_.reset();
     hat_response_sub_.reset();
     terrain_source_pub_.reset();
     terrain_ready_pub_.reset();
@@ -509,6 +547,75 @@ public:
 
 private:
   // ── Helpers ───────────────────────────────────────────────────────────
+  // Build ground-friction tables from the aircraft config.yaml ground_friction
+  // block. Entry order is authoritative: the first surface_type_factors entry
+  // maps to HatHotResponse.surface_type==0, and the first contamination_factors
+  // entry maps to WeatherState.runway_friction==0. Missing entries default to
+  // {1.0, 1.0} so JSBSim sees baseline physics.
+  flight_model_adapter::GroundFrictionTables
+  load_ground_friction_tables(const std::string & pkg_dir) const
+  {
+    flight_model_adapter::GroundFrictionTables tables;
+    // Default-fill with baseline 1.0 (constructor does this already via
+    // Factors member initializers, but keep it explicit in case struct
+    // defaults ever change).
+    for (auto & f : tables.surface)       { f.static_ff = 1.0; f.rolling_ff = 1.0; }
+    for (auto & f : tables.contamination) { f.static_ff = 1.0; f.rolling_ff = 1.0; }
+
+    if (pkg_dir.empty()) {
+      RCLCPP_WARN(this->get_logger(),
+        "ground_friction: no aircraft package dir — using baseline factors (1.0 × 1.0)");
+      return tables;
+    }
+
+    auto config_path = pkg_dir + "/config/config.yaml";
+    try {
+      YAML::Node cfg = YAML::LoadFile(config_path);
+      auto gf = cfg["ground_friction"];
+      if (!gf || !gf.IsMap()) {
+        RCLCPP_WARN(this->get_logger(),
+          "ground_friction: section missing in %s — using baseline factors (1.0 × 1.0)",
+          config_path.c_str());
+        return tables;
+      }
+
+      auto parse_seq =
+        [this, &config_path](const YAML::Node & seq,
+                             auto & target,
+                             const char * section_name)
+        {
+          if (!seq || !seq.IsSequence()) {
+            RCLCPP_WARN(this->get_logger(),
+              "ground_friction: '%s' missing or not a sequence in %s — keeping baseline",
+              section_name, config_path.c_str());
+            return;
+          }
+          const std::size_t n = std::min<std::size_t>(seq.size(), target.size());
+          for (std::size_t i = 0; i < n; ++i) {
+            const auto & e = seq[i];
+            target[i].static_ff  = e["static"].as<double>(1.0);
+            target[i].rolling_ff = e["rolling"].as<double>(1.0);
+          }
+          if (seq.size() != target.size()) {
+            RCLCPP_WARN(this->get_logger(),
+              "ground_friction: '%s' has %zu entries, expected %zu — extras ignored or defaults kept",
+              section_name, seq.size(), target.size());
+          }
+        };
+
+      parse_seq(gf["surface_type_factors"],   tables.surface,       "surface_type_factors");
+      parse_seq(gf["contamination_factors"],  tables.contamination, "contamination_factors");
+      RCLCPP_INFO(this->get_logger(),
+        "ground_friction: loaded %zu surface × %zu contamination entries from %s",
+        tables.surface.size(), tables.contamination.size(), config_path.c_str());
+    } catch (const std::exception & e) {
+      RCLCPP_WARN(this->get_logger(),
+        "ground_friction: failed to load %s: %s — using baseline factors (1.0 × 1.0)",
+        config_path.c_str(), e.what());
+    }
+    return tables;
+  }
+
   void publish_lifecycle_state(const std::string & state)
   {
     if (lifecycle_state_pub_) {
@@ -604,6 +711,7 @@ private:
   rclcpp::Subscription<sim_msgs::msg::ElectricalState>::SharedPtr elec_writeback_sub_;
   rclcpp::Subscription<sim_msgs::msg::FuelState>::SharedPtr fuel_writeback_sub_;
   rclcpp::Subscription<sim_msgs::msg::AtmosphereState>::SharedPtr atmosphere_sub_;
+  rclcpp::Subscription<sim_msgs::msg::WeatherState>::SharedPtr weather_sub_;
   rclcpp::Subscription<sim_msgs::msg::PayloadCommand>::SharedPtr payload_command_sub_;
   rclcpp::Subscription<sim_msgs::msg::HatHotResponse>::SharedPtr hat_response_sub_;
 
@@ -611,6 +719,11 @@ private:
   sim_msgs::msg::EngineControls::SharedPtr latest_engine_controls_;
   sim_msgs::msg::AtmosphereState latest_atmosphere_;
   bool atmosphere_received_ = false;
+  uint8_t latest_runway_friction_ = 0;
+  bool weather_received_ = false;
+  // Default to ASPHALT (1) so ground handling is nominal before the first
+  // HAT response arrives (e.g., at startup parked on a runway).
+  uint8_t latest_surface_type_ = 1;
 
   rclcpp::TimerBase::SharedPtr heartbeat_timer_;
   rclcpp::TimerBase::SharedPtr auto_start_timer_;

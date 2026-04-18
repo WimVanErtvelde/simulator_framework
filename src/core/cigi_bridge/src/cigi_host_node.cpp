@@ -588,9 +588,30 @@ void CigiHostNode::recv_pending()
                 double hot_m;
                 memcpy(&hot_m, &val_u, 8);
 
+                // Extended fields (xplanecigi custom): surface_type @ 24,
+                // static_friction @ 28-31, rolling_friction @ 32-35.
+                // Defaults used if IG sends only the standard 16-byte response.
+                uint8_t surface_type = 0;
+                float   static_ff    = 1.0f;
+                float   rolling_ff   = 1.0f;
+                if (pkt_size >= 36) {
+                    surface_type = buf[offset + 24];
+
+                    uint32_t uf = 0;
+                    for (int i = 0; i < 4; ++i)
+                        uf = (uf << 8) | buf[offset + 28 + i];
+                    memcpy(&static_ff, &uf, 4);
+
+                    uf = 0;
+                    for (int i = 0; i < 4; ++i)
+                        uf = (uf << 8) | buf[offset + 32 + i];
+                    memcpy(&rolling_ff, &uf, 4);
+                }
+
                 // Only publish HOT when IG reports terrain valid
                 if (ig_status_ != CIGI_SOF_IG_STATUS_OPERATE) { offset += pkt_size; continue; }
-                auto resp = hat_tracker_.resolve(hat_hot_id, hot_m, valid);
+                auto resp = hat_tracker_.resolve(hat_hot_id, hot_m, valid,
+                                                 surface_type, static_ff, rolling_ff);
                 if (resp && hat_pub_->is_activated()) {
                     hat_pub_->publish(*resp);
                 }

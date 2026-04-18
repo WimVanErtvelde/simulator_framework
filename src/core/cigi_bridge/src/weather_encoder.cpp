@@ -32,6 +32,10 @@ static constexpr uint8_t CIGI_ATMO_CTRL_SIZE   = 32;
 static constexpr uint8_t CIGI_PKT_WEATHER_CTRL = 12;   // 0x0C
 static constexpr uint8_t CIGI_WEATHER_CTRL_SIZE = 56;
 
+// User-defined — runway surface friction (visual wetness / ice / snow)
+static constexpr uint8_t CIGI_PKT_RUNWAY_FRICTION  = 0xCB;
+static constexpr uint8_t CIGI_RUNWAY_FRICTION_SIZE = 8;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Atmosphere Control (Packet ID = 10, 32 bytes)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -166,36 +170,49 @@ size_t encode_weather_packets(
     // 1. Atmosphere Control (always, one per frame)
     offset += encode_atmosphere_control(buffer + offset, buffer_capacity - offset, weather);
 
-    // 2. Cloud layers → Weather Control packets (layer_id 1-3)
-    size_t max_clouds = std::min(weather.cloud_layers.size(), static_cast<size_t>(3));
-    for (size_t i = 0; i < max_clouds; ++i) {
-        const auto & cl = weather.cloud_layers[i];
-        float center_alt = cl.base_elevation_m + cl.thickness_m * 0.5f;
+    // 2. Cloud layers → Weather Control packets (layer_id 1-3).
+    // Always emit exactly 3 packets so removed layers are explicitly disabled on the IG.
+    size_t num_clouds = std::min(weather.cloud_layers.size(), static_cast<size_t>(3));
+    for (size_t i = 0; i < 3; ++i) {
+        if (i < num_clouds) {
+            const auto & cl = weather.cloud_layers[i];
+            float center_alt = cl.base_elevation_m + cl.thickness_m * 0.5f;
 
-        // Wind at cloud layer altitude
-        float h_wind = 0.0f, v_wind = 0.0f, wind_dir = 0.0f, turb = 0.0f;
-        const auto * wl = find_nearest_wind(weather.wind_layers, center_alt);
-        if (wl) {
-            h_wind  = wl->wind_speed_ms;
-            v_wind  = wl->vertical_wind_ms;
-            wind_dir = wl->wind_direction_deg;
-            turb    = wl->turbulence_severity;
+            // Wind at cloud layer altitude
+            float h_wind = 0.0f, v_wind = 0.0f, wind_dir = 0.0f, turb = 0.0f;
+            const auto * wl = find_nearest_wind(weather.wind_layers, center_alt);
+            if (wl) {
+                h_wind  = wl->wind_speed_ms;
+                v_wind  = wl->vertical_wind_ms;
+                wind_dir = wl->wind_direction_deg;
+                turb    = wl->turbulence_severity;
+            }
+
+            offset += encode_weather_control(
+                buffer + offset, buffer_capacity - offset,
+                static_cast<uint8_t>(i + 1),  // layer_id 1-3
+                cl.cloud_type,
+                cl.coverage_pct,
+                cl.base_elevation_m,
+                cl.thickness_m,
+                cl.transition_band_m,
+                cl.scud_enable,
+                cl.scud_frequency_pct,
+                h_wind, v_wind, wind_dir, turb,
+                global_temp_c,
+                global_vis_m,
+                global_baro);
+        } else {
+            // Layer not present — emit explicit disable packet (weather_enable=0).
+            if (buffer_capacity - offset < CIGI_WEATHER_CTRL_SIZE) continue;
+            uint8_t * p = buffer + offset;
+            memset(p, 0, CIGI_WEATHER_CTRL_SIZE);
+            p[0] = CIGI_PKT_WEATHER_CTRL;
+            p[1] = CIGI_WEATHER_CTRL_SIZE;
+            p[4] = static_cast<uint8_t>(i + 1);  // layer_id
+            // p[6] bit 0 (Weather Enable) = 0, all other fields zero
+            offset += CIGI_WEATHER_CTRL_SIZE;
         }
-
-        offset += encode_weather_control(
-            buffer + offset, buffer_capacity - offset,
-            static_cast<uint8_t>(i + 1),  // layer_id 1-3
-            cl.cloud_type,
-            cl.coverage_pct,
-            cl.base_elevation_m,
-            cl.thickness_m,
-            cl.transition_band_m,
-            cl.scud_enable,
-            cl.scud_frequency_pct,
-            h_wind, v_wind, wind_dir, turb,
-            global_temp_c,
-            global_vis_m,
-            global_baro);
     }
 
     // 3. Precipitation layer (layer_id 4=Rain, 5=Snow)
@@ -220,6 +237,17 @@ size_t encode_weather_packets(
             global_temp_c,
             global_vis_m,
             global_baro);
+    }
+
+    // 3b. Runway friction (user-defined 0xCB — 8 bytes)
+    if (buffer_capacity - offset >= CIGI_RUNWAY_FRICTION_SIZE) {
+        uint8_t * p = buffer + offset;
+        memset(p, 0, CIGI_RUNWAY_FRICTION_SIZE);
+        p[0] = CIGI_PKT_RUNWAY_FRICTION;
+        p[1] = CIGI_RUNWAY_FRICTION_SIZE;
+        p[2] = weather.runway_friction;
+        // Bytes 3-7: reserved
+        offset += CIGI_RUNWAY_FRICTION_SIZE;
     }
 
     // 4. Wind-only layers (layer_id 10+)

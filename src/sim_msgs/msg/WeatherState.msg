@@ -44,6 +44,12 @@ uint32  deterministic_seed       # RNG seed for Dryden turbulence (0 = random)
 # ── Turbulence model selection (maps to CIGI user-defined 0xC9) ──────────
 uint8   turbulence_model         # 0=None, 1=MIL-F-8785C, 2=MIL-HDBK-1797A, 3=ESDU-85020
 
+# ── Weather station reference ─────────────────────────────────────────────
+# All weather is authored relative to a station airport.
+# Cloud heights are authored in ft AGL and converted to m MSL using station elevation.
+string  station_icao              # ICAO code (e.g., "EBBR"), empty = not set
+float64 station_elevation_m       # station elevation MSL (m), from airport DB
+
 # ── Microburst hazards (maps to CIGI user-defined 0xCA) ──────────────────
 # Dynamic array. Empty = no microbursts.
 sim_msgs/MicroburstHazard[] microbursts

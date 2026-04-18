@@ -622,6 +622,7 @@ private:
     out.trim_rudder_norm  = raw.trim_rudder_norm;
     out.brake_left_norm   = raw.brake_left_norm;
     out.brake_right_norm  = raw.brake_right_norm;
+    out.parking_brake     = raw.parking_brake;
     return out;
   }
 

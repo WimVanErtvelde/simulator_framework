@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useSimStore, CMD } from '../store/useSimStore'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -61,6 +61,27 @@ export default function ActionBar() {
   const runDisabled = !wsConnected || simState === 'RUNNING' || simState === 'REPOSITIONING' ||
     (simState !== 'READY' && simState !== 'FROZEN')
 
+  // P-key shortcut: toggle FREEZE/RUN on the main IOS page.
+  // The cockpit page uses P for parking brake, but the two routes are never
+  // mounted together, so there's no conflict. Guards against typing in inputs
+  // and against browser key-repeat.
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.repeat) return
+      if (e.key.toLowerCase() !== 'p') return
+      const tag = e.target.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return
+      if (!wsConnected) return
+      if (simState === 'RUNNING') {
+        sendCommand(CMD.FREEZE)
+      } else if (simState === 'READY' || simState === 'FROZEN') {
+        sendCommand(CMD.RUN)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [wsConnected, simState, sendCommand])
+
   return (
     <div style={{
       background: '#0d1117', borderTop: '1px solid #1e293b',
@@ -68,13 +89,13 @@ export default function ActionBar() {
       position: 'relative',
     }}>
       <ActionBtn
-        label="FREEZE"
+        label="FREEZE (P)"
         disabled={freezeDisabled}
         style={{ minWidth: 140, background: '#1a2744', color: '#388bfd', border: '1px solid #2d4a8f' }}
         onClick={() => sendCommand(CMD.FREEZE)}
       />
       <ActionBtn
-        label="RUN"
+        label="RUN (P)"
         disabled={runDisabled}
         style={{ minWidth: 140, background: '#1a4731', color: '#3fb950', border: '1px solid #2d6a4f' }}
         onClick={() => sendCommand(CMD.RUN)}

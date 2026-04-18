@@ -35,7 +35,8 @@ add_library(jsbsim_adapter STATIC
   src/JSBSimAdapter.cpp
   src/jsbsim/JSBSimAtmosphereWriteback.cpp
   src/jsbsim/JSBSimElectricalWriteback.cpp
-  src/jsbsim/JSBSimFuelWriteback.cpp)
+  src/jsbsim/JSBSimFuelWriteback.cpp
+  src/jsbsim/JSBSimSurfaceWriteback.cpp)
 target_include_directories(jsbsim_adapter PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(jsbsim_adapter SYSTEM PRIVATE

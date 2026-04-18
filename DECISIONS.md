@@ -33,6 +33,7 @@
 - `sim_manager` — clock, state machine, heartbeat monitoring, CMD_REPOSITION with terrain wait
 - `input_arbitrator` — 4-channel arbitration (flight, engine, avionics, panel)
 - `flight_model_adapter` — JSBSim adapter, CapabilityMode, writeback (electrical, fuel, atmosphere), terrain refinement via RunIC, pending_ic_ gating. JSBSimAtmosphereWriteback: wind NED (fps), delta-T (Rankine), pressure (psf) into JSBSim property tree each step.
+- Runway friction: two-factor model (surface type × contamination), YAML-configurable, JSBSim writeback, XP visual wetness
 - `weather_solver` — replaces atmosphere_node. ISA model + OAT/QNH deviation + altitude-interpolated wind layers (angular shortest-arc) + MIL-F-8785C Dryden turbulence (deterministic seed, altitude-scaled) + Oseguera-Bowles microburst wind field. 19 unit tests (5 Dryden, 7 solver, 7 microburst). Standalone libraries + ROS2 node wrapper.
 - `cigi_bridge` — CIGI 3.3 host, multi-point HOT (3 gear points), IG Mode repositioning handshake, SOF parsing. Weather encoder: Atmosphere Control (0x0A) + Weather Control (0x0C) packets for cloud/wind/precip layers, dirty-flag gated.
 - `navaid_sim` — VOR/ILS/NDB/DME/Marker, terrain LOS, A424 + XP12 parsers. Airport/runway DB (SearchAirports/GetRunways/GetTerrainElevation services)
@@ -2882,3 +2883,88 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
   Microburst placement by bearing/distance from aircraft. activate/clear/clear_all WS handlers.
   Backend computes microburst lat/lon, caches and republishes with full WeatherState.
 - AFFECTS: ios/frontend WeatherPanel, ios_backend weather + microburst handlers
+
+## 2026-04-18 — Claude Chat / Claude Code (Runway Friction + Weather Bug Fixes)
+
+- DECIDED: **Two-factor runway friction model implemented** — effective friction =
+  surface_type_factor (from IG terrain) × contamination_factor (from instructor).
+  Both factor tables in per-aircraft YAML (config.yaml → ground_friction section).
+  JSBSim global properties ground/static-friction-factor and ground/rolling-friction-factor
+  written each frame via JSBSimSurfaceWriteback. No JSBSim source patch required.
+- REASON: JSBSim 1.2.1 FGGroundCallback has no friction virtuals — friction comes from
+  FGGroundReactions (inherits FGSurface) via global properties. Two-factor model covers
+  both terrain type (asphalt/grass/dirt) and contamination (dry/wet/icy) independently.
+  YAML config enables per-aircraft tuning without recompilation. CS-FSTD(A) requires
+  dry/wet/icy braking tests for FFS; FTD Level 2 requires statement of compliance.
+- AFFECTS: flight_model_adapter (JSBSimSurfaceWriteback), IFlightModelAdapter interface,
+  c172/ec135 config.yaml (ground_friction section)
+
+- DECIDED: **Surface type from IG via CIGI HAT response** — xplanecigi plugin reads
+  sim/flightmodel/ground/surface_texture_type dataref, maps XP enum (0-12) to framework
+  enum (0-10), includes as material_code in HAT/HOT response bytes 24-35 (custom extension
+  of standard 16-byte packet). cigi_bridge parses extended fields when pkt_size >= 36.
+  Framework surface enum: UNKNOWN(0), ASPHALT(1), CONCRETE(2), GRASS(3), DIRT(4),
+  GRAVEL(5), WATER(6), SNOW_COVERED(7), ICE_SURFACE(8), SAND(9), MARSH(10).
+- REASON: IG-portable — any CIGI IG can provide surface type via HAT response material code.
+  Enables bush flying (grass strips), terrain-aware ground handling. XP surface types
+  discovered via DataRefTool: surf_none(0), surf_water(1), surf_concrete(2), surf_asphalt(3),
+  surf_grass(4), surf_dirt(5), surf_gravel(6), surf_lake(7), surf_snow(8), surf_shoulder(9),
+  surf_blastpad(10), surf_grnd(11), surf_object(12).
+- AFFECTS: sim_msgs/msg/HatHotResponse.msg (surface_type + friction factor fields),
+  xplanecigi plugin, cigi_bridge HAT response parser
+
+- DECIDED: **IOS runway condition buttons** — category (DRY/WET/WATER/SNOW/ICE/SN+IC) ×
+  severity (LIGHT/MEDIUM/MAX) = 16 states mapping 1:1 to X-Plane's runway_friction 0-15 enum.
+  Immediate effect (no ACCEPT needed). set_runway_condition WS handler in ios_backend.
+- AFFECTS: WeatherPanel.jsx, ios_backend_node.py
+
+- DECIDED: **X-Plane runway_friction dataref is float** (not int). Plugin must use
+  XPLMSetDataf() not XPLMSetDatai(). XPLMSetDatai() silently fails on float datarefs.
+- AFFECTS: xplanecigi XPluginMain.cpp
+
+- DECIDED: **X-Plane surface_texture_type dataref** — correct path is
+  sim/flightmodel/ground/surface_texture_type (not surface_type). Discovered via DataRefTool.
+- AFFECTS: xplanecigi XPluginMain.cpp dataref lookup
+
+- DECIDED: **Cloud layer management uses dedicated add/remove WS messages** — not part of
+  ACCEPT flow. add_cloud_layer appends to backend cache, remove_cloud_layer/clear_cloud_layers
+  removes. ACCEPT only handles atmosphere fields (vis/qnh/oat/wind/turb). Prevents partial
+  update wipe of cloud layers when accepting atmosphere changes.
+- REASON: Backend's _last_weather_data.update() does shallow dict merge — replacing entire
+  cloud_layers key on every ACCEPT wiped previously set clouds. Dedicated messages follow
+  same pattern as microburst activate/clear.
+- AFFECTS: WeatherPanel.jsx, ios_backend_node.py
+
+- DECIDED: **CIGI encoder always emits 3 cloud packets** (layer_id 1, 2, 3) regardless of
+  how many cloud_layers exist. Missing layers emit weather_enable=0. xplanecigi clears
+  slots when weather_enable=0. Prevents stale cloud layers in X-Plane after removal.
+- AFFECTS: weather_encoder.cpp, xplanecigi XPluginMain.cpp
+
+- DECIDED: **regen_weather command for instant cloud updates** — xplanecigi fires
+  sim/operation/regen_weather XPLMCommand after cloud changes. Causes brief visual pop but
+  clouds appear in ~5 seconds instead of ~60. Configurable via plugin config file:
+  regen_weather=always|ground_only|never. Default: ground_only (fires when on ground or
+  first cloud update; lets 60s fade work in flight for realism).
+- AFFECTS: xplanecigi XPluginMain.cpp, plugin config file
+
+- DECIDED: **Weather state feedback loop fixed** — backend broadcasts weather_state WS
+  message after every publish_weather() and stores in _latest for new connections. Frontend
+  displays active cloud layers from this broadcast. Root cause of initial failure: stale
+  ament_python build artifacts (colcon build without --symlink-install left old .py in
+  install/). Resolution: rebuild with --symlink-install, document in CLAUDE.md as
+  ios_backend build constraint.
+- AFFECTS: ios_backend_node.py, useSimStore.js, WeatherPanel.jsx
+
+- DECIDED: **ament_python --symlink-install required for ios_backend** — colcon build
+  copies Python files to install/. Without --symlink-install, source edits are invisible
+  to the running backend. Every ios_backend change requires:
+  colcon build --packages-select ios_backend --symlink-install
+  Added to CLAUDE.md workflow constraints.
+- AFFECTS: build workflow documentation
+
+- DECIDED: **JSBSim friction limitation: global only** — JSBSim 1.2.1 applies a single
+  global surface friction factor to all gear legs. No per-gear differentiation without
+  patching JSBSim source (FGGroundCallback has no friction virtuals). If one gear is on
+  asphalt and another on grass, both see the same factor. Acceptable: C172 wheelbase ~2m,
+  both mains always on same surface. Documented limitation.
+- AFFECTS: documentation only (architectural constraint)

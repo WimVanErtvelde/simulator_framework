@@ -41,6 +41,35 @@ function Section({ title, children, style }) {
   )
 }
 
+// Brake visual: compact pill showing keyboard shortcut, label, and active state.
+// Two are used in the CONTROLS section — PARK (P, latched) and BRAKE (B, held).
+function BrakeIndicator({ label, shortcut, active, activeColor = '#ff3b30' }) {
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      gap: 3, padding: '6px 10px',
+      background: active ? `${activeColor}22` : '#0a0e14',
+      border: `1px solid ${active ? activeColor : '#1e293b'}`,
+      borderRadius: 4, minWidth: 48,
+      fontFamily: FONT,
+    }}>
+      <div style={{
+        color: active ? activeColor : '#475569',
+        fontSize: 14, fontWeight: 700, lineHeight: 1,
+      }}>{shortcut}</div>
+      <div style={{
+        color: active ? activeColor : '#64748b',
+        fontSize: 8, letterSpacing: 1, lineHeight: 1,
+      }}>{label}</div>
+      <div style={{
+        width: 8, height: 8, borderRadius: '50%',
+        background: active ? activeColor : '#1e293b',
+        boxShadow: active ? `0 0 4px ${activeColor}` : 'none',
+      }} />
+    </div>
+  )
+}
+
 function sendVirtualPanel(switchIds, switchStates, selectorIds, selectorValues) {
   const ws = useSimStore.getState().ws
   if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -207,6 +236,15 @@ export default function C172Panel() {
         {/* Control Position */}
         <Section title="CONTROLS" style={{ minWidth: 130 }}>
           <ControlPositionIndicator aileron={kb.aileron} elevator={kb.elevator} rudder={kb.rudder} />
+          <div style={{ display: 'flex', gap: 6, marginTop: 8, justifyContent: 'center' }}>
+            {/* Read from local keyboard state (kb) — immediate feedback, doesn't
+                depend on the backend→arbitrator→gear echo loop. Stays in sync
+                with what the keyboard handler is actually sending. */}
+            <BrakeIndicator label="PARK" shortcut="P" active={kb.parkingBrake}
+              activeColor="#ff3b30" />
+            <BrakeIndicator label="BRAKE" shortcut="B" active={kb.brakeHeld}
+              activeColor="#f59e0b" />
+          </div>
         </Section>
 
         {/* Engine Controls */}
@@ -246,12 +284,6 @@ export default function C172Panel() {
         <Section title="FLOW / TRIM" style={{ minWidth: 120 }}>
           <RoundGauge value={fuel.engineFuelFlowLph?.[0] ? fuel.engineFuelFlowLph[0] / 0.72 / 3.785 : 0}
             min={0} max={16} label="FUEL FLOW" unit="GPH" ticks={4} decimals={1} size={120} />
-          <div style={{ textAlign: 'center', marginTop: 8, fontSize: 10 }}>
-            <span style={{ color: '#64748b' }}>PARKING BRK</span>{' '}
-            <span style={{ color: gear.parkingBrake ? '#ff3b30' : '#22c55e' }}>
-              {gear.parkingBrake ? 'SET' : 'OFF'}
-            </span>
-          </div>
         </Section>
 
         {/* RADIOS — virtual cockpit tuning with power gating */}
@@ -276,7 +308,8 @@ export default function C172Panel() {
       }}>
         <span>W/S pitch</span> <span>A/D roll</span> <span>Q/E yaw</span>
         <span>R/F throttle</span> <span>Shift+R/F mixture</span>
-        <span>T/G trim</span> <span>B brake</span> <span>SPACE center</span>
+        <span>T/G trim</span> <span>B brake (held)</span> <span>P park brake (toggle)</span>
+        <span>SPACE center</span>
       </div>
     </div>
   )

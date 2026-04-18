@@ -64,6 +64,9 @@ one logical change in uncommitted state. Use descriptive commit messages.
 - [ ] No new cross-node subscriptions that violate topic conventions
 - [ ] Error paths handled (not just happy path)
 - [ ] If you modified a .msg or .srv, full rebuild + all consumers still compile
+- [ ] If you modified `ios_backend/` (or any ament_python package), rebuild with
+      `--symlink-install` before testing — otherwise the running backend imports
+      the stale installed copy and your changes are invisible
 
 ### bugs.md
 
@@ -389,7 +392,7 @@ All topics use `snake_case`. No abbreviations unless universally understood (e.g
 | `/sim/terrain/source` | TerrainSource | flight_model_adapter | CIGI/SRTM/MSL indicator |
 | `/aircraft/writeback/electrical` | ElectricalState | sim_electrical | Coupled writeback to FDM |
 | `/aircraft/writeback/fuel` | FuelState | sim_fuel | Coupled writeback to FDM |
-| `/sim/cigi/hat_responses` | HatHotResponse | cigi_bridge | HOT terrain elevation per gear point |
+| `/sim/cigi/hat_responses` | HatHotResponse | cigi_bridge | HOT terrain elevation per gear point; also surface_type, static_friction_factor, rolling_friction_factor (custom extension) |
 | `/sim/cigi/ig_status` | std_msgs/UInt8 | cigi_bridge | SOF IG Status (0=Standby, 2=Operate) |
 | `/sim/cigi/host_to_ig` | CigiPacket | cigi_bridge | Host → IG packets (planned — recording/debug) |
 | `/sim/cigi/ig_to_host` | CigiPacket | cigi_bridge | IG → Host packets (planned — recording/debug) |
@@ -475,6 +478,20 @@ from their own published commands. Single source of truth.
 
 FastAPI + rclpy. Bridges ROS2 ↔ WebSocket ↔ React frontend.
 Run manually (not via launch file) so output is visible and it can be restarted independently.
+
+**⚠ Build constraint — ament_python packages need a rebuild on every edit:**
+`start_backend.sh` sources `install/setup.bash`, which makes Python import from
+`install/ios_backend/.../site-packages/` — NOT from the source tree. `ament_python`
+`--symlink-install` only symlinks at the egg-link level; the actual .py files are
+copied into `build/`. Editing `src/ios_backend/` without rebuilding means the
+running backend keeps executing the stale installed copy and all changes are
+invisible. **After every ios_backend edit, run:**
+```bash
+colcon build --packages-select ios_backend --symlink-install
+```
+(~3s — fast because it's just copying Python files.) Then restart the backend.
+The same rule applies to any other `ament_python` package (e.g. `qtg_engine`).
+This does NOT apply to frontend changes — Vite HMR handles those.
 
 **Node discovery:** fully dynamic — heartbeats + lifecycle_state messages + ROS2 graph queries
 every 3 seconds. **No hardcoded node list.** Has a 5-second startup delay before first query.

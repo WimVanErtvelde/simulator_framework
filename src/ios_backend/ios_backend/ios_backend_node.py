@@ -48,7 +48,7 @@ from sim_msgs.msg import (FlightModelState, FuelState, SimState, SimCommand, Pan
                           AirDataState, PayloadCommand,
                           ArbitrationState, GearState,
                           AtmosphereState, WeatherState, WeatherWindLayer,
-                          MicroburstHazard)
+                          WeatherCloudLayer, MicroburstHazard)
 from std_msgs.msg import String
 from lifecycle_msgs.srv import ChangeState
 from lifecycle_msgs.msg import Transition
@@ -89,6 +89,7 @@ class IosBackendNode(Node):
         self._active_microbursts = []   # list of MicroburstHazard-like dicts
         self._mb_next_id = 1
         self._last_weather_data = {}    # cache last set_weather data for republish
+        self._weather_station = {}      # {icao, elevation_m, lat_deg, lon_deg}
 
         self._flight_model_sub = self.create_subscription(
             FlightModelState, '/aircraft/fdm/state', self._on_flight_model_state, 10)
@@ -151,11 +152,20 @@ class IosBackendNode(Node):
             RawAvionicsControls, '/aircraft/devices/virtual/controls/avionics', 10)
         self._cmd_pub = self.create_publisher(
             SimCommand, '/sim/command', 10)
-        # Instructor flight/engine controls — arbitrated by input_arbitrator
+        # Instructor flight/engine controls — arbitrated by input_arbitrator.
+        # INSTRUCTOR priority is sticky: once published, this source locks the
+        # channel until node reconfigure. Used for explicit IOS overrides.
         self._raw_flight_pub = self.create_publisher(
             RawFlightControls, '/aircraft/devices/instructor/controls/flight', 10)
         self._raw_engine_pub = self.create_publisher(
             RawEngineControls, '/aircraft/devices/instructor/controls/engine', 10)
+        # Virtual flight/engine controls — used by the virtual cockpit page.
+        # VIRTUAL priority is non-sticky and sits below HARDWARE/INSTRUCTOR in
+        # the arbitrator, so IOS can still take over when needed.
+        self._raw_flight_virt_pub = self.create_publisher(
+            RawFlightControls, '/aircraft/devices/virtual/controls/flight', 10)
+        self._raw_engine_virt_pub = self.create_publisher(
+            RawEngineControls, '/aircraft/devices/virtual/controls/engine', 10)
         self._payload_pub = self.create_publisher(
             PayloadCommand, '/aircraft/payload/command', 10)
         self._fuel_load_pub = self.create_publisher(
@@ -204,6 +214,9 @@ class IosBackendNode(Node):
 
         # Generic topic forwarder for State Inspector (raw SI values)
         self._forwarder = TopicForwarder(self)
+
+        # Seed initial weather_state so new WS clients get defaults on connect
+        self._broadcast_weather_state()
 
         self.get_logger().info('ios_backend started — ws://0.0.0.0:8080/ws')
 
@@ -751,51 +764,82 @@ class IosBackendNode(Node):
         with self._lock:
             self._latest['atmosphere'] = data
 
-    def publish_weather(self, data: dict):
-        """Publish WeatherState v2 to /world/weather."""
+    def publish_weather(self, data: dict = None):
+        """Publish WeatherState v2 to /world/weather.
+
+        If `data` is provided, merge it into the cached state first (partial
+        updates preserve previously-set fields). If `data` is None, republish
+        from cache (used after remove_cloud_layer, station change, etc).
+        """
         import math
-        self._last_weather_data = data
+        if data is not None:
+            # cloud_layers is owned by add/remove/clear handlers — never overwritten
+            # by partial weather updates coming from ACCEPT.
+            merge_data = {k: v for k, v in data.items() if k != 'cloud_layers'}
+            self._last_weather_data.update(merge_data)
+        source = self._last_weather_data
         msg = WeatherState()
         msg.header.stamp = self.get_clock().now().to_msg()
 
+        # Weather station reference
+        station = self._weather_station
+        msg.station_icao = station.get('icao', '')
+        msg.station_elevation_m = float(station.get('elevation_m', 0.0))
+
         # Global atmosphere (UI sends °C/hPa, convert to K/Pa)
-        msg.temperature_sl_k = float(data.get('temperature_sl_k', 288.15))
-        msg.pressure_sl_pa = float(data.get('pressure_sl_pa', 101325.0))
-        msg.visibility_m = float(data.get('visibility_m', 9999.0))
-        msg.humidity_pct = int(data.get('humidity_pct', 50))
+        msg.temperature_sl_k = float(source.get('temperature_sl_k', 288.15))
+        msg.pressure_sl_pa = float(source.get('pressure_sl_pa', 101325.0))
+        msg.visibility_m = float(source.get('visibility_m', 9999.0))
+        msg.humidity_pct = int(source.get('humidity_pct', 50))
 
         # Surface wind layer (if direction/speed/turbulence provided)
-        wind_dir = data.get('wind_direction_deg')
-        wind_spd = data.get('wind_speed_ms')
-        turb_sev = data.get('turbulence_severity')
+        wind_dir = source.get('wind_direction_deg')
+        wind_spd = source.get('wind_speed_ms')
+        turb_sev = source.get('turbulence_severity')
         if wind_dir is not None or wind_spd is not None or turb_sev is not None:
             wl = WeatherWindLayer()
             wl.altitude_msl_m = 0.0  # surface
             wl.wind_speed_ms = float(wind_spd or 0.0)
             wl.wind_direction_deg = float(wind_dir or 0.0)
             wl.vertical_wind_ms = 0.0
-            wl.gust_speed_ms = float(data.get('gust_speed_ms', 0.0))
+            wl.gust_speed_ms = float(source.get('gust_speed_ms', 0.0))
             wl.shear_direction_deg = 0.0
             wl.shear_speed_ms = 0.0
             wl.turbulence_severity = float(turb_sev or 0.0)
             msg.wind_layers.append(wl)
 
+        # Cloud layers — base authored in ft AGL, convert to m MSL using station elevation
+        station_elev_m = msg.station_elevation_m
+        for cl_data in source.get('cloud_layers', []):
+            cl = WeatherCloudLayer()
+            cl.cloud_type = int(cl_data.get('cloud_type', 0))
+            cl.coverage_pct = float(cl_data.get('coverage_pct', 0.0))
+            if 'base_agl_ft' in cl_data:
+                cl.base_elevation_m = (float(cl_data['base_agl_ft']) * 0.3048) + station_elev_m
+            else:
+                cl.base_elevation_m = float(cl_data.get('base_elevation_m', 0.0))
+            cl.thickness_m = float(cl_data.get('thickness_m', 300.0))
+            cl.transition_band_m = float(cl_data.get('transition_band_m', 50.0))
+            cl.scud_enable = bool(cl_data.get('scud_enable', False))
+            cl.scud_frequency_pct = float(cl_data.get('scud_frequency_pct', 0.0))
+            msg.cloud_layers.append(cl)
+
         # Precipitation — sensible defaults
-        msg.precipitation_rate = float(data.get('precipitation_rate', 0.0))
-        msg.precipitation_type = int(data.get('precipitation_type', 0))
+        msg.precipitation_rate = float(source.get('precipitation_rate', 0.0))
+        msg.precipitation_type = int(source.get('precipitation_type', 0))
 
         # Surface conditions
         msg.wave_height_m = 0.0
         msg.wave_direction_deg = 0.0
-        msg.runway_friction = int(data.get('runway_friction', 0))
+        msg.runway_friction = int(source.get('runway_friction', 0))
 
         # FSTD control — deterministic defaults
-        msg.variability_pct = float(data.get('variability_pct', 0.0))
-        msg.evolution_mode = int(data.get('evolution_mode', 3))  # Static
-        msg.deterministic_seed = int(data.get('deterministic_seed', 0))
+        msg.variability_pct = float(source.get('variability_pct', 0.0))
+        msg.evolution_mode = int(source.get('evolution_mode', 3))  # Static
+        msg.deterministic_seed = int(source.get('deterministic_seed', 0))
         # Default turbulence_model: MIL_F_8785C (1) if severity set, else None (0)
         default_turb_model = 1 if turb_sev and float(turb_sev) > 0 else 0
-        msg.turbulence_model = int(data.get('turbulence_model', default_turb_model))
+        msg.turbulence_model = int(source.get('turbulence_model', default_turb_model))
 
         # Append active microbursts
         for mb in self._active_microbursts:
@@ -812,27 +856,38 @@ class IosBackendNode(Node):
 
         self._weather_pub.publish(msg)
         self.get_logger().info(
-            f'Published WeatherState v2: T={msg.temperature_sl_k:.1f}K '
-            f'P={msg.pressure_sl_pa:.0f}Pa vis={msg.visibility_m:.0f}m '
+            f'Published WeatherState v2: station={msg.station_icao or "none"} '
+            f'T={msg.temperature_sl_k:.1f}K P={msg.pressure_sl_pa:.0f}Pa '
+            f'vis={msg.visibility_m:.0f}m clouds={len(msg.cloud_layers)} '
             f'wind_layers={len(msg.wind_layers)} microbursts={len(msg.microbursts)}')
+        self._broadcast_weather_state()
 
     def activate_microburst(self, data: dict):
-        """Compute lat/lon from bearing/distance relative to aircraft, add to active list."""
+        """Compute lat/lon from bearing/distance relative to station (or aircraft), add to active list."""
         import math
         with self._lock:
             fms = self._latest.get('flight_model_state', {})
             sim = self._latest.get('sim_state', {})
 
-        ac_lat = fms.get('lat', 0.0)
-        ac_lon = fms.get('lon', 0.0)
+        # Use station position as reference when set, aircraft as fallback
+        station = self._weather_station
+        if station.get('icao'):
+            ref_lat = station.get('lat_deg', 0.0)
+            ref_lon = station.get('lon_deg', 0.0)
+            ref_label = station['icao']
+        else:
+            ref_lat = fms.get('lat', 0.0)
+            ref_lon = fms.get('lon', 0.0)
+            ref_label = 'aircraft'
+
         bearing_deg = float(data.get('bearing_deg', 0))
         distance_nm = float(data.get('distance_nm', 3))
         bearing_rad = math.radians(bearing_deg)
-        ac_lat_rad = math.radians(ac_lat)
+        ref_lat_rad = math.radians(ref_lat)
 
-        # Compute microburst lat/lon from aircraft position + bearing + distance
-        mb_lat = ac_lat + (distance_nm / 60.0) * math.cos(bearing_rad)
-        mb_lon = ac_lon + (distance_nm / 60.0) * math.sin(bearing_rad) / math.cos(ac_lat_rad)
+        # Compute microburst lat/lon from reference position + bearing + distance
+        mb_lat = ref_lat + (distance_nm / 60.0) * math.cos(bearing_rad)
+        mb_lon = ref_lon + (distance_nm / 60.0) * math.sin(bearing_rad) / math.cos(ref_lat_rad)
 
         mb = {
             'hazard_id': self._mb_next_id,
@@ -849,10 +904,10 @@ class IosBackendNode(Node):
 
         self.get_logger().info(
             f'Microburst #{mb["hazard_id"]} activated: lat={mb_lat:.5f} lon={mb_lon:.5f} '
-            f'R={mb["core_radius_m"]:.0f}m lambda={mb["intensity"]:.1f}')
+            f'R={mb["core_radius_m"]:.0f}m lambda={mb["intensity"]:.1f} ref={ref_label}')
 
         # Republish weather with updated microbursts
-        self.publish_weather(self._last_weather_data)
+        self.publish_weather()
         self._broadcast_microbursts()
 
     def clear_microburst(self, hazard_id: int):
@@ -861,14 +916,14 @@ class IosBackendNode(Node):
             mb for mb in self._active_microbursts if mb['hazard_id'] != hazard_id
         ]
         self.get_logger().info(f'Microburst #{hazard_id} cleared')
-        self.publish_weather(self._last_weather_data)
+        self.publish_weather()
         self._broadcast_microbursts()
 
     def clear_all_microbursts(self):
         """Remove all active microbursts."""
         self._active_microbursts.clear()
         self.get_logger().info('All microbursts cleared')
-        self.publish_weather(self._last_weather_data)
+        self.publish_weather()
         self._broadcast_microbursts()
 
     def _broadcast_microbursts(self):
@@ -888,6 +943,114 @@ class IosBackendNode(Node):
         }
         with self._lock:
             self._latest['microbursts'] = data
+
+    def _broadcast_weather_state(self):
+        """Send full cached weather state (IOS-friendly units) to all WS clients."""
+        source = self._last_weather_data or {}
+        station_elev_m = float(self._weather_station.get('elevation_m', 0.0))
+
+        # Cloud layers — pass base_agl_ft through if present, else back-compute from MSL
+        cloud_layers = []
+        for cl in source.get('cloud_layers', []):
+            base_agl_ft = cl.get('base_agl_ft')
+            if base_agl_ft is None and 'base_elevation_m' in cl:
+                base_agl_ft = (float(cl['base_elevation_m']) - station_elev_m) / 0.3048
+            cloud_layers.append({
+                'cloud_type': int(cl.get('cloud_type', 0)),
+                'base_agl_ft': float(base_agl_ft or 0),
+                'thickness_m': float(cl.get('thickness_m', 0)),
+                'coverage_pct': float(cl.get('coverage_pct', 0)),
+            })
+
+        # Wind — currently stored as single flat surface triple
+        wind_layers = []
+        wd = source.get('wind_direction_deg')
+        ws = source.get('wind_speed_ms')
+        turb = source.get('turbulence_severity')
+        if wd is not None or ws is not None or turb is not None:
+            wind_layers.append({
+                'altitude_msl_m': 0.0,
+                'wind_direction_deg': float(wd or 0.0),
+                'wind_speed_ms': float(ws or 0.0),
+                'turbulence_severity': float(turb or 0.0),
+            })
+
+        data = {
+            'type': 'weather_state',
+            'data': {
+                'station_icao': self._weather_station.get('icao', ''),
+                'station_elevation_m': station_elev_m,
+                'visibility_m': float(source.get('visibility_m', 9999.0)),
+                'temperature_sl_k': float(source.get('temperature_sl_k', 288.15)),
+                'pressure_sl_pa': float(source.get('pressure_sl_pa', 101325.0)),
+                'humidity_pct': int(source.get('humidity_pct', 50)),
+                'cloud_layers': cloud_layers,
+                'wind_layers': wind_layers,
+                'precipitation_rate': float(source.get('precipitation_rate', 0.0)),
+                'precipitation_type': int(source.get('precipitation_type', 0)),
+                'runway_friction': int(source.get('runway_friction', 0)),
+            }
+        }
+        with self._lock:
+            self._latest['weather_state'] = data
+
+    def add_cloud_layer(self, cloud: dict):
+        """Append one cloud layer to the cached weather and republish (cap at 3)."""
+        layers = self._last_weather_data.setdefault('cloud_layers', [])
+        if len(layers) >= 3:
+            self.get_logger().warn('Cloud layer add rejected: max 3 reached')
+            return
+        layers.append(cloud)
+        self.get_logger().info(
+            f'Cloud layer added: type={cloud.get("cloud_type")} '
+            f'base_agl_ft={cloud.get("base_agl_ft")} '
+            f'cov={cloud.get("coverage_pct")}% (total={len(layers)})')
+        self.publish_weather()
+
+    def remove_cloud_layer(self, index: int):
+        """Remove one cloud layer from the cached weather and republish."""
+        layers = self._last_weather_data.get('cloud_layers', []) if self._last_weather_data else []
+        if 0 <= index < len(layers):
+            removed = layers.pop(index)
+            self.get_logger().info(f'Cloud layer #{index} removed (type={removed.get("cloud_type")})')
+            self.publish_weather()
+
+    def clear_cloud_layers(self):
+        """Remove all cloud layers from the cached weather and republish."""
+        if self._last_weather_data:
+            self._last_weather_data['cloud_layers'] = []
+            self.get_logger().info('All cloud layers cleared')
+            self.publish_weather()
+
+    def set_runway_condition(self, index: int):
+        """Update runway_friction (0-15) from the RUNWAY CONDITION picker and republish."""
+        self.get_logger().info(f'[runway] set_runway_condition index={index}')
+        try:
+            clamped = max(0, min(15, int(index)))
+        except (TypeError, ValueError):
+            self.get_logger().warn(f'set_runway_condition: bad index {index!r}, ignored')
+            return
+        self._last_weather_data['runway_friction'] = clamped
+        self.publish_weather()
+
+    def set_weather_station(self, station: dict):
+        """Store weather station and broadcast to clients."""
+        self._weather_station = station
+        data = {
+            'type': 'weather_station',
+            'icao': station.get('icao', ''),
+            'elevation_m': station.get('elevation_m', 0.0),
+            'lat_deg': station.get('lat_deg', 0.0),
+            'lon_deg': station.get('lon_deg', 0.0),
+        }
+        with self._lock:
+            self._latest['weather_station'] = data
+        self.get_logger().info(
+            f'Weather station set: {station.get("icao", "")} '
+            f'elev={station.get("elevation_m", 0):.1f}m')
+        # Republish weather with updated station
+        if self._last_weather_data:
+            self.publish_weather()
 
     def _load_failures_config(self, aircraft_id: str):
         """Load failure catalog from aircraft package failures.yaml."""
@@ -1115,8 +1278,7 @@ class IosBackendNode(Node):
         self.get_logger().debug(
             f'Published virtual avionics: COM1={msg.com1_freq_mhz} NAV1={msg.nav1_freq_mhz}')
 
-    def publish_flight_controls(self, data: dict):
-        """Publish RawFlightControls to /aircraft/devices/instructor/controls/flight."""
+    def _build_raw_flight_msg(self, data: dict) -> RawFlightControls:
         msg = RawFlightControls()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.aileron_norm       = float(data.get('aileron_norm', 0.0))
@@ -1128,10 +1290,10 @@ class IosBackendNode(Node):
         msg.trim_rudder_norm   = float(data.get('trim_rudder_norm', 0.0))
         msg.brake_left_norm    = float(data.get('brake_left_norm', 0.0))
         msg.brake_right_norm   = float(data.get('brake_right_norm', 0.0))
-        self._raw_flight_pub.publish(msg)
+        msg.parking_brake      = bool(data.get('parking_brake', False))
+        return msg
 
-    def publish_engine_controls(self, data: dict):
-        """Publish RawEngineControls to /aircraft/devices/instructor/controls/engine."""
+    def _build_raw_engine_msg(self, data: dict) -> RawEngineControls:
         msg = RawEngineControls()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.throttle_norm  = [float(t) for t in data.get('throttle_norm', [0.0])]
@@ -1141,7 +1303,23 @@ class IosBackendNode(Node):
         msg.magneto_left  = [bool(m) for m in data.get('magneto_left', [])]
         msg.magneto_right = [bool(m) for m in data.get('magneto_right', [])]
         msg.starter = bool(data.get('starter', False))
-        self._raw_engine_pub.publish(msg)
+        return msg
+
+    def publish_flight_controls(self, data: dict):
+        """Publish RawFlightControls to /aircraft/devices/instructor/controls/flight."""
+        self._raw_flight_pub.publish(self._build_raw_flight_msg(data))
+
+    def publish_virtual_flight_controls(self, data: dict):
+        """Publish RawFlightControls to /aircraft/devices/virtual/controls/flight."""
+        self._raw_flight_virt_pub.publish(self._build_raw_flight_msg(data))
+
+    def publish_engine_controls(self, data: dict):
+        """Publish RawEngineControls to /aircraft/devices/instructor/controls/engine."""
+        self._raw_engine_pub.publish(self._build_raw_engine_msg(data))
+
+    def publish_virtual_engine_controls(self, data: dict):
+        """Publish RawEngineControls to /aircraft/devices/virtual/controls/engine."""
+        self._raw_engine_virt_pub.publish(self._build_raw_engine_msg(data))
 
     @_safe_callback
     def _on_heartbeat(self, msg: String):
@@ -1535,6 +1713,46 @@ async def _handle_search_airports(ws, query, max_results):
         await ws.send_text(json.dumps({'type': 'airport_search_results', 'airports': []}))
 
 
+async def _handle_set_weather_station(ws, icao):
+    """Resolve airport ICAO via SearchAirports, set as weather station."""
+    if not ros_node or not icao:
+        await ws.send_text(json.dumps({'type': 'weather_station_error', 'error': 'No ICAO provided'}))
+        return
+    try:
+        cli = ros_node._search_airports_cli
+        if not cli.service_is_ready():
+            ros_node.get_logger().warn('[set_weather_station] SearchAirports service not available, using elevation 0')
+            ros_node.set_weather_station({'icao': icao.upper(), 'elevation_m': 0.0, 'lat_deg': 0.0, 'lon_deg': 0.0})
+            return
+        req = SearchAirports.Request()
+        req.query = icao.upper()
+        req.max_results = 1
+        future = cli.call_async(req)
+        deadline = time.time() + 3.0
+        while not future.done() and time.time() < deadline:
+            await asyncio.sleep(0.05)
+        if not future.done():
+            ros_node.get_logger().warn(f'[set_weather_station] SearchAirports timeout for {icao}')
+            ros_node.set_weather_station({'icao': icao.upper(), 'elevation_m': 0.0, 'lat_deg': 0.0, 'lon_deg': 0.0})
+            return
+        result = future.result()
+        if result and result.airports:
+            apt = result.airports[0]
+            ros_node.set_weather_station({
+                'icao': apt.icao,
+                'elevation_m': apt.elevation_m,
+                'lat_deg': apt.arp_lat_deg,
+                'lon_deg': apt.arp_lon_deg,
+            })
+        else:
+            ros_node.get_logger().warn(f'[set_weather_station] Airport not found: {icao}')
+            await ws.send_text(json.dumps({'type': 'weather_station_error', 'error': f'Airport not found: {icao}'}))
+    except Exception as e:
+        if ros_node:
+            ros_node.get_logger().warn(f'[set_weather_station] error: {e}')
+        await ws.send_text(json.dumps({'type': 'weather_station_error', 'error': str(e)}))
+
+
 async def _handle_get_runways(ws, icao):
     """Call GetRunways service and send results to client."""
     if not ros_node or not icao:
@@ -1727,8 +1945,14 @@ async def websocket_endpoint(websocket: WebSocket):
                 elif msg.get('type') == 'set_flight_controls' and ros_node:
                     ros_node.publish_flight_controls(msg.get('data', msg))
 
+                elif msg.get('type') == 'set_virtual_flight_controls' and ros_node:
+                    ros_node.publish_virtual_flight_controls(msg.get('data', msg))
+
                 elif msg.get('type') == 'set_engine_controls' and ros_node:
                     ros_node.publish_engine_controls(msg.get('data', msg))
+
+                elif msg.get('type') == 'set_virtual_engine_controls' and ros_node:
+                    ros_node.publish_virtual_engine_controls(msg.get('data', msg))
 
                 elif msg.get('topic') == '/aircraft/devices/virtual/panel' and ros_node:
                     ros_node.publish_virtual_panel(msg.get('data', {}))
@@ -1811,6 +2035,24 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 elif msg.get('type') == 'clear_all_microbursts' and ros_node:
                     ros_node.clear_all_microbursts()
+
+                elif msg.get('type') == 'add_cloud_layer' and ros_node:
+                    ros_node.add_cloud_layer(msg.get('data', {}))
+
+                elif msg.get('type') == 'remove_cloud_layer' and ros_node:
+                    idx = msg.get('data', {}).get('index', -1)
+                    ros_node.remove_cloud_layer(int(idx))
+
+                elif msg.get('type') == 'clear_cloud_layers' and ros_node:
+                    ros_node.clear_cloud_layers()
+
+                elif msg.get('type') == 'set_runway_condition' and ros_node:
+                    ros_node.set_runway_condition(
+                        msg.get('data', {}).get('index', 0))
+
+                elif msg.get('type') == 'set_weather_station' and ros_node:
+                    asyncio.create_task(
+                        _handle_set_weather_station(websocket, msg.get('data', {}).get('icao', '')))
 
             except json.JSONDecodeError:
                 pass

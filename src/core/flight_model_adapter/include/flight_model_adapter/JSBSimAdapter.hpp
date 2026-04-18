@@ -43,6 +43,10 @@ public:
   void write_back_fuel(const sim_msgs::msg::FuelState & state) override;
   void write_back_atmosphere(const sim_msgs::msg::AtmosphereState & state,
                              double altitude_msl_m) override;
+  void set_ground_friction_tables(const GroundFrictionTables & tables) override;
+  void write_back_surface(uint8_t surface_type,
+                          uint8_t runway_friction,
+                          bool on_ground) override;
   void apply_payload_command(const sim_msgs::msg::PayloadCommand & cmd) override;
   void apply_fuel_load_command(const sim_msgs::msg::PayloadCommand & cmd) override;
 
@@ -73,6 +77,10 @@ private:
 
   // Engine RPM scaling for n1_pct computation (from aircraft config.yaml)
   double max_engine_rpm_{2700.0};
+
+  // Ground friction lookup tables (from aircraft config.yaml).
+  // Default-constructed = all 1.0 (JSBSim baseline) until loaded.
+  GroundFrictionTables ground_friction_tables_{};
 };
 
 }  // namespace flight_model_adapter
