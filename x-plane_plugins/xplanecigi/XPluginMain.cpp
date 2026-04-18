@@ -255,6 +255,10 @@ struct XpAppliedRegion {
 
 static std::map<uint16_t, XpAppliedRegion> g_xp_applied;
 
+// Forward declaration — defined below near build_weather_info. Called from
+// the 0x01 IG Control handler in process_packet() when entering Reset mode.
+static void cleanup_regional_weather();
+
 static float remap_cloud_type(uint8_t cigi_type)
 {
     switch (cigi_type) {
@@ -471,6 +475,13 @@ static void process_packet(const uint8_t * pkt, int len)
                     g_last_probe_t = 0.0;
                     g_last_probe_alt = 0.0;
                     XPLMDebugString("xplanecigi: terrain probing started (Reset → Operate)\n");
+                }
+                // Entering Reset: host signals reposition or startup reset.
+                // Erase all regional weather samples, clear tracking state,
+                // trigger visual refresh. Slice 3c.
+                if (new_mode == 1 && g_ig_mode != 1) {
+                    XPLMDebugString("xplanecigi: entering Reset — cleaning up regional weather\n");
+                    cleanup_regional_weather();
                 }
                 g_ig_mode = new_mode;
             }
@@ -1053,6 +1064,53 @@ static XPLMWeatherInfo_t build_weather_info(const PendingPatch & p)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Slice 3c — Erase all regional weather samples from X-Plane and clear local
+// tracking state. Called on:
+//   - Entry to IG Mode=Reset (host signals reposition or startup reset)
+//   - XPluginDisable (plugin unload or X-Plane shutdown)
+//
+// Fires cmd_regen_weather unconditionally at the end (bypasses g_regen_mode
+// gating) because a Reset/Disable is a cleanup event, not a cloud change —
+// we want XP's visual state to refresh immediately regardless of instructor
+// regen preference.
+// ─────────────────────────────────────────────────────────────────────────────
+static void cleanup_regional_weather()
+{
+    if (g_xp_applied.empty()) {
+        // Nothing applied to erase, but clear pending defensively — a Reset
+        // arriving mid-datagram could leave g_pending_patches non-empty even
+        // though nothing has been pushed to XP yet.
+        g_pending_patches.clear();
+        return;
+    }
+
+    char msg[160];
+    snprintf(msg, sizeof msg,
+        "xplanecigi: cleanup — erasing %zu applied regions\n",
+        g_xp_applied.size());
+    XPLMDebugString(msg);
+
+    XPLMBeginWeatherUpdate();
+    for (const auto & kv : g_xp_applied) {
+        XPLMEraseWeatherAtLocation(kv.second.lat_deg, kv.second.lon_deg);
+        snprintf(msg, sizeof msg,
+            "xplanecigi: cleanup erased region %u at %.6f,%.6f\n",
+            kv.second.region_id, kv.second.lat_deg, kv.second.lon_deg);
+        XPLMDebugString(msg);
+    }
+    XPLMEndWeatherUpdate(/*isIncremental=*/1, /*updateImmediately=*/1);
+
+    g_xp_applied.clear();
+    g_pending_patches.clear();
+
+    // Visual refresh — bypasses g_regen_mode gating
+    if (cmd_regen_weather) {
+        XPLMCommandOnce(cmd_regen_weather);
+        XPLMDebugString("xplanecigi: cleanup fired regen_weather\n");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Weather flight loop: write decoded CIGI weather to X-Plane datarefs (~1 Hz)
 // ─────────────────────────────────────────────────────────────────────────────
 static float WeatherFlightLoopCb(float, float, int, void *)
@@ -1444,5 +1502,12 @@ PLUGIN_API void XPluginStop()
 }
 
 PLUGIN_API int  XPluginEnable()                                  { return 1; }
-PLUGIN_API void XPluginDisable()                                 {}
+PLUGIN_API void XPluginDisable()
+{
+    // Slice 3c: erase all applied regional weather so it doesn't persist
+    // into the next plugin-enable session or into X-Plane shutdown.
+    // XPluginStop runs after XPluginDisable; by that point weather is
+    // already cleaned up.
+    cleanup_regional_weather();
+}
 PLUGIN_API void XPluginReceiveMessage(XPLMPluginID, int, void *) {}
