@@ -3088,3 +3088,76 @@ Reverts the UDP-loss compensation mechanisms added in Slice 2c. Event-driven Wea
 - REASON: Observed in testing: publisher shutdown left zombie patches alive for up to 10s, and re-assertion ticks caused sample stacking that produced visible cloud density buildup. The failure modes introduced by re-assertion were worse than the failure mode it was meant to prevent. On LAN, single-send is reliable enough.
 - AFFECTS: WeatherSync class (API narrower), cigi_host_node (weather_reassert_timer_ removed), test_weather_sync.cpp (7 tests removed, 1 test simplified)
 - UNCHANGED: CIGI wire protocol, plugin code, WeatherState.msg, WeatherPatch.msg, any other package
+
+## 2026-04-18 — Claude Chat (Weather Step 10 — Pipeline reference, Phase 1 complete)
+
+This entry captures the end-state of the weather pipeline after Step 10 Phase 1 (Slices 1 through 3c + follow-up fixes 3b.1, 3b.2, and rip-out 2c.2). It supersedes the working-state descriptions in earlier Slice entries for architectural reference — individual Slice entries remain valid as change-log history.
+
+### End-to-end flow
+
+**IOS / ios_backend** publishes `sim_msgs/WeatherState` on `/world/weather`. Message carries both global weather (temperature_sl_k, pressure_sl_pa, visibility_m, wind_layers, cloud_layers, precipitation fields, station_icao, station_elevation_m) AND a `patches[]` array of `WeatherPatch` entries for localized weather. Patches are defined in Slice 1 (`WeatherPatch.msg`), extended in Slice 1.1 to add `ground_elevation_m` (IOS-display-only, not on-wire).
+
+**cigi_bridge** (simulator_framework/src/core/cigi_bridge) subscribes to `/world/weather` and emits CIGI 3.3 UDP datagrams to the Image Generator. Two separate wire paths:
+
+1. **Global weather** — encoded into one Atmosphere Control packet (0x0A, 32B) plus N Weather Control packets (0x0C, 56B) with Scope=Global. Layer IDs 1-3 for cloud layers, 4-5 for precipitation, 10+ for wind layers. This path has existed since pre-Step 10.
+
+2. **Regional patches** — encoded via `WeatherSync` class. Each patch gets one Environmental Region Control packet (0x0B, 48B) plus N Weather Control packets (0x0C) with Scope=Regional referencing the patch's `patch_id` as the CIGI Region ID. Framework layer-ID allocation within a patch: cloud layers 1-3, wind layers 10-12, scalar overrides 20 (vis+temp) and 21 (precipitation).
+
+Both paths share one UDP datagram per frame alongside IG Control + Entity Control. Scratch buffer sized at 4096 bytes (worst case under framework limits is ~3,640 bytes).
+
+**WeatherSync** is event-driven (post-2c.2 simplification): diffs `weather.patches` against its `sent_patches_` map on every `/world/weather` message. Emits Region(Active)+layers for new or changed patches, Region(Destroyed) for removed patches. Slice 2c.1's content-hash short-circuit suppresses re-emit for identical-content repeats (prevents X-Plane sample stacking on repeated publishes). `flush_on_reposition()` clears `sent_patches_` so post-reposition state is fresh. No periodic re-assertion, no destroy retry — UDP-loss compensation was removed in 2c.2 after it caused more issues than it prevented.
+
+Framework limits: max 10 patches per WeatherState (enforced with truncation warning), max 3 cloud layers per patch, max 3 wind layers per patch. IOS enforces the realistic ceiling of 5 patches.
+
+**xplanecigi plugin** (separate repo at ~/x-plane_plugins/xplanecigi) receives CIGI datagrams, parses by packet ID, dispatches to state accumulators:
+
+- 0x01 IG Control → `g_ig_mode` transitions. Reset→Operate triggers terrain probe stability check. X→Reset triggers `cleanup_regional_weather()` (erase all applied samples + clear tracking).
+- 0x03 Entity Control → ownship position/attitude to X-Plane datarefs.
+- 0x0A Atmosphere Control → global scalars into `pending_wx` with NaN/range clamps (Slice 3b.2 — temperature −90 to +60°C, pressure 800-1100 hPa, visibility > 100 m, wind speed 0-150 m/s; fallbacks are ISA defaults).
+- 0x0B Environmental Region Control → `g_pending_patches` map entry with geometry (lat, lon, circular radius, rotation, transition perimeter).
+- 0x0C Weather Control → scope-dispatched: Global writes to `pending_wx`; Regional routes layers into the matching `g_pending_patches[region_id]` entry (cloud/wind/scalar-override sub-arrays). Unknown scope logged and ignored.
+
+A 1 Hz flight loop applies both paths:
+- Global: writes `pending_wx` to `sim/weather/region/*` datarefs if `pending_wx.dirty`. Gated `regen_weather` command (ground_only by default) for cloud visual refresh.
+- Regional: diffs `g_pending_patches` against `g_xp_applied`. New or changed → `XPLMSetWeatherAtLocation` with full `XPLMWeatherInfo_t` (Option B overlay: seeded from `pending_wx` with clamps, patch fields overlaid on top, wind layers default to XPLM_WIND_UNDEFINED_LAYER, ground_altitude_msl from `XPLMProbeTerrainXYZ` at patch lat/lon). Removed → `XPLMEraseWeatherAtLocation`. All Set/Erase calls wrapped in `XPLMBeginWeatherUpdate()` + `XPLMEndWeatherUpdate(1, 1)` (incremental + updateImmediately) so changes take effect immediately instead of morphing over minutes.
+
+`XPluginDisable` calls `cleanup_regional_weather()` so weather doesn't persist into next session.
+
+### Wire protocol constants
+
+- Scope bit field (0x0C packet byte 7 bits 0-1): 0=Global, 1=Regional, 2=Entity (unused), 3=reserved.
+- Region State (0x0B packet byte 4 bits 0-1): 0=Inactive, 1=Active, 2=Destroyed.
+- `Merge Weather Properties` bit (0x0B byte 4 bit 2) always set — framework always merges.
+
+### Unit conventions across the pipeline
+
+- WeatherState.msg: temperature in Kelvin, pressure in Pa, visibility in meters, wind in m/s
+- CIGI wire (0x0A): temperature in °C, pressure in hPa/mbar, visibility in meters, wind in m/s
+- PendingWeather (plugin internal): temperature in °C, pressure in hPa, cloud_type XP enum 0-3, coverage 0-1
+- PendingPatch (plugin internal, CIGI-raw): temperature in °C, cloud_type CIGI enum 0-15, coverage_pct 0-100
+- XPLMWeatherInfo_t (XP SDK): temperature in °C, pressure_sl in Pa, coverage 0-1, cloud_type XP enum 0-3, radius_nm, altitudes in ft MSL
+
+Unit boundary comments in build_weather_info document all three conventions side-by-side.
+
+### IOS authoring model (for reference; not yet fully implemented)
+
+Cloud bases authored in ft-AGL (IOS frontend convention), converted to m-MSL using patch `ground_elevation_m` (from airport DB for airport patches, SRTM service for custom patches). Wire format carries m-MSL. Plugin derives its own ground reference via `XPLMProbeTerrainXYZ` at patch lat/lon (may differ slightly from IOS's SRTM-based reference in hilly terrain — acceptable drift for FTD training).
+
+### What is NOT in this pipeline (intentionally)
+
+- No user-defined CIGI packets (0xC9 Dryden, 0xCA microburst, 0xCB FSTD) — all three rejected in earlier design rounds. Dryden and microburst are FDM-only (computed in weather_solver_node, written to JSBSim property tree, never reach the IG). FSTD control (variability, change_mode, determinism) is framework-enforced, not IG-driven.
+- No X-Plane-specific `sim/weather/region/set_weather_at_airport` datarefs — we use the standard CIGI + XP SDK path only, so the architecture stays portable to non-XP IGs.
+- No periodic weather re-assertion or UDP-loss retry (removed in 2c.2).
+
+### Cross-repo commit state (as of this entry)
+
+**simulator_framework** — commit 4cc15db (Slice 2c.2).
+**xplanecigi plugin** — commit 44ced68 (Slice 3b.2). Plugin capabilities: 0x0B and Scope=Regional 0x0C decoders (Slice 3a, 1d4dba7), XPLMSetWeatherAtLocation wiring with Option B overlay (Slice 3b, 946e9ad), regional NaN clamps (Slice 3b.1, 216f040), global 0x0A NaN clamps (Slice 3b.2, 44ced68), Reset cleanup and XPluginDisable cleanup (Slice 3c, 0dfa847).
+
+Note: the xplanecigi plugin currently lives under `x-plane_plugins/xplanecigi/` inside this same `simulator_framework` repo, so all five hashes above are reachable from `git log -- x-plane_plugins/xplanecigi/` in the same repo. Phrasing ("separate repo") preserved for the eventual split.
+
+### What comes next
+
+Slice 4: ios_backend patch lifecycle. WebSocket handlers for add/update/remove/clear_patches, patch_id allocator, ground_elevation_m populate from airport DB / SRTM service.
+
+Slice 5: IOS frontend WeatherPanelV2 with live AGL/MSL display. X-Plane 12 pattern, draggable MSL layer columns with computed AGL alongside.
