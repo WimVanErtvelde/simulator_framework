@@ -2968,3 +2968,62 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
   asphalt and another on grass, both see the same factor. Acceptable: C172 wheelbase ~2m,
   both mains always on same surface. Documented limitation.
 - AFFECTS: documentation only (architectural constraint)
+
+## 2026-04-18 — Claude Chat (Weather Step 10 Architecture Lock — PARKED for future implementation)
+
+- DECIDED: **Localized weather via CIGI Environmental Region Control + Weather Control Scope=Regional**. Each authored patch emits one CIGI Environmental Region Control packet (0x0B, ID=11, 48 bytes) defining a circular region (SizeX=SizeY=0, CornerRadius=radius_m) + N Weather Control packets (0x0C) with Scope=Regional referencing that Region ID — one per cloud layer, wind layer, precipitation override, visibility override, or temperature override in the patch.
+- REASON: CIGI 3.3 ICD section 4.1.11 documents circular environmental regions as the intended pattern for approximating weather cells. Fully standard CIGI, no user-defined packets required for localized weather. Portable to non-XP IGs. Entity scope (Scope=2) was considered and rejected — Entity scope attaches weather to moving models, not stationary geographic regions.
+- AFFECTS: sim_msgs/WeatherPatch.msg (new), sim_msgs/WeatherState.msg (add patches[]), src/core/cigi_bridge/ (weather_sync module), x-plane_plugins/xplanecigi/ (region tracking), ios_backend (patch lifecycle), ios/frontend WeatherPanel (tabs)
+
+- DECIDED: **WeatherPatch.msg sub-message**:
+    uint16  patch_id                 # maps to CIGI Region ID, monotonic per session
+    string  role                     # "departure" | "destination" | "custom"
+    string  label                    # IOS tab title
+    float64 lat_deg
+    float64 lon_deg
+    float32 radius_m                 # CIGI CornerRadius
+    # Overrides — empty/NaN = no override for that field
+    sim_msgs/WeatherCloudLayer[] cloud_layers
+    sim_msgs/WeatherWindLayer[]  wind_layers
+    float32 visibility_m             # -1 = no override
+    float32 temperature_k            # NaN = no override
+    float32 precipitation_rate       # -1 = no override
+    uint8   precipitation_type       # 0 = no override
+  WeatherState.msg gains `WeatherPatch[] patches`. No transition_perimeter_m, no max_altitude_msl_ft — both auto-derived at encode time.
+- REASON: One unified patch concept scales from "extra wind at destination" to "CB in valley" without type-specific messages. Each patch = one CIGI Region + N layers.
+- AFFECTS: sim_msgs/msg/WeatherPatch.msg (new file), sim_msgs/msg/WeatherState.msg (1 line addition)
+
+- DECIDED: **Patch radius defaults and bounds**. Custom patches (CB cells, fog pockets, map-placed) default to **3 nm** (~5.5 km) — matches typical single-cell thunderstorm (5–15 km diameter). Departure/Destination patches default to **10 nm** (~18.5 km) — covers terminal area / approach corridor. Slider bounds: **1 nm – 50 nm**. Below 1 nm XP's internal blend smears the patch into nothing; above 50 nm the instructor should be editing Global instead. XP default (XPLM_DEFAULT_WXR_RADIUS_NM=30 nm) rejected as too large for FTD scenarios — student would traverse full patch in <15 min of descent.
+- REASON: Realistic weather cell sizes aligned with meteorological norms, not with XP's generic authoring default.
+- AFFECTS: ios/frontend WeatherPanel (slider defaults per patch role), sim_msgs/WeatherPatch.msg (documentation comment)
+
+- DECIDED: **cigi_bridge owns sent-state tracking**. New std::map<uint16_t, SentPatch> sent_patches_ diffs against incoming /world/weather each publish. Added → Region Control (State=Active) + Weather Control(s) (Weather Enable=1). Removed → Region Control (State=Destroyed). Content changed → re-emit (CIGI idempotent for same Region ID). Layer removed from patch → Weather Control with Weather Enable=0. Periodic full re-assertion every 10 s (UDP loss compensation). Destroy packet retry 3× over 1 s. On reposition rising edge: flush sent_patches_ (IG Mode=Reset already clears IG-side state). Content hash buckets float fields (lat/lon to 6 decimals, radius to 10 m) before comparison to avoid thrash from UI drag events.
+- REASON: CIGI is declarative — packets set state that persists in the IG until explicitly changed or destroyed. UDP loss means any single packet can be dropped. Upstream nodes publish snapshot desired state only; cigi_bridge translates to persistent wire semantics.
+- AFFECTS: src/core/cigi_bridge/ (new weather_sync.hpp/cpp, state tracking, periodic re-assertion timer)
+
+- DECIDED: **xplanecigi plugin mirrors region tracking**. std::map<uint16_t, LiveXPPatch> xp_known_regions_. State=Active new → queue XPLMSetWeatherAtLocation for next flight loop. State=Active existing with position or radius changed → XPLMEraseWeatherAtLocation(old_lat, old_lon) + XPLMSetWeatherAtLocation(new) (XP cannot move a sample in place). State=Destroyed → XPLMEraseWeatherAtLocation + drop from map. Weather Control packets accumulated into LiveXPPatch's XPLMWeatherInfo_t until flight loop dispatches. radius_nm = corner_radius_m × 0.000539957. max_altitude_msl_ft = max(cloud_layer.alt_top_m × 3.28084, wind_layer.altitude_msl_m × 3.28084) + 2000 ft, fallback to XPLM_DEFAULT_WXR_LIMIT_MSL_FT (10000 ft) if no layers. Transition perimeter forwarded if present, else derived as 10% of radius. On plugin load: no known state — rely on next 10 s Host re-assertion to repopulate.
+- REASON: XPLMWeatherInfo_t carries radius_nm and max_altitude_msl_ft explicitly (confirmed via XP SDK docs and XPLM_DEFAULT_WXR_* constants). Plugin is last line of defense against zombie weather — must track and erase explicitly, cannot rely on CIGI alone.
+- AFFECTS: x-plane_plugins/xplanecigi/XPluginMain.cpp (weather_sync extension, region map, flight loop dispatch)
+
+- DECIDED: **Vertical extent and transition perimeter auto-derived**, not instructor-exposed. Vertical extent = max authored layer altitude + 2000 ft buffer. Transition perimeter = 10% of radius. Neither appears as a UI control.
+- REASON: Surfacing these as separate knobs creates inconsistency traps (instructor sets clouds to 35k ft but forgets vertical limit at 10k ft → clouds don't render above 10k). Vertical extent IS the weather authored in the column view. Transition is a CIGI nicety, not a training concern.
+- AFFECTS: cigi_bridge (derive at encode time), xplanecigi (derive at XP write time), ios/frontend (no UI element)
+
+- DECIDED: **Region ID allocation** — ios_backend owns monotonic uint16 counter. Reset on session-start command or IOS process restart. Allocated when instructor creates a patch, stamped into WeatherPatch.patch_id on the wire. No reuse within session. Reposition preserves IDs (patches survive unless explicitly cleared). Session reset + IG Mode=Reset guarantees no collision.
+- REASON: Deterministic ID lifetime simplifies debugging. uint16 (65535 values) is inexhaustible for realistic session lengths. No reuse eliminates "is this Region ID 5 the same cell from 10 minutes ago?" ambiguity.
+- AFFECTS: ios_backend (patch_id counter, session-start hook, patch create/destroy handlers)
+
+- DECIDED: **IOS UI — vertical MSL column with tabbed contexts**. Pattern inspired by X-Plane 12 manual weather UI, adapted for FTD. Center: vertical altitude column (0 ft MSL → 50,000 ft MSL) with draggable cloud layer bands and wind chips at altitudes. Left rail: selected-layer properties. Right rail: atmospheric conditions (visibility, temperature, altimeter, precipitation, runway conditions) + for patch tabs only, a radius slider (1–50 nm). Top tabs: Global / Departure / Destination / [custom patches]. Departure/Destination tabs auto-create on airport selection in Position panel, auto-destroy on change. Each tab is an independent full weather authoring (not inherited from Global). "Copy from Global" button on each patch tab pre-fills all fields from Global state. Dropped from X-Plane inspiration: Manual/Real-world toggle (FTD is always authored), Variation Across Region / Evolution Over Time (hardcoded static in plugin), Thermals (not relevant for commercial training).
+- REASON: Vertical column matches pilot mental model (stacked layers). Tabs scale from basic Global-only to complex multi-patch without a second interaction model. Independent tabs map 1:1 to CIGI wire (one tab = one Region + N Weather Controls). Copy-from-Global gives inheritance ergonomics without inheritance complexity.
+- AFFECTS: ios/frontend WeatherPanel.jsx (major rework), new components WeatherLayerColumn / AtmosphericConditionsPanel / PatchTabs / RadiusSlider
+
+- DECIDED: **Map-based patch authoring deferred to phase 2**. Phase 1 (tabs) handles Dep/Dest + small number of custom patches — covers most training workflows. Phase 2 extends the shared Position+Weather Leaflet map with weather overlay layer, drag-to-move patch markers, drag-to-resize radius circles. Both phases edit the same WeatherState.patches[] via the same React components.
+- REASON: Tab-based authoring is faster to implement, sufficient for authored terminal weather, and proves out the data model before committing to shared-map architecture.
+- AFFECTS: (phase 2 scope only — not in this decision)
+
+- DROPPED: **XPLMSetWeatherAtAirport**. Superseded by Environmental Region Control centered on airport ARP with Weather Control Scope=Regional. Non-portable XP-specific API. ICAO-keyed only (no arbitrary lat/lon). Strictly weaker than regional control. Originally considered in the 2026-04-17 xplanecigi plugin decision — withdrawn.
+- DROPPED: **User-defined CIGI packets 0xC9 (Dryden params), 0xCA (microburst field), 0xCB (FSTD determinism)**. Microburst and Dryden turbulence are FDM-only — not visible in the IG per 2026-04-17 microburst decision. FSTD determinism (variability_pct=0, change_mode=Static) hardcoded in xplanecigi plugin — no need to transmit over the wire. Eliminates three framework-specific extension packets from the wire protocol.
+- DROPPED: **CIGI Weather Entity (Scope=Entity) for CB cells**. Entity scope attaches weather to moving models. Regional scope + Environmental Region Control is the correct CIGI mechanism for stationary localized weather. Confirmed via ICD section 4.1.11.
+
+- DEFERRED: **Test plugin to verify radius_nm and max_altitude_msl_ft field presence in XPLMWeatherInfo_t** across XP 12.4+ point releases. Official developer.x-plane.com struct documentation is inconsistent with XPPython3 docs on field visibility; constants (XPLM_DEFAULT_WXR_RADIUS_NM, XPLM_DEFAULT_WXR_LIMIT_MSL_FT) confirm behavior exists, but a 20-line test plugin should verify exact binding before implementation begins.
+- AFFECTS: ~/x-plane_plugins/xplanecigi_wxr_test/ (new scratch plugin, to be built when Step 10 un-parks)
