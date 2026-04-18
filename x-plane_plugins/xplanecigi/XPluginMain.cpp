@@ -23,6 +23,7 @@
 #include <XPLMDisplay.h>
 #include <XPLMScenery.h>
 #include <XPLMDataAccess.h>
+#include <XPLMWeather.h>
 
 #include <cstring>
 #include <cstdint>
@@ -234,6 +235,25 @@ struct PendingPatch {
 };
 
 static std::map<uint16_t, PendingPatch> g_pending_patches;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Slice 3b — Tracks what has been applied to X-Plane via XPLMSetWeatherAtLocation.
+// Keyed by Region ID. The stored lat/lon is what was passed to Set; used on
+// erase and on move (XP cannot move a sample in place — must erase old lat/lon
+// and set at new lat/lon).
+//
+// Invariant: an entry exists in g_xp_applied iff the Region is currently live
+// in X-Plane's weather field. Entries are added after Set succeeds, removed
+// after Erase succeeds.
+// ─────────────────────────────────────────────────────────────────────────────
+struct XpAppliedRegion {
+    uint16_t region_id;
+    double   lat_deg;
+    double   lon_deg;
+    float    radius_nm;
+};
+
+static std::map<uint16_t, XpAppliedRegion> g_xp_applied;
 
 static float remap_cloud_type(uint8_t cigi_type)
 {
@@ -886,11 +906,159 @@ static void process_datagram(const uint8_t * buf, int len)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Slice 3b conversion helpers
+// ─────────────────────────────────────────────────────────────────────────────
+static inline float meters_to_nm(float m) {
+    return m * 0.000539957f;
+}
+
+static inline float meters_to_ft(float m) {
+    return m * 3.28084f;
+}
+
+// Derive max altitude MSL (feet) from a patch's authored layers, plus 2000 ft
+// buffer. Falls back to XPLM_DEFAULT_WXR_LIMIT_MSL_FT (10000 ft) if no layers.
+static float derive_max_alt_ft(const PendingPatch & p) {
+    float max_m = 0.0f;
+    for (const auto & cl : p.cloud_layers) {
+        if (!cl.weather_enable) continue;
+        float top_m = cl.base_elevation_m + cl.thickness_m;
+        if (top_m > max_m) max_m = top_m;
+    }
+    for (const auto & wl : p.wind_layers) {
+        if (!wl.weather_enable) continue;
+        if (wl.altitude_msl_m > max_m) max_m = wl.altitude_msl_m;
+    }
+    if (max_m <= 0.0f) {
+        return static_cast<float>(XPLM_DEFAULT_WXR_LIMIT_MSL_FT);
+    }
+    return meters_to_ft(max_m) + 2000.0f;
+}
+
+// Probe X-Plane terrain for MSL elevation (meters) at the given lat/lon.
+// Reuses the long-lived g_terrain_probe created at XPluginStart — same pattern
+// as HOT response code. Returns 0.0 on probe miss (logged).
+static double probe_terrain_elevation_m(double lat_deg, double lon_deg) {
+    if (!g_terrain_probe) return 0.0;
+
+    double local_x, local_y, local_z;
+    XPLMWorldToLocal(lat_deg, lon_deg, 0.0, &local_x, &local_y, &local_z);
+
+    XPLMProbeInfo_t info;
+    info.structSize = sizeof info;
+    XPLMProbeResult result = XPLMProbeTerrainXYZ(
+        g_terrain_probe,
+        static_cast<float>(local_x),
+        static_cast<float>(local_y),
+        static_cast<float>(local_z),
+        &info);
+
+    if (result != xplm_ProbeHitTerrain) {
+        char msg[128];
+        snprintf(msg, sizeof msg,
+            "xplanecigi: terrain probe miss at %.6f,%.6f — using 0.0\n",
+            lat_deg, lon_deg);
+        XPLMDebugString(msg);
+        return 0.0;
+    }
+
+    double out_lat, out_lon, out_alt_m;
+    XPLMLocalToWorld(info.locationX, info.locationY, info.locationZ,
+                     &out_lat, &out_lon, &out_alt_m);
+    return out_alt_m;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Build an XPLMWeatherInfo_t for a patch using Option B overlay semantics:
+//   - Seed from global pending_wx (read-only) so unauthored patch fields are
+//     no-ops in X-Plane's weather blend.
+//   - Overlay patch-authored fields where weather_enable=true.
+//
+// Units at boundaries:
+//   pending_wx (global, existing):  coverage 0-1, pressure hPa, cloud_type XP 0-3
+//   PendingPatch (regional, 3a):    coverage_pct 0-100, cloud_type CIGI 0-15
+//   XPLMWeatherInfo_t (XP SDK):     coverage 0-1, pressure_sl Pa, cloud_type XP 0-3
+//
+// Regional cloud_type is remapped via remap_cloud_type() because 3a stores
+// the raw CIGI wire enum (0-15). pending_wx already stores the XP enum (0-3).
+// ─────────────────────────────────────────────────────────────────────────────
+static XPLMWeatherInfo_t build_weather_info(const PendingPatch & p)
+{
+    XPLMWeatherInfo_t info = {};
+    info.structSize = sizeof info;
+
+    // 1. Seed from global pending_wx (no unit conversion for clouds — already
+    //    XP-native units; pressure hPa → Pa).
+    for (int i = 0; i < XPLM_NUM_CLOUD_LAYERS; ++i) {
+        info.cloud_layers[i].cloud_type = pending_wx.cloud[i].type_xp;
+        info.cloud_layers[i].coverage   = pending_wx.cloud[i].coverage;
+        info.cloud_layers[i].alt_base   = pending_wx.cloud[i].base_m;
+        info.cloud_layers[i].alt_top    = pending_wx.cloud[i].top_m;
+    }
+    for (int i = 0; i < XPLM_NUM_WIND_LAYERS; ++i) {
+        info.wind_layers[i].alt_msl   = pending_wx.wind[i].alt_m;
+        info.wind_layers[i].speed     = pending_wx.wind[i].speed_ms;
+        info.wind_layers[i].direction = pending_wx.wind[i].dir_deg;
+        // gust_speed / shear / turbulence left at zero; patch may overlay via
+        // future extensions (not currently wired).
+    }
+    info.visibility      = pending_wx.visibility_m;
+    info.temperature_alt = pending_wx.temperature_c;
+    info.pressure_sl     = pending_wx.pressure_hpa * 100.0f;   // hPa → Pa
+    info.pressure_alt    = 0.0f;  // 0 signals "use pressure_sl"
+    info.precip_rate     = pending_wx.rain_pct;
+
+    // 2. Overlay patch-authored cloud layers (framework layer_id 1-3 → slots 0-2).
+    //    coverage_pct is 0-100 on the wire; divide by 100. cloud_type is CIGI
+    //    raw (0-15); remap to XP enum (0-3).
+    for (const auto & cl : p.cloud_layers) {
+        if (!cl.weather_enable) continue;
+        if (cl.layer_id < 1 || cl.layer_id > 3) continue;
+        int slot = cl.layer_id - 1;
+        info.cloud_layers[slot].cloud_type = remap_cloud_type(cl.cloud_type);
+        info.cloud_layers[slot].coverage   = cl.coverage_pct / 100.0f;
+        info.cloud_layers[slot].alt_base   = cl.base_elevation_m;
+        info.cloud_layers[slot].alt_top    = cl.base_elevation_m + cl.thickness_m;
+    }
+
+    // 3. Overlay patch-authored wind layers (framework layer_id 10-12 → slots 0-2).
+    for (const auto & wl : p.wind_layers) {
+        if (!wl.weather_enable) continue;
+        if (wl.layer_id < 10 || wl.layer_id > 12) continue;
+        int slot = wl.layer_id - 10;
+        info.wind_layers[slot].alt_msl   = wl.altitude_msl_m;
+        info.wind_layers[slot].speed     = wl.wind_speed_ms;
+        info.wind_layers[slot].direction = wl.wind_direction_deg;
+    }
+
+    // 4. Overlay scalar overrides (visibility + temperature at layer 20,
+    //    precipitation at layer 21). Precipitation fields currently stored as
+    //    NaN by 3a decoder (encoder doesn't carry them yet) — overlay is a
+    //    no-op until that path lands.
+    for (const auto & ov : p.scalar_overrides) {
+        if (!ov.weather_enable) continue;
+        if (ov.layer_id == 20) {
+            if (!std::isnan(ov.visibility_m))  info.visibility      = ov.visibility_m;
+            if (!std::isnan(ov.temperature_c)) info.temperature_alt = ov.temperature_c;
+        } else if (ov.layer_id == 21) {
+            if (!std::isnan(ov.precipitation_rate)) {
+                info.precip_rate = ov.precipitation_rate;
+            }
+            // precipitation_type not yet surfaced in XPLMWeatherInfo_t;
+            // X-Plane derives rain/snow from temperature.
+        }
+    }
+
+    return info;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Weather flight loop: write decoded CIGI weather to X-Plane datarefs (~1 Hz)
 // ─────────────────────────────────────────────────────────────────────────────
 static float WeatherFlightLoopCb(float, float, int, void *)
 {
-    if (!pending_wx.dirty) return 1.0f;
+    // Global weather writes — gated on pending_wx.dirty (existing behavior).
+    if (pending_wx.dirty) {
 
     if (dr_update_immediately)
         XPLMSetDatai(dr_update_immediately, 1);
@@ -978,6 +1146,92 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     XPLMDebugString(dbg);
 
     pending_wx.dirty = false;
+    }  // end if (pending_wx.dirty) — global weather writes
+
+    // ── Slice 3b: Regional weather patch apply / erase ──────────────────────
+    // Runs every 1 Hz tick regardless of pending_wx.dirty. Self-guarded by
+    // the outer if — both maps empty → no work, no SDK calls.
+    //
+    // Batch all Set/Erase in a single Begin/End(isIncremental=1,
+    // updateImmediately=1) context so instructor changes take effect right
+    // away rather than morphing over minutes.
+    if (!g_pending_patches.empty() || !g_xp_applied.empty()) {
+        struct ApplyJob { uint16_t id; double lat, lon; double ground_m; XPLMWeatherInfo_t info; float radius_nm; };
+        struct EraseJob { uint16_t id; double lat, lon; };
+        std::vector<ApplyJob> applies;
+        std::vector<EraseJob> erases;
+
+        // 1. Regions in applied but not pending → erase
+        for (auto it = g_xp_applied.begin(); it != g_xp_applied.end(); ) {
+            if (g_pending_patches.find(it->first) == g_pending_patches.end()) {
+                erases.push_back({ it->first, it->second.lat_deg, it->second.lon_deg });
+                it = g_xp_applied.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        // 2. New or moved or dirty pending patches → apply
+        for (auto & kv : g_pending_patches) {
+            uint16_t id = kv.first;
+            PendingPatch & p = kv.second;
+            auto applied_it = g_xp_applied.find(id);
+
+            bool needs_apply = false;
+            if (applied_it == g_xp_applied.end()) {
+                needs_apply = true;
+            } else {
+                bool moved = (applied_it->second.lat_deg != p.lat_deg) ||
+                             (applied_it->second.lon_deg != p.lon_deg);
+                if (moved) {
+                    erases.push_back({ id, applied_it->second.lat_deg, applied_it->second.lon_deg });
+                    needs_apply = true;
+                } else if (p.dirty) {
+                    needs_apply = true;
+                }
+            }
+
+            if (needs_apply) {
+                ApplyJob job;
+                job.id       = id;
+                job.lat      = p.lat_deg;
+                job.lon      = p.lon_deg;
+                job.ground_m = probe_terrain_elevation_m(p.lat_deg, p.lon_deg);
+                job.info     = build_weather_info(p);
+                job.info.radius_nm           = meters_to_nm(p.corner_radius_m);
+                job.info.max_altitude_msl_ft = derive_max_alt_ft(p);
+                job.radius_nm = job.info.radius_nm;
+                applies.push_back(job);
+                p.dirty = false;
+            }
+        }
+
+        // 3. Issue SDK calls in a single Begin/End context.
+        if (!applies.empty() || !erases.empty()) {
+            XPLMBeginWeatherUpdate();
+
+            for (const auto & e : erases) {
+                XPLMEraseWeatherAtLocation(e.lat, e.lon);
+                char msg[160];
+                snprintf(msg, sizeof msg,
+                    "xplanecigi: erased region %u at %.6f,%.6f\n",
+                    e.id, e.lat, e.lon);
+                XPLMDebugString(msg);
+            }
+            for (auto & a : applies) {
+                XPLMSetWeatherAtLocation(a.lat, a.lon, a.ground_m, &a.info);
+                g_xp_applied[a.id] = { a.id, a.lat, a.lon, a.radius_nm };
+                char msg[192];
+                snprintf(msg, sizeof msg,
+                    "xplanecigi: applied region %u at %.6f,%.6f ground=%.0fm radius=%.1fnm\n",
+                    a.id, a.lat, a.lon, a.ground_m, a.radius_nm);
+                XPLMDebugString(msg);
+            }
+
+            XPLMEndWeatherUpdate(/*isIncremental=*/1, /*updateImmediately=*/1);
+        }
+    }
+
     return 1.0f;
 }
 

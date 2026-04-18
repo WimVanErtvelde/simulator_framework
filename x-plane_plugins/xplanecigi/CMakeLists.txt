@@ -28,9 +28,15 @@ message(STATUS "X-Plane SDK: ${XPLANE_SDK_DIR}")
 # ── Target ────────────────────────────────────────────────────────────────────
 add_library(xplanecigi SHARED XPluginMain.cpp)
 
-# X-Plane plugin defines (Windows 64-bit)
+# X-Plane plugin defines (Windows 64-bit).
+# XPLM400: XPLMWeatherInfo_t / Winds / Clouds structs (Slice 3b regional weather)
+# XPLM420: XPLMBeginWeatherUpdate / XPLMEndWeatherUpdate /
+#          XPLMSetWeatherAtLocation / XPLMEraseWeatherAtLocation,
+#          XPLMWeatherInfo_t::radius_nm / max_altitude_msl_ft,
+#          XPLM_DEFAULT_WXR_* constants.
+# No linker changes — same XPLM library, just header gates.
 target_compile_definitions(xplanecigi PRIVATE
-  XPLM200 XPLM210 XPLM300 XPLM301
+  XPLM200 XPLM210 XPLM300 XPLM301 XPLM400 XPLM420
   APL=0 IBM=1 LIN=0
 )
 
