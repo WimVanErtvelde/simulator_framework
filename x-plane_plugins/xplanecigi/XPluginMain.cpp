@@ -998,30 +998,58 @@ static XPLMWeatherInfo_t build_weather_info(const PendingPatch & p)
     XPLMWeatherInfo_t info = {};
     info.structSize = sizeof info;
 
-    // 1. Seed from global pending_wx (no unit conversion for clouds — already
-    //    XP-native units; pressure hPa → Pa).
+    // ── 1. Seed wind layers with "undefined" sentinel ───────────────────────
+    // XP blending treats XPLM_WIND_UNDEFINED_LAYER (-1) in alt_msl as "no
+    // data for this slot, skip". Previously this loop seeded all 13 slots
+    // from pending_wx.wind[].alt_m which defaults to 0.0f — XP then saw 13
+    // layers stacked at altitude 0 and produced NaN downstream.
+    for (int i = 0; i < XPLM_NUM_WIND_LAYERS; ++i) {
+        info.wind_layers[i].alt_msl   = XPLM_WIND_UNDEFINED_LAYER;
+        info.wind_layers[i].speed     = 0.0f;
+        info.wind_layers[i].direction = 0.0f;
+    }
+
+    // Overlay valid pending_wx wind layers (flag-gated, not index-gated)
+    for (int i = 0; i < XPLM_NUM_WIND_LAYERS; ++i) {
+        if (!pending_wx.wind[i].valid) continue;
+        info.wind_layers[i].alt_msl   = pending_wx.wind[i].alt_m;
+        info.wind_layers[i].speed     = pending_wx.wind[i].speed_ms;
+        info.wind_layers[i].direction = pending_wx.wind[i].dir_deg;
+    }
+
+    // ── 2. Seed cloud layers ────────────────────────────────────────────────
+    // Zero-init from `info = {}` gives coverage=0 everywhere — XP treats
+    // this as "no clouds at this slot, don't inject". Only overlay valid
+    // pending_wx cloud slots.
     for (int i = 0; i < XPLM_NUM_CLOUD_LAYERS; ++i) {
+        if (!pending_wx.cloud[i].valid) continue;
         info.cloud_layers[i].cloud_type = pending_wx.cloud[i].type_xp;
         info.cloud_layers[i].coverage   = pending_wx.cloud[i].coverage;
         info.cloud_layers[i].alt_base   = pending_wx.cloud[i].base_m;
         info.cloud_layers[i].alt_top    = pending_wx.cloud[i].top_m;
     }
-    for (int i = 0; i < XPLM_NUM_WIND_LAYERS; ++i) {
-        info.wind_layers[i].alt_msl   = pending_wx.wind[i].alt_m;
-        info.wind_layers[i].speed     = pending_wx.wind[i].speed_ms;
-        info.wind_layers[i].direction = pending_wx.wind[i].dir_deg;
-        // gust_speed / shear / turbulence left at zero; patch may overlay via
-        // future extensions (not currently wired).
-    }
-    info.visibility      = pending_wx.visibility_m;
-    info.temperature_alt = pending_wx.temperature_c;
-    info.pressure_sl     = pending_wx.pressure_hpa * 100.0f;   // hPa → Pa
-    info.pressure_alt    = 0.0f;  // 0 signals "use pressure_sl"
-    info.precip_rate     = pending_wx.rain_pct;
 
-    // 2. Overlay patch-authored cloud layers (framework layer_id 1-3 → slots 0-2).
-    //    coverage_pct is 0-100 on the wire; divide by 100. cloud_type is CIGI
-    //    raw (0-15); remap to XP enum (0-3).
+    // ── 3. Scalars with validity clamps ─────────────────────────────────────
+    // pending_wx scalars can be populated with 0/invalid from WeatherState
+    // messages that didn't set those fields (ROS2 default-init = 0). Clamp
+    // to sane ranges; fall back to ISA defaults.
+    info.temperature_alt =
+        (pending_wx.temperature_c > -90.0f && pending_wx.temperature_c < 60.0f)
+            ? pending_wx.temperature_c : 15.0f;
+    info.visibility =
+        (pending_wx.visibility_m > 100.0f)
+            ? pending_wx.visibility_m : 10000.0f;
+    info.pressure_sl =
+        (pending_wx.pressure_hpa > 800.0f && pending_wx.pressure_hpa < 1100.0f)
+            ? pending_wx.pressure_hpa * 100.0f : 101325.0f;   // hPa → Pa
+    info.pressure_alt = 0.0f;                                 // 0 = use pressure_sl
+    info.precip_rate =
+        (pending_wx.rain_pct >= 0.0f && pending_wx.rain_pct <= 1.0f)
+            ? pending_wx.rain_pct : 0.0f;
+
+    // ── 4. Overlay patch-authored cloud layers ──────────────────────────────
+    // framework layer_id 1-3 → slots 0-2. coverage_pct 0-100 → coverage 0-1.
+    // cloud_type CIGI 0-15 → XP 0-3 via remap_cloud_type().
     for (const auto & cl : p.cloud_layers) {
         if (!cl.weather_enable) continue;
         if (cl.layer_id < 1 || cl.layer_id > 3) continue;
@@ -1032,7 +1060,8 @@ static XPLMWeatherInfo_t build_weather_info(const PendingPatch & p)
         info.cloud_layers[slot].alt_top    = cl.base_elevation_m + cl.thickness_m;
     }
 
-    // 3. Overlay patch-authored wind layers (framework layer_id 10-12 → slots 0-2).
+    // ── 5. Overlay patch-authored wind layers ───────────────────────────────
+    // framework layer_id 10-12 → slots 0-2.
     for (const auto & wl : p.wind_layers) {
         if (!wl.weather_enable) continue;
         if (wl.layer_id < 10 || wl.layer_id > 12) continue;
@@ -1042,21 +1071,32 @@ static XPLMWeatherInfo_t build_weather_info(const PendingPatch & p)
         info.wind_layers[slot].direction = wl.wind_direction_deg;
     }
 
-    // 4. Overlay scalar overrides (visibility + temperature at layer 20,
-    //    precipitation at layer 21). Precipitation fields currently stored as
-    //    NaN by 3a decoder (encoder doesn't carry them yet) — overlay is a
-    //    no-op until that path lands.
+    // ── 6. Overlay scalar overrides with threshold checks ───────────────────
+    // CIGI wire protocol can't distinguish "not authored" from "authored as 0"
+    // for these fields (encoder memsets buffer to 0 then writes only authored
+    // values via NaN-gate, so decoder sees 0 for both cases). Apply only when
+    // values look plausibly authored, not default-zero.
+    //
+    // Thresholds:
+    //   visibility_m > 1.0     — below 1 m is not a realistic training value
+    //   temperature_c > -200.0 — below -200°C is not a realistic training value
+    //   precipitation_rate checked against NaN only (0.0 is legitimately
+    //     "no precip" and a sane override, unlike visibility/temperature)
     for (const auto & ov : p.scalar_overrides) {
         if (!ov.weather_enable) continue;
         if (ov.layer_id == 20) {
-            if (!std::isnan(ov.visibility_m))  info.visibility      = ov.visibility_m;
-            if (!std::isnan(ov.temperature_c)) info.temperature_alt = ov.temperature_c;
+            if (!std::isnan(ov.visibility_m)  && ov.visibility_m  > 1.0f) {
+                info.visibility = ov.visibility_m;
+            }
+            if (!std::isnan(ov.temperature_c) && ov.temperature_c > -200.0f) {
+                info.temperature_alt = ov.temperature_c;
+            }
         } else if (ov.layer_id == 21) {
             if (!std::isnan(ov.precipitation_rate)) {
                 info.precip_rate = ov.precipitation_rate;
             }
-            // precipitation_type not yet surfaced in XPLMWeatherInfo_t;
-            // X-Plane derives rain/snow from temperature.
+            // precipitation_type currently not mapped to an XPLMWeatherInfo_t
+            // field (XP derives snow/rain from temperature).
         }
     }
 
