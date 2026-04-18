@@ -3,7 +3,6 @@ import { useSimStore } from './useSimStore'
 import {
   globalDraftToWire,
   activeWeatherToGlobalDraft,
-  uiToWireRunwayFriction,
 } from '../components/panels/weatherV2/weatherUnits'
 
 // Draft state for WeatherPanelV2.
@@ -12,6 +11,11 @@ import {
 // accepted snapshot (optimistically updated on Accept, then corrected by the
 // next /world/weather broadcast via syncFromBroadcast). draft !== serverState
 // drives the dirty indicator.
+//
+// Runway condition is NOT part of V2's draft/serverState — it fires
+// immediately via set_runway_condition from RunwayField and reads state
+// from useSimStore.activeWeather.runwayFriction, matching the WX panel's
+// pattern so both UIs stay in sync.
 
 const initialDraft = {
   global: {
@@ -21,8 +25,6 @@ const initialDraft = {
     humidity_pct:         50,
     precipitation_rate:   0.0,
     precipitation_type:   0,
-    runway_friction:      2,    // UI enum 0-2 (Poor/Fair/Good), not wire 0-15
-    runway_conditions:    0,    // UI enum (Uniform/Patchy) — no wire field yet
     cloud_layers:         [],   // Slice 5a-iii
     wind_layers:          [],   // Slice 5a-iv
   },
@@ -74,10 +76,9 @@ export const useWeatherV2Store = create((set, get) => ({
     return { serverState: nextServer, draft: nextDraft }
   }),
 
-  // Commits the draft to the backend via the existing set_weather handler
-  // (ios_backend_node.py:2526). Runway friction goes separately via the
-  // existing set_runway_condition handler because the wire uses a 0-15
-  // EURAMEC index and the UI stores a 0-2 enum.
+  // Commits the draft to the backend via the existing set_weather handler.
+  // Runway condition is immediate-apply from RunwayField (not part of this
+  // batch).
   accept: () => {
     const state = get()
     if (draftEquals(state.draft, state.serverState)) return
@@ -93,16 +94,8 @@ export const useWeatherV2Store = create((set, get) => ({
       data: globalDraftToWire(state.draft.global),
     }))
 
-    if (state.draft.global.runway_friction !== state.serverState.global.runway_friction) {
-      ws.send(JSON.stringify({
-        type: 'set_runway_condition',
-        data: { index: uiToWireRunwayFriction(state.draft.global.runway_friction) },
-      }))
-    }
-
     // Optimistic commit. A subsequent weather_state broadcast will correct
-    // serverState via syncFromBroadcast if the backend clamped or rejected
-    // any field.
+    // serverState via syncFromBroadcast if the backend clamped any field.
     set((s) => ({ serverState: structuredClone(s.draft) }))
   },
 

@@ -3,7 +3,7 @@ import { useWeatherV2Store } from '../../../../store/useWeatherV2Store'
 import { VISIBILITY_PRESETS } from '../weatherPresets'
 import { formatVisibility, isRvrMode } from '../weatherUnits'
 import { fieldBox, fieldHeader, fieldLabel, fieldValue, slider } from './fieldStyles'
-import { UnitToggle, PresetChip } from './fieldCommon'
+import { PillGroup, PresetChip } from './fieldCommon'
 
 const UNIT_OPTIONS = [{ id: 'm', label: 'm' }, { id: 'SM', label: 'SM' }]
 
@@ -18,19 +18,19 @@ export default function VisibilityField() {
     <div style={fieldBox}>
       <div style={fieldHeader}>
         <span style={fieldLabel}>{rvr ? 'RVR' : 'Visibility'}</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={fieldValue}>{formatVisibility(visibility_m, unit)}</span>
-          <UnitToggle options={UNIT_OPTIONS} value={unit} onChange={setUnit} />
-        </div>
+        <span style={fieldValue}>{formatVisibility(visibility_m, unit)}</span>
       </div>
-      <input
-        type="range"
-        min={0} max={160000}
-        step={rvr ? 25 : 100}
-        value={visibility_m}
-        onChange={(e) => updateDraft(['global', 'visibility_m'], Number(e.target.value))}
-        style={slider}
-      />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px', gap: 8, alignItems: 'center' }}>
+        <input
+          type="range"
+          min={0} max={160000}
+          step={rvr ? 25 : 100}
+          value={visibility_m}
+          onChange={(e) => updateDraft(['global', 'visibility_m'], Number(e.target.value))}
+          style={slider}
+        />
+        <PillGroup options={UNIT_OPTIONS} value={unit} onChange={setUnit} />
+      </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
         {VISIBILITY_PRESETS.map(p => (
           <PresetChip

@@ -1,7 +1,7 @@
 import { useWeatherV2Store } from '../../../../store/useWeatherV2Store'
 import { PRECIP_TYPES } from '../weatherPresets'
 import { fieldBox, fieldHeader, fieldLabel, fieldValue, slider } from './fieldStyles'
-import { EnumChips } from './fieldCommon'
+import { PillGroup } from './fieldCommon'
 
 export default function PrecipitationField() {
   const precipitation_rate = useWeatherV2Store(s => s.draft.global.precipitation_rate)
@@ -24,7 +24,7 @@ export default function PrecipitationField() {
         onChange={(e) => updateDraft(['global', 'precipitation_rate'], Number(e.target.value) / 100)}
         style={slider}
       />
-      <EnumChips
+      <PillGroup
         options={PRECIP_TYPES}
         value={precipitation_type}
         onChange={(v) => updateDraft(['global', 'precipitation_type'], v)}

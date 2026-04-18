@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useWeatherV2Store } from '../../../../store/useWeatherV2Store'
 import { formatPressure } from '../weatherUnits'
 import { fieldBox, fieldHeader, fieldLabel, fieldValue, slider } from './fieldStyles'
-import { UnitToggle } from './fieldCommon'
+import { PillGroup } from './fieldCommon'
 
 const UNIT_OPTIONS = [{ id: 'hPa', label: 'hPa' }, { id: 'inHg', label: 'inHg' }]
 
@@ -15,18 +15,18 @@ export default function PressureField() {
     <div style={fieldBox}>
       <div style={fieldHeader}>
         <span style={fieldLabel}>QNH</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={fieldValue}>{formatPressure(pressure_hpa, unit)}</span>
-          <UnitToggle options={UNIT_OPTIONS} value={unit} onChange={setUnit} />
-        </div>
+        <span style={fieldValue}>{formatPressure(pressure_hpa, unit)}</span>
       </div>
-      <input
-        type="range"
-        min={880} max={1075} step={0.1}
-        value={pressure_hpa}
-        onChange={(e) => updateDraft(['global', 'pressure_hpa'], Number(e.target.value))}
-        style={slider}
-      />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 110px', gap: 8, alignItems: 'center' }}>
+        <input
+          type="range"
+          min={880} max={1075} step={0.1}
+          value={pressure_hpa}
+          onChange={(e) => updateDraft(['global', 'pressure_hpa'], Number(e.target.value))}
+          style={slider}
+        />
+        <PillGroup options={UNIT_OPTIONS} value={unit} onChange={setUnit} />
+      </div>
     </div>
   )
 }
