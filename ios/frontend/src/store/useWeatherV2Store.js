@@ -33,11 +33,13 @@ export const useWeatherV2Store = create((set) => ({
   draft:       structuredClone(initialDraft),
   serverState: structuredClone(initialDraft),
 
+  // Note: no global unit toggle. Aviation convention uses fixed units per
+  // field (ft altitudes, kt speeds, °C temperature, hPa pressure). Per-field
+  // inline toggles for hPa/inHg, m/SM visibility, etc. land in the slices
+  // that introduce those fields.
   activeTab: 'global',
-  units:     'metric',
 
   setActiveTab: (tab) => set({ activeTab: tab }),
-  setUnits:     (u)   => set({ units: u }),
 
   // Generic draft mutator. Tabs call with a path into the draft:
   //   updateDraft(['global', 'temperature_c'], 20)

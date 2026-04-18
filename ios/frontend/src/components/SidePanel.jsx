@@ -59,7 +59,7 @@ function PanelHeader({ title }) {
 
 function PanelContent({ children }) {
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: 16, background: '#0a0e17' }}>
+    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 16, background: '#0a0e17' }}>
       {children}
     </div>
   )
