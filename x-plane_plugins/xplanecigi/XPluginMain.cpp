@@ -626,13 +626,55 @@ static void process_packet(const uint8_t * pkt, int len)
     // Packet ID = 0x0A, Size = 32 bytes
     case 0x0A:
         if (packet_size >= 32) {
-            pending_wx.humidity_pct  = pkt[3];
-            pending_wx.temperature_c = read_be_float(pkt + 4);
-            pending_wx.visibility_m  = read_be_float(pkt + 8);
-            pending_wx.wind_speed_ms = read_be_float(pkt + 12);
-            pending_wx.vert_wind_ms  = read_be_float(pkt + 16);
-            pending_wx.wind_dir_deg  = read_be_float(pkt + 20);
-            pending_wx.pressure_hpa  = read_be_float(pkt + 24);
+            // Read raw wire values into locals. CIGI 0x0A carries scalars
+            // as float32 BE; humidity as uint8.
+            uint8_t raw_humidity  = pkt[3];
+            float raw_temp_c      = read_be_float(pkt + 4);
+            float raw_visibility  = read_be_float(pkt + 8);
+            float raw_wind_speed  = read_be_float(pkt + 12);
+            float raw_vert_wind   = read_be_float(pkt + 16);
+            float raw_wind_dir    = read_be_float(pkt + 20);
+            float raw_pressure    = read_be_float(pkt + 24);
+
+            // Clamp to sane ranges at the decoder so pending_wx is the
+            // single source of truth. Values outside these ranges fall back
+            // to ISA / sensible defaults — prevents NaN / division-by-zero
+            // inside X-Plane's global weather pipeline when upstream
+            // WeatherState messages arrive with unset (zero) globals.
+            //
+            // Ranges chosen for atmospheric plausibility, not CIGI strictness:
+            //   temperature:   -90°C (stratospheric) to +60°C (hot desert)
+            //   visibility:    > 100 m (below = likely unset zero)
+            //   wind speed:    0 to 150 m/s (cat-5 hurricane ~ 75 m/s)
+            //   vert wind:     ±50 m/s (severe updraft/downdraft ~ 30 m/s)
+            //   wind direction: wrap to 0-360°
+            //   pressure:      800-1100 hPa (physical troposphere range)
+            //
+            // Anything outside → ISA default.
+            pending_wx.temperature_c =
+                (std::isfinite(raw_temp_c) && raw_temp_c > -90.0f && raw_temp_c < 60.0f)
+                    ? raw_temp_c : 15.0f;
+            pending_wx.visibility_m =
+                (std::isfinite(raw_visibility) && raw_visibility > 100.0f)
+                    ? raw_visibility : 10000.0f;
+            pending_wx.wind_speed_ms =
+                (std::isfinite(raw_wind_speed) && raw_wind_speed >= 0.0f && raw_wind_speed < 150.0f)
+                    ? raw_wind_speed : 0.0f;
+            pending_wx.vert_wind_ms =
+                (std::isfinite(raw_vert_wind) && raw_vert_wind > -50.0f && raw_vert_wind < 50.0f)
+                    ? raw_vert_wind : 0.0f;
+            if (std::isfinite(raw_wind_dir)) {
+                float wd = std::fmod(raw_wind_dir, 360.0f);
+                if (wd < 0.0f) wd += 360.0f;
+                pending_wx.wind_dir_deg = wd;
+            } else {
+                pending_wx.wind_dir_deg = 0.0f;
+            }
+            pending_wx.pressure_hpa =
+                (std::isfinite(raw_pressure) && raw_pressure > 800.0f && raw_pressure < 1100.0f)
+                    ? raw_pressure : 1013.25f;
+            pending_wx.humidity_pct = raw_humidity;   // uint8, no NaN possible
+
             pending_wx.dirty = true;
         }
         break;
