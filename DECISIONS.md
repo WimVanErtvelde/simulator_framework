@@ -3027,3 +3027,35 @@ all system nodes (electrical, fuel, gear, hydraulic), flight_model_adapter_node
 
 - DEFERRED: **Test plugin to verify radius_nm and max_altitude_msl_ft field presence in XPLMWeatherInfo_t** across XP 12.4+ point releases. Official developer.x-plane.com struct documentation is inconsistent with XPPython3 docs on field visibility; constants (XPLM_DEFAULT_WXR_RADIUS_NM, XPLM_DEFAULT_WXR_LIMIT_MSL_FT) confirm behavior exists, but a 20-line test plugin should verify exact binding before implementation begins.
 - AFFECTS: ~/x-plane_plugins/xplanecigi_wxr_test/ (new scratch plugin, to be built when Step 10 un-parks)
+
+## 2026-04-18 — Claude Chat (Weather Step 10 — WeatherPatch.msg field evolution)
+
+Corrects field-naming decisions from the preceding "Weather Step 10 Architecture Lock" entry. The architecture itself is unchanged; only message field names and override-sentinel conventions were refined during task card drafting. Reflects the implementation-ready shape of WeatherPatch.msg that Slice 1 will create.
+
+- DECIDED: **role → patch_type**. Field renamed from `role` to `patch_type`. "Role" was judged misleading — a role implies behavioral responsibility, whereas this field classifies the patch by anchoring kind.
+- REASON: Reads as "what type of patch is this" at consumer sites. Leaves room for future `patch_type="route"` (route-anchored patches) without semantic conflict with a behavioral-role notion.
+- AFFECTS: sim_msgs/WeatherPatch.msg, cigi_bridge weather_sync, ios_backend patch handlers, ios/frontend WeatherPanelV2
+
+- DECIDED: **Departure/destination collapsed into single "airport" patch_type**. Values reduced from `"departure" | "destination" | "custom"` to `"airport" | "custom"`. Whether a given airport patch is at the departure or destination airport is context (which ICAO is stamped on it), not a separate type.
+- REASON: Dep and Dest aren't semantically different patch kinds; both are "weather anchored to an airport." Reduces enum cardinality and eliminates the edge case where Dep and Dest are the same airport.
+- AFFECTS: sim_msgs/WeatherPatch.msg, ios/frontend patch tab ordering logic
+
+- DECIDED: **icao field added to WeatherPatch**. New `string icao` field. Empty string for `patch_type="custom"`, ICAO code (e.g., "EBBR") for `patch_type="airport"`.
+- REASON: Enables ios_backend to re-resolve lat/lon if airport DB updates, enables IOS tab display without reverse-lookup, supports future SimSnapshot save/load with stable airport references. Original architecture entry didn't surface the ICAO retention need.
+- AFFECTS: sim_msgs/WeatherPatch.msg, ios_backend airport search handler
+
+- DECIDED: **Explicit override flags for scalar fields, empty arrays for layer overrides**. Replaces the sentinel-based override scheme (-1 / NaN / 0) from the architecture lock entry with explicit booleans:
+
+      bool    override_visibility
+      float32 visibility_m
+      bool    override_temperature
+      float32 temperature_k
+      bool    override_precipitation
+      float32 precipitation_rate
+      uint8   precipitation_type
+
+  Layer overrides remain array-based: empty `cloud_layers[]` = no cloud override, empty `wind_layers[]` = no wind override. `precipitation_rate` and `precipitation_type` are gated by a single `override_precipitation` flag (rate without type, or type without rate, is non-sensical).
+- REASON: Sentinel values were inconsistent across fields (-1 for visibility, NaN for temperature, 0 for precipitation_type) and created implicit "is this a real zero or a sentinel?" ambiguity. Explicit flags cost 3 bytes on the wire but eliminate override ambiguity and map 1:1 to IOS frontend "use global / override" toggles.
+- AFFECTS: sim_msgs/WeatherPatch.msg, cigi_bridge weather encoder (check flag before emitting Weather Control packet for scalar field), ios/frontend override toggles
+
+- UNCHANGED from the architecture lock entry: patch_id (uint16, monotonic per session), label (string, IOS tab title), lat_deg / lon_deg (float64), radius_m (float32), cloud_layers[] / wind_layers[] sub-messages. Radius defaults (3 nm custom, 10 nm airport), bounds (1–50 nm), CIGI Environmental Region Control + Weather Control Scope=Regional wire mapping, cigi_bridge sent-state tracking discipline, xplanecigi plugin region tracking, IOS UI vertical-MSL-column pattern, and phase 2 map deferral — all as previously decided.
