@@ -31,6 +31,9 @@
 #include <string>
 #include <fstream>
 #include <set>
+#include <map>
+#include <vector>
+#include <algorithm>
 
 // ── Network config (loaded from xplanecigi.ini, fallback to defaults) ─────────
 static char     g_host_ip[64] = "127.0.0.1";
@@ -170,6 +173,67 @@ struct PendingWeather {
 
 static PendingWeather      pending_wx;
 static XPLMFlightLoopID    weather_flight_loop_id = nullptr;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Slice 3a — Regional weather decoder state.
+// Accumulates Environmental Region Control (0x0B) geometry + Weather Control
+// Scope=Regional (0x0C) layers into per-region structs. Slice 3b will feed
+// these into XPLMSetWeatherAtLocation.
+//
+// Region ID 0 is reserved (used for Scope=Global); valid regions are 1-65535.
+// ─────────────────────────────────────────────────────────────────────────────
+struct PendingCloudLayer {
+    uint8_t  layer_id;         // CIGI layer ID (1, 2, 3 for cloud layers)
+    uint8_t  cloud_type;       // CIGI enum 0-15
+    float    coverage_pct;
+    float    base_elevation_m;
+    float    thickness_m;
+    float    transition_band_m;
+    bool     scud_enable;
+    float    scud_frequency_pct;
+    bool     weather_enable;
+};
+
+struct PendingWindLayer {
+    uint8_t  layer_id;         // CIGI layer ID (10-12 for wind layers, framework convention)
+    float    altitude_msl_m;
+    float    wind_speed_ms;
+    float    vertical_wind_ms;
+    float    wind_direction_deg;
+    bool     weather_enable;
+};
+
+struct PendingScalarOverride {
+    uint8_t  layer_id;         // 20 for vis+temp, 21 for precipitation (framework convention)
+    float    visibility_m;     // NaN = not overridden
+    float    temperature_c;    // NaN = not overridden (stored as °C as encoded on wire)
+    float    precipitation_rate;  // NaN = not overridden
+    uint8_t  precipitation_type;  // 0 = not overridden
+    bool     weather_enable;
+};
+
+struct PendingPatch {
+    uint16_t region_id;
+    uint8_t  region_state;     // 0=Inactive, 1=Active, 2=Destroyed
+    double   lat_deg;
+    double   lon_deg;
+    float    size_x_m;         // 0 for circular regions (framework convention)
+    float    size_y_m;         // 0 for circular regions
+    float    corner_radius_m;  // Circle radius
+    float    rotation_deg;
+    float    transition_perimeter_m;
+
+    std::vector<PendingCloudLayer>     cloud_layers;
+    std::vector<PendingWindLayer>      wind_layers;
+    std::vector<PendingScalarOverride> scalar_overrides;
+
+    // Set to true whenever any field of this region (or any of its layers)
+    // was updated during the last inbound-datagram parse. Slice 3b will
+    // consume + clear this to decide when to re-call XPLMSetWeatherAtLocation.
+    bool dirty;
+};
+
+static std::map<uint16_t, PendingPatch> g_pending_patches;
 
 static float remap_cloud_type(uint8_t cigi_type)
 {
@@ -542,14 +606,87 @@ static void process_packet(const uint8_t * pkt, int len)
         }
         break;
 
+    // ── Environmental Region Control (host → IG) ────────────────────────────
+    // Packet ID = 0x0B, Size = 48 bytes. Slice 3a: parse + accumulate into
+    // g_pending_patches. No XP SDK call yet — Slice 3b wires the behavior in.
+    case 0x0B:
+        if (packet_size != 48) {
+            char msg[128];
+            snprintf(msg, sizeof msg,
+                "xplanecigi: unexpected Env Region Ctrl size %u (want 48) — skipping\n",
+                packet_size);
+            XPLMDebugString(msg);
+            break;
+        }
+        {
+            uint16_t region_id    = read_be16(pkt + 2);
+            uint8_t  flags        = pkt[4];
+            uint8_t  region_state = flags & 0x03;    // bits 0-1
+            // bit 2 = Merge Weather Properties (informational, we always merge)
+
+            double lat         = read_be_double(pkt + 8);
+            double lon         = read_be_double(pkt + 16);
+            float  size_x      = read_be_float(pkt + 24);
+            float  size_y      = read_be_float(pkt + 28);
+            float  radius      = read_be_float(pkt + 32);
+            float  rotation    = read_be_float(pkt + 36);
+            float  trans_perim = read_be_float(pkt + 40);
+
+            if (region_id == 0) {
+                // Region 0 is reserved (used by Scope=Global). Shouldn't be set via
+                // Env Region Ctrl — log and ignore.
+                XPLMDebugString("xplanecigi: Env Region Ctrl with region_id=0 — ignoring\n");
+                break;
+            }
+
+            if (region_state == 2) {
+                // Destroyed — remove from pending map (Slice 3b will fire XPLMEraseWeatherAtLocation)
+                auto it = g_pending_patches.find(region_id);
+                if (it != g_pending_patches.end()) {
+                    g_pending_patches.erase(it);
+                    char msg[128];
+                    snprintf(msg, sizeof msg,
+                        "xplanecigi: Region %u destroyed (pending erase)\n", region_id);
+                    XPLMDebugString(msg);
+                }
+            } else {
+                // Active (or Inactive — treat Inactive as Active for now; cigi_bridge
+                // currently emits only Active or Destroyed).
+                PendingPatch & p = g_pending_patches[region_id];
+                p.region_id = region_id;
+                p.region_state = region_state;
+                p.lat_deg = lat;
+                p.lon_deg = lon;
+                p.size_x_m = size_x;
+                p.size_y_m = size_y;
+                p.corner_radius_m = radius;
+                p.rotation_deg = rotation;
+                p.transition_perimeter_m = trans_perim;
+                p.dirty = true;
+
+                char msg[192];
+                snprintf(msg, sizeof msg,
+                    "xplanecigi: Region %u state=%u lat=%.6f lon=%.6f radius=%.1fm transition=%.1fm\n",
+                    region_id, region_state, lat, lon, radius, trans_perim);
+                XPLMDebugString(msg);
+            }
+        }
+        break;
+
     // ── Weather Control (host → IG) ──────────────────────────────────────────
     // Packet ID = 0x0C, Size = 56 bytes
+    //
+    // Byte 7 bits[1:0] = Scope: 0=Global, 1=Regional, 2=Entity.
+    // Scope=Regional routes into g_pending_patches (Slice 3a); Scope=Global
+    // falls through to the pre-existing pending_wx path (unchanged behavior).
     case 0x0C:
         if (packet_size >= 56) {
             uint8_t layer_id = pkt[4];
             uint8_t flags1   = pkt[6];
             uint8_t flags2   = pkt[7];
+            uint8_t scope    = flags2 & 0x03;
             bool weather_enable      = (flags1 & 0x01) != 0;
+            bool scud_enable         = (flags1 & 0x02) != 0;
             uint8_t cloud_type_cigi  = (flags1 >> 4) & 0x0F;
             uint8_t severity         = (flags2 >> 2) & 0x07;
 
@@ -560,53 +697,160 @@ static void process_packet(const uint8_t * pkt, int len)
             float v_wind_ms    = read_be_float(pkt + 40);
             float wind_dir     = read_be_float(pkt + 44);
 
-            if (layer_id >= 1 && layer_id <= 3) {
-                // Cloud layer — respect enable flag so host can disable a removed layer
-                int idx = layer_id - 1;
-                auto & slot = pending_wx.cloud[idx];
-                if (weather_enable) {
-                    float new_type = remap_cloud_type(cloud_type_cigi);
-                    float new_cov  = coverage_pct / 100.0f;
-                    float new_top  = base_elev_m + thickness_m;
-                    bool differs = !slot.valid
-                        || slot.type_xp  != new_type
-                        || slot.coverage != new_cov
-                        || slot.base_m   != base_elev_m
-                        || slot.top_m    != new_top;
-                    slot.type_xp  = new_type;
-                    slot.coverage = new_cov;
-                    slot.base_m   = base_elev_m;
-                    slot.top_m    = new_top;
-                    slot.valid    = true;
-                    if (differs) pending_wx.cloud_changed = true;
+            if (scope == 1 /* Regional */) {
+                // Slice 3a regional decoder — accumulate into g_pending_patches.
+                // Region ID is carried in bytes 2-3 when Scope=Regional.
+                uint16_t region_id = read_be16(pkt + 2);
+                if (region_id == 0) {
+                    XPLMDebugString("xplanecigi: Weather Ctrl Scope=Regional with region_id=0 — ignoring\n");
+                    break;
+                }
+
+                // cigi_bridge is supposed to emit Env Region Ctrl BEFORE any
+                // Weather Control referencing that region. If the region is not
+                // in g_pending_patches we still auto-create a stub — missing
+                // geometry will be filled in on the next datagram.
+                PendingPatch & p = g_pending_patches[region_id];
+                p.region_id = region_id;
+                p.dirty = true;
+
+                if (layer_id >= 1 && layer_id <= 3) {
+                    // Cloud layer slot
+                    PendingCloudLayer cl;
+                    cl.layer_id           = layer_id;
+                    cl.cloud_type         = cloud_type_cigi;
+                    cl.coverage_pct       = coverage_pct;
+                    cl.base_elevation_m   = base_elev_m;
+                    cl.thickness_m        = thickness_m;
+                    cl.transition_band_m  = read_be_float(pkt + 32);
+                    cl.scud_enable        = scud_enable;
+                    cl.scud_frequency_pct = read_be_float(pkt + 16);
+                    cl.weather_enable     = weather_enable;
+
+                    auto it = std::find_if(p.cloud_layers.begin(), p.cloud_layers.end(),
+                        [&](const PendingCloudLayer & x){ return x.layer_id == layer_id; });
+                    if (it != p.cloud_layers.end()) *it = cl; else p.cloud_layers.push_back(cl);
+
+                    char msg[192];
+                    snprintf(msg, sizeof msg,
+                        "xplanecigi: Region %u cloud layer %u type=%u cov=%.1f%% base=%.0fm thick=%.0fm en=%d\n",
+                        region_id, layer_id, cloud_type_cigi,
+                        cl.coverage_pct, cl.base_elevation_m, cl.thickness_m, weather_enable);
+                    XPLMDebugString(msg);
+                } else if (layer_id >= 10 && layer_id <= 12) {
+                    // Wind layer slot
+                    PendingWindLayer wl;
+                    wl.layer_id           = layer_id;
+                    wl.altitude_msl_m     = base_elev_m;
+                    wl.wind_speed_ms      = h_wind_ms;
+                    wl.vertical_wind_ms   = v_wind_ms;
+                    wl.wind_direction_deg = wind_dir;
+                    wl.weather_enable     = weather_enable;
+
+                    auto it = std::find_if(p.wind_layers.begin(), p.wind_layers.end(),
+                        [&](const PendingWindLayer & x){ return x.layer_id == layer_id; });
+                    if (it != p.wind_layers.end()) *it = wl; else p.wind_layers.push_back(wl);
+
+                    char msg[192];
+                    snprintf(msg, sizeof msg,
+                        "xplanecigi: Region %u wind layer %u alt=%.0fm spd=%.1fm/s dir=%.0fdeg en=%d\n",
+                        region_id, layer_id, wl.altitude_msl_m,
+                        wl.wind_speed_ms, wl.wind_direction_deg, weather_enable);
+                    XPLMDebugString(msg);
+                } else if (layer_id == 20 || layer_id == 21) {
+                    // Scalar override: vis+temp (20) or precipitation (21)
+                    PendingScalarOverride ov;
+                    ov.layer_id           = layer_id;
+                    ov.temperature_c      = read_be_float(pkt +  8);
+                    ov.visibility_m       = read_be_float(pkt + 12);
+                    // precipitation rate/type not currently carried in Weather Control
+                    // by the encoder — left NaN/0 for now. Slice 3b may expand once the
+                    // encoder's precipitation path is finalized.
+                    ov.precipitation_rate = std::nanf("");
+                    ov.precipitation_type = 0;
+                    ov.weather_enable     = weather_enable;
+
+                    auto it = std::find_if(p.scalar_overrides.begin(), p.scalar_overrides.end(),
+                        [&](const PendingScalarOverride & x){ return x.layer_id == layer_id; });
+                    if (it != p.scalar_overrides.end()) *it = ov; else p.scalar_overrides.push_back(ov);
+
+                    char msg[192];
+                    snprintf(msg, sizeof msg,
+                        "xplanecigi: Region %u scalar override layer %u vis=%.0fm temp=%.1fC en=%d\n",
+                        region_id, layer_id, ov.visibility_m, ov.temperature_c, weather_enable);
+                    XPLMDebugString(msg);
                 } else {
-                    if (slot.valid) pending_wx.cloud_changed = true;
-                    slot.type_xp  = 0.0f;
-                    slot.coverage = 0.0f;
-                    slot.base_m   = 0.0f;
-                    slot.top_m    = 0.0f;
-                    slot.valid    = false;
+                    char msg[128];
+                    snprintf(msg, sizeof msg,
+                        "xplanecigi: Region %u unknown layer_id %u — ignoring\n",
+                        region_id, layer_id);
+                    XPLMDebugString(msg);
                 }
-            } else if (!weather_enable) {
-                break;  // precipitation/wind layers — legacy behavior
-            } else if (layer_id == 4 || layer_id == 5) {
-                // Precipitation
-                float new_rain = coverage_pct / 100.0f;
-                if (new_rain != pending_wx.rain_pct) pending_wx.cloud_changed = true;
-                pending_wx.rain_pct = new_rain;
-            } else if (layer_id >= 10) {
-                // Wind-only layer
-                int wind_idx = layer_id - 10;
-                if (wind_idx < 13) {
-                    pending_wx.wind[wind_idx].alt_m    = base_elev_m;
-                    pending_wx.wind[wind_idx].speed_ms  = h_wind_ms;
-                    pending_wx.wind[wind_idx].dir_deg   = wind_dir;
-                    pending_wx.wind[wind_idx].vert_ms   = v_wind_ms;
-                    pending_wx.wind[wind_idx].turb      = severity / 5.0f;
-                    pending_wx.wind[wind_idx].valid     = true;
-                }
+                break;
             }
-            pending_wx.dirty = true;
+
+            // Scope=Global (0): legacy behavior — write into global pending_wx state
+            // via sim/weather/region/* datarefs. Existed before Slice 3a when the plugin
+            // didn't distinguish scope; retained unchanged for backward compatibility
+            // with the existing global weather path.
+            if (scope == 0 /* Global */) {
+                if (layer_id >= 1 && layer_id <= 3) {
+                    // Cloud layer — respect enable flag so host can disable a removed layer
+                    int idx = layer_id - 1;
+                    auto & slot = pending_wx.cloud[idx];
+                    if (weather_enable) {
+                        float new_type = remap_cloud_type(cloud_type_cigi);
+                        float new_cov  = coverage_pct / 100.0f;
+                        float new_top  = base_elev_m + thickness_m;
+                        bool differs = !slot.valid
+                            || slot.type_xp  != new_type
+                            || slot.coverage != new_cov
+                            || slot.base_m   != base_elev_m
+                            || slot.top_m    != new_top;
+                        slot.type_xp  = new_type;
+                        slot.coverage = new_cov;
+                        slot.base_m   = base_elev_m;
+                        slot.top_m    = new_top;
+                        slot.valid    = true;
+                        if (differs) pending_wx.cloud_changed = true;
+                    } else {
+                        if (slot.valid) pending_wx.cloud_changed = true;
+                        slot.type_xp  = 0.0f;
+                        slot.coverage = 0.0f;
+                        slot.base_m   = 0.0f;
+                        slot.top_m    = 0.0f;
+                        slot.valid    = false;
+                    }
+                } else if (!weather_enable) {
+                    break;  // precipitation/wind layers — legacy behavior
+                } else if (layer_id == 4 || layer_id == 5) {
+                    // Precipitation
+                    float new_rain = coverage_pct / 100.0f;
+                    if (new_rain != pending_wx.rain_pct) pending_wx.cloud_changed = true;
+                    pending_wx.rain_pct = new_rain;
+                } else if (layer_id >= 10) {
+                    // Wind-only layer
+                    int wind_idx = layer_id - 10;
+                    if (wind_idx < 13) {
+                        pending_wx.wind[wind_idx].alt_m     = base_elev_m;
+                        pending_wx.wind[wind_idx].speed_ms  = h_wind_ms;
+                        pending_wx.wind[wind_idx].dir_deg   = wind_dir;
+                        pending_wx.wind[wind_idx].vert_ms   = v_wind_ms;
+                        pending_wx.wind[wind_idx].turb      = severity / 5.0f;
+                        pending_wx.wind[wind_idx].valid     = true;
+                    }
+                }
+                pending_wx.dirty = true;
+                break;
+            }
+
+            // Scope 2 (Entity) or unknown — not used by this framework
+            {
+                char msg[96];
+                snprintf(msg, sizeof msg,
+                    "xplanecigi: Weather Ctrl unexpected scope=%u — ignoring\n", scope);
+                XPLMDebugString(msg);
+            }
         }
         break;
 
