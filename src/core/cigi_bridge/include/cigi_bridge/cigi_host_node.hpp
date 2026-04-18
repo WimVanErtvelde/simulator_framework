@@ -10,6 +10,7 @@
 #include <sim_msgs/msg/weather_state.hpp>
 
 #include "cigi_bridge/hat_request_tracker.hpp"
+#include "cigi_bridge/weather_sync.hpp"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -119,6 +120,9 @@ private:
 
     // ── HAT tracking ──────────────────────────────────────────────────────
     HatRequestTracker hat_tracker_;
+
+    // ── Weather sync (regional patch diff tracking) ──────────────────────
+    cigi_bridge::WeatherSync weather_sync_;
 
     // ── Weather state ────────────────────────────────────────────────────
     sim_msgs::msg::WeatherState latest_weather_;

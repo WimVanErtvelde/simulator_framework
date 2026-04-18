@@ -18,6 +18,7 @@ add_executable(cigi_bridge_node
   src/cigi_host_node.cpp
   src/hat_request_tracker.cpp
   src/weather_encoder.cpp
+  src/weather_sync.cpp
 )
 
 target_include_directories(cigi_bridge_node PRIVATE
@@ -95,17 +96,21 @@ endif()
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+
   ament_add_gtest(test_weather_encoder
     test/test_weather_encoder.cpp
     src/weather_encoder.cpp
   )
-  target_include_directories(test_weather_encoder PRIVATE
-    include
+  target_include_directories(test_weather_encoder PRIVATE include)
+  ament_target_dependencies(test_weather_encoder rclcpp sim_msgs)
+
+  ament_add_gtest(test_weather_sync
+    test/test_weather_sync.cpp
+    src/weather_sync.cpp
+    src/weather_encoder.cpp
   )
-  ament_target_dependencies(test_weather_encoder
-    rclcpp
-    sim_msgs
-  )
+  target_include_directories(test_weather_sync PRIVATE include)
+  ament_target_dependencies(test_weather_sync rclcpp sim_msgs)
 endif()
 
 ament_package()

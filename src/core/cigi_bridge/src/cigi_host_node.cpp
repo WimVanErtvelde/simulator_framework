@@ -140,10 +140,17 @@ CallbackReturn CigiHostNode::on_activate(const rclcpp_lifecycle::State &)
             bool prev = reposition_active_;
             reposition_active_ = msg->reposition_active;
             if (reposition_active_ && !prev) {
-                sent_reset_ = false;       // arm: send Reset on next frame
-                hot_frame_counter_ = 0;    // fire HOT immediately on first reposition frame
-                hat_tracker_.clear();      // discard in-flight HOT from old position
+                sent_reset_ = false;            // arm: send Reset on next frame
+                hot_frame_counter_ = 0;         // fire HOT immediately on first reposition frame
+                hat_tracker_.clear();           // discard in-flight HOT from old position
+                weather_sync_.flush_on_reposition();  // IG will be reset — forget sent patches
                 RCLCPP_INFO(get_logger(), "Reposition started — will send IG Reset");
+            }
+            if (!reposition_active_ && prev) {
+                // Reposition complete — force re-emission of current weather state.
+                // Global weather + patches will be sent as-new on the next frame.
+                weather_dirty_ = true;
+                RCLCPP_INFO(get_logger(), "Reposition complete — weather will re-emit");
             }
         });
 
@@ -441,9 +448,13 @@ void CigiHostNode::send_cigi_frame()
         RCLCPP_INFO(get_logger(), "Sending IG Mode = Reset (one frame)");
     }
 
-    // Build a single UDP datagram: IG Control + Entity Control + optional Weather
-    // Max: 24 (IG) + 48 (Entity) + 32 (Atmo) + 56*17 (3 cloud + 1 precip + 13 wind) = 1056
-    uint8_t datagram[1088];
+    // Build a single UDP datagram: IG Control + Entity Control + optional Weather.
+    // Weather payload may include global (Atmo + global Weather Control) plus
+    // regional patches. Sized at 4096 bytes to fit:
+    //   24 (IG) + 48 (Entity) + 32 (Atmo) + 56*17 (global weather) +
+    //   5*(48 + 56*8) = 2480 (up to 5 patches with 3 cloud + 3 wind + 2 override)
+    //   = 3640 bytes worst case. 4096 provides headroom.
+    uint8_t datagram[4096];
     size_t offset = 0;
 
     encode_ig_ctrl(datagram, frame_counter_, timestamp_s, ig_mode);
@@ -455,11 +466,18 @@ void CigiHostNode::send_cigi_frame()
                        lat_deg, lon_deg, alt_m);
     offset += CIGI_ENTITY_CTRL_SIZE;
 
-    // Append weather packets only when weather has changed
+    // Append weather packets only when weather has changed.
+    // Order: global weather (Atmosphere Control + global Weather Control) first,
+    //        then regional weather (patches via WeatherSync diff logic).
     if (weather_dirty_) {
         size_t weather_bytes = cigi_bridge::encode_weather_packets(
             datagram + offset, sizeof(datagram) - offset, latest_weather_);
         offset += weather_bytes;
+
+        size_t patch_bytes = weather_sync_.process_update(
+            latest_weather_, datagram + offset, sizeof(datagram) - offset);
+        offset += patch_bytes;
+
         weather_dirty_ = false;
     }
 
