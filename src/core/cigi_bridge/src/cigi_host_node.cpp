@@ -174,20 +174,6 @@ CallbackReturn CigiHostNode::on_activate(const rclcpp_lifecycle::State &)
             heartbeat_pub_->publish(msg);
         });
 
-    weather_reassert_timer_ = create_wall_timer(
-        std::chrono::seconds(10),
-        [this]() {
-            // Periodic UDP-loss compensation: re-emit Active for all tracked patches.
-            // Sized to fit a worst-case full patch set; same 4096-byte budget as
-            // the main datagram buffer.
-            uint8_t buf[4096];
-            size_t n = weather_sync_.emit_reassertion(buf, sizeof buf);
-            if (n > 0 && send_fd_ >= 0) {
-                sendto(send_fd_, buf, n, 0,
-                       reinterpret_cast<struct sockaddr *>(&ig_addr_), sizeof(ig_addr_));
-            }
-        });
-
     startup_reset_pending_ = true;
 
     RCLCPP_INFO(get_logger(), "cigi_bridge activated");
@@ -200,7 +186,6 @@ CallbackReturn CigiHostNode::on_deactivate(const rclcpp_lifecycle::State &)
 {
     send_timer_.reset();
     heartbeat_timer_.reset();
-    weather_reassert_timer_.reset();
     fms_sub_.reset();
     state_sub_.reset();
     weather_sub_.reset();

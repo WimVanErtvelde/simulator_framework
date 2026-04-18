@@ -17,10 +17,6 @@ static constexpr uint8_t SCALAR_LAYER_ID_VIS_TEMP = 20;
 static constexpr uint8_t SCALAR_LAYER_ID_PRECIP   = 21;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Emit Region(Active) + all layers of a single patch into buffer.
-// All-or-nothing: returns 0 if full patch doesn't fit in capacity.
-// ─────────────────────────────────────────────────────────────────────────────
-// ─────────────────────────────────────────────────────────────────────────────
 // Field-by-field equality for WeatherPatch content. Used to short-circuit
 // re-emit on process_update when incoming patch matches sent state.
 //
@@ -81,6 +77,10 @@ static bool patch_content_equal(
     return true;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Emit Region(Active) + all layers of a single patch into buffer.
+// All-or-nothing: returns 0 if full patch doesn't fit in capacity.
+// ─────────────────────────────────────────────────────────────────────────────
 size_t WeatherSync::emit_patch_active(
     const sim_msgs::msg::WeatherPatch & patch,
     uint8_t * buffer, size_t capacity) const
@@ -166,35 +166,6 @@ size_t WeatherSync::emit_patch_destroyed(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Drain destroy_retries_: emit one Region(Destroyed) per entry with remaining>0,
-// decrement, prune zeroed entries. Returns bytes written.
-// ─────────────────────────────────────────────────────────────────────────────
-size_t WeatherSync::emit_pending_destroys(uint8_t * buffer, size_t capacity)
-{
-    size_t offset = 0;
-    auto it = destroy_retries_.begin();
-    while (it != destroy_retries_.end()) {
-        if (it->remaining == 0) {
-            it = destroy_retries_.erase(it);
-            continue;
-        }
-        size_t n = emit_patch_destroyed(it->patch_id, buffer + offset, capacity - offset);
-        if (n == 0) {
-            // Buffer full — leave remainder for next call
-            break;
-        }
-        offset += n;
-        it->remaining -= 1;
-        if (it->remaining == 0) {
-            it = destroy_retries_.erase(it);
-        } else {
-            ++it;
-        }
-    }
-    return offset;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 size_t WeatherSync::process_update(
     const sim_msgs::msg::WeatherState & weather,
     uint8_t * buffer,
@@ -218,23 +189,18 @@ size_t WeatherSync::process_update(
         current_by_id[weather.patches[i].patch_id] = &weather.patches[i];
     }
 
-    // 1. Drain pending destroys from PREVIOUS calls (runs before new removals
-    //    so we don't consume retries we're about to queue).
-    offset += emit_pending_destroys(buffer + offset, capacity - offset);
-
-    // 2. Find removals — sent patches not in current set → emit initial
-    //    destroy now, queue remaining retries for subsequent calls.
+    // 1. Find removals — sent patches not in current set → emit Destroyed once
     for (auto it = sent_patches_.begin(); it != sent_patches_.end(); ) {
         if (current_by_id.find(it->first) == current_by_id.end()) {
             size_t n = emit_patch_destroyed(it->first, buffer + offset, capacity - offset);
             if (n > 0) {
                 offset += n;
-                if (DESTROY_RETRY_COUNT > 1) {
-                    destroy_retries_.push_back({it->first, DESTROY_RETRY_COUNT - 1});
-                }
             } else {
-                destroy_retries_.push_back({it->first, DESTROY_RETRY_COUNT});
-                log("WeatherSync: buffer full during initial destroy; queued full retry");
+                std::ostringstream oss;
+                oss << "WeatherSync: buffer full during destroy of patch_id=" << it->first
+                    << " — Destroy not emitted. Zombie region possible until next"
+                       " /world/weather message that triggers a re-diff.";
+                log(oss.str());
             }
             it = sent_patches_.erase(it);
         } else {
@@ -242,15 +208,13 @@ size_t WeatherSync::process_update(
         }
     }
 
-    // 3. Emit Active + layers for every current patch; update sent_patches_
+    // 2. Emit Active + layers for every current patch whose content changed.
+    //    Short-circuit: identical-content patches don't re-emit (Slice 2c.1).
     for (size_t i = 0; i < n_current; ++i) {
         const auto & p = weather.patches[i];
 
-        // Short-circuit: if an identical copy was already sent, skip emit.
-        // Still record the patch in sent_patches_ so removal diffs work.
         auto sent_it = sent_patches_.find(p.patch_id);
         if (sent_it != sent_patches_.end() && patch_content_equal(p, sent_it->second)) {
-            // No change on the wire; sent_patches_ already reflects this patch.
             continue;
         }
 
@@ -258,7 +222,7 @@ size_t WeatherSync::process_update(
         if (n == 0) {
             std::ostringstream oss;
             oss << "WeatherSync: buffer too small for patch_id="
-                << p.patch_id << " — skipping (will retry on next update)";
+                << p.patch_id << " — skipping (will retry on next /world/weather)";
             log(oss.str());
             continue;
         }
@@ -270,41 +234,10 @@ size_t WeatherSync::process_update(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-size_t WeatherSync::emit_reassertion(
-    uint8_t * buffer,
-    size_t capacity)
-{
-    if (buffer == nullptr || capacity == 0) return 0;
-
-    size_t offset = 0;
-
-    // 1. Drain pending destroys (self-heal dropped Destroy packets)
-    offset += emit_pending_destroys(buffer + offset, capacity - offset);
-
-    // 2. Re-emit Active + layers for every tracked patch.
-    //    Unconditional (no short-circuit like process_update) — the whole
-    //    point is to resend in case the IG missed a prior datagram.
-    for (const auto & kv : sent_patches_) {
-        size_t n = emit_patch_active(kv.second, buffer + offset, capacity - offset);
-        if (n == 0) {
-            std::ostringstream oss;
-            oss << "WeatherSync: buffer too small during re-assertion for patch_id="
-                << kv.first;
-            log(oss.str());
-            break;
-        }
-        offset += n;
-    }
-
-    return offset;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 void WeatherSync::flush_on_reposition()
 {
     sent_patches_.clear();
-    destroy_retries_.clear();
-    log("WeatherSync: sent_patches_ and destroy_retries_ cleared on reposition");
+    log("WeatherSync: sent_patches_ cleared on reposition");
 }
 
 }  // namespace cigi_bridge

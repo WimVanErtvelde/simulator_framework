@@ -141,6 +141,5 @@ private:
 
     rclcpp::TimerBase::SharedPtr send_timer_;
     rclcpp::TimerBase::SharedPtr heartbeat_timer_;
-    rclcpp::TimerBase::SharedPtr weather_reassert_timer_;
     rclcpp::TimerBase::SharedPtr auto_start_timer_;
 };

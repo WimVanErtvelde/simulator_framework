@@ -3075,3 +3075,16 @@ Corrects the WeatherPatch.msg shape established in the 2026-04-18 "WeatherPatch.
 - AFFECTS: sim_msgs/WeatherPatch.msg (this slice), ios_backend patch handlers (Slice 4), ios/frontend WeatherPanel sliders (Slice 5)
 
 - UNCHANGED: CIGI wire protocol (Environmental Region Control + Weather Control Scope=Regional) carries no ground elevation field — plugin probes terrain at the patch lat/lon. cigi_bridge weather encoder and WeatherSync diff logic ignore ground_elevation_m. xplanecigi plugin ignores the field even though it receives the full WeatherPatch via /world/weather routing (not via CIGI — ground_elevation_m is a IOS-display-only concept).
+
+## 2026-04-18 — Claude Chat (Weather Step 10 — Slice 2c.2: re-assertion rip-out)
+
+Reverts the UDP-loss compensation mechanisms added in Slice 2c. Event-driven WeatherSync only.
+
+- DECIDED: **10-second periodic re-assertion REMOVED from WeatherSync.** On a dedicated Host↔IG LAN, UDP packet loss is negligible (<0.01% measured). Re-assertion's practical cost — zombie patches after publisher shutdown, sample stacking in X-Plane weather blend, visible cloud flicker per tick, two-way test assertion complexity — outweighed its theoretical reliability benefit.
+- DECIDED: **Destroy-packet retry (3× over ~1s) REMOVED.** Same reasoning. One Destroy packet per removal. If a Destroy is ever dropped (statistically rare), the next /world/weather message that triggers a content diff will re-emit correctly, because sent_patches_ tracks state deterministically.
+- KEPT: **startup_reset_pending_ flag on cigi_bridge activation.** Sends IG Mode=Reset once at startup to clear any stale X-Plane weather from previous sessions. Not re-assertion; it's initialization hygiene.
+- KEPT: **flush_on_reposition() clearing sent_patches_.** Reposition emits IG Mode=Reset, plugin erases all applied patches. WeatherSync must clear sent_patches_ to match.
+- KEPT: **Slice 2c.1 content-hash short-circuit.** Unchanged patches don't re-emit on repeated publishes.
+- REASON: Observed in testing: publisher shutdown left zombie patches alive for up to 10s, and re-assertion ticks caused sample stacking that produced visible cloud density buildup. The failure modes introduced by re-assertion were worse than the failure mode it was meant to prevent. On LAN, single-send is reliable enough.
+- AFFECTS: WeatherSync class (API narrower), cigi_host_node (weather_reassert_timer_ removed), test_weather_sync.cpp (7 tests removed, 1 test simplified)
+- UNCHANGED: CIGI wire protocol, plugin code, WeatherState.msg, WeatherPatch.msg, any other package
