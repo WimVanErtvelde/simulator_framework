@@ -50,6 +50,11 @@ uint8   turbulence_model         # 0=None, 1=MIL-F-8785C, 2=MIL-HDBK-1797A, 3=ES
 string  station_icao              # ICAO code (e.g., "EBBR"), empty = not set
 float64 station_elevation_m       # station elevation MSL (m), from airport DB
 
+# ── Localized weather patches (maps to CIGI 0x0B + 0x0C Scope=Regional) ──
+# Each patch = one Environmental Region + N Weather Control Scope=Regional
+# packets. Empty array = global weather only. See WeatherPatch.msg.
+sim_msgs/WeatherPatch[] patches
+
 # ── Microburst hazards (maps to CIGI user-defined 0xCA) ──────────────────
 # Dynamic array. Empty = no microbursts.
 sim_msgs/MicroburstHazard[] microbursts

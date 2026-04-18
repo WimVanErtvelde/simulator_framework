@@ -49,6 +49,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/TerrainSource.msg"
   "msg/WeatherCloudLayer.msg"
   "msg/WeatherWindLayer.msg"
+  "msg/WeatherPatch.msg"
   "msg/HotRequest.msg"
   "msg/PayloadCommand.msg"
   "msg/Runway.msg"
