@@ -48,11 +48,11 @@ from sim_msgs.msg import (FlightModelState, FuelState, SimState, SimCommand, Pan
                           AirDataState, PayloadCommand,
                           ArbitrationState, GearState,
                           AtmosphereState, WeatherState, WeatherWindLayer,
-                          WeatherCloudLayer, MicroburstHazard)
+                          WeatherCloudLayer, MicroburstHazard, WeatherPatch)
 from std_msgs.msg import String
 from lifecycle_msgs.srv import ChangeState
 from lifecycle_msgs.msg import Transition
-from sim_msgs.srv import SearchAirports, GetRunways, SearchNavaids
+from sim_msgs.srv import SearchAirports, GetRunways, SearchNavaids, GetTerrainElevation
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import JSONResponse
@@ -61,6 +61,142 @@ import uvicorn
 from .topic_forwarder import TopicForwarder
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Training-plausible bounds for weather authoring. Frontend sliders and
+# backend validation share this table. Any field outside these ranges is
+# rejected with a descriptive error returned to the WS client. CIGI protocol
+# limits are wider than these; we clamp to instructor-realistic ranges.
+#
+# Units listed are WS-message units (what the frontend sends), not wire units.
+# Conversion to wire units (K, Pa, m/s, m) happens inside publish_weather().
+# ─────────────────────────────────────────────────────────────────────────────
+WEATHER_BOUNDS = {
+    # Global atmosphere
+    'temperature_c':       (-100.0,     60.0),
+    'pressure_hpa':        ( 880.0,   1075.0),
+    'visibility_m':        (   0.0, 160000.0),
+    'humidity_pct':        (   0,       100),
+
+    # Wind (per layer)
+    'wind_altitude_ft':    (   0.0,  45000.0),
+    'wind_speed_kt':       (   0.0,    100.0),
+    'wind_direction_deg':  (   0.0,    359.9),
+    'wind_vertical_ms':    ( -10.0,     10.0),
+    'wind_shear_kt':       (   0.0,     50.0),
+    'turbulence':          (   0.0,     10.0),
+
+    # Clouds (per layer) — altitudes in ft MSL
+    'cloud_base_ft':       (   0.0,  45000.0),
+    'cloud_top_ft':        (   0.0,  50000.0),
+    'cloud_coverage_pct':  (   0.0,    100.0),
+    'scud_frequency_pct':  (   0.0,    100.0),
+    'cloud_type':          (   0,         3),
+
+    # Precipitation
+    'precipitation_rate':  (   0.0,      1.0),
+    'precipitation_type':  (   0,         3),
+
+    # Patch geometry
+    'radius_nm':           (   1.0,     50.0),
+
+    # Runway
+    'runway_friction':     (   0,         2),
+    'runway_conditions':   (   0,         1),
+
+    # Wave
+    'wave_height_m':       (   0.0,     10.0),
+    'wave_direction_deg':  (   0.0,    359.9),
+
+    # Microburst
+    'microburst_intensity_ms':  ( 0.0,    50.0),
+    'microburst_core_radius_m': ( 100.0, 2000.0),
+    'microburst_shaft_alt_m':   ( 100.0, 5000.0),
+    'microburst_lifecycle':     ( 0.0,      1.0),
+}
+
+
+def _validate_in_range(field_name: str, value, bounds_key: str):
+    """Raise ValueError if value is outside WEATHER_BOUNDS[bounds_key].
+    Returns value on success. None means "not provided" — skip validation.
+    """
+    lo, hi = WEATHER_BOUNDS[bounds_key]
+    if value is None:
+        return value
+    if not (lo <= value <= hi):
+        raise ValueError(
+            f"{field_name}={value} out of range [{lo}, {hi}] "
+            f"(bounds key: {bounds_key})"
+        )
+    return value
+
+
+def _validate_patch(data: dict) -> dict:
+    """Validate a WeatherPatch payload dict. Raises ValueError on any violation.
+    Returns the (possibly normalized) dict on success.
+
+    Enforces:
+      - patch_type in {"airport", "custom"}
+      - icao required for airport, empty string otherwise
+      - lat/lon required for custom, within [-90, 90] / [-180, 180]
+      - radius_m within bounds (converted to nm for check)
+      - all cloud/wind/override fields within bounds
+    """
+    patch_type = data.get('patch_type', '')
+    if patch_type not in ('airport', 'custom'):
+        raise ValueError(f"patch_type must be 'airport' or 'custom', got {patch_type!r}")
+
+    if patch_type == 'airport':
+        icao = (data.get('icao') or '').strip().upper()
+        if not icao or len(icao) > 4 or not icao.isalnum():
+            raise ValueError(f"airport patch requires valid ICAO (up to 4 chars), got {icao!r}")
+        data['icao'] = icao
+    else:  # custom
+        lat = data.get('lat_deg')
+        lon = data.get('lon_deg')
+        if lat is None or lon is None:
+            raise ValueError("custom patch requires lat_deg and lon_deg")
+        if not (-90.0 <= float(lat) <= 90.0):
+            raise ValueError(f"lat_deg out of range: {lat}")
+        if not (-180.0 <= float(lon) <= 180.0):
+            raise ValueError(f"lon_deg out of range: {lon}")
+
+    radius_m = data.get('radius_m')
+    if radius_m is not None:
+        radius_nm = float(radius_m) / 1852.0
+        _validate_in_range('radius_m->nm', radius_nm, 'radius_nm')
+
+    for i, cl in enumerate(data.get('cloud_layers', [])):
+        _validate_in_range(f"cloud[{i}].cloud_type",   cl.get('cloud_type'),   'cloud_type')
+        _validate_in_range(f"cloud[{i}].coverage_pct", cl.get('coverage_pct'), 'cloud_coverage_pct')
+        base_m = cl.get('base_elevation_m')
+        if base_m is not None:
+            _validate_in_range(f"cloud[{i}].base_ft", base_m * 3.28084, 'cloud_base_ft')
+        thick_m = cl.get('thickness_m')
+        if base_m is not None and thick_m is not None:
+            _validate_in_range(f"cloud[{i}].top_ft", (base_m + thick_m) * 3.28084, 'cloud_top_ft')
+        _validate_in_range(f"cloud[{i}].scud_freq", cl.get('scud_frequency_pct'), 'scud_frequency_pct')
+
+    for i, wl in enumerate(data.get('wind_layers', [])):
+        alt_m = wl.get('altitude_msl_m')
+        if alt_m is not None:
+            _validate_in_range(f"wind[{i}].alt_ft", alt_m * 3.28084, 'wind_altitude_ft')
+        spd_ms = wl.get('wind_speed_ms')
+        if spd_ms is not None:
+            _validate_in_range(f"wind[{i}].speed_kt", spd_ms / 0.51444, 'wind_speed_kt')
+        _validate_in_range(f"wind[{i}].direction", wl.get('wind_direction_deg'), 'wind_direction_deg')
+        _validate_in_range(f"wind[{i}].vertical", wl.get('vertical_wind_ms'), 'wind_vertical_ms')
+
+    if data.get('override_visibility'):
+        _validate_in_range('visibility_m', data.get('visibility_m'), 'visibility_m')
+    if data.get('override_temperature'):
+        temp_k = data.get('temperature_k')
+        if temp_k is not None:
+            _validate_in_range('temperature_c', float(temp_k) - 273.15, 'temperature_c')
+    if data.get('override_precipitation'):
+        _validate_in_range('precip_rate', data.get('precipitation_rate'), 'precipitation_rate')
+        _validate_in_range('precip_type', data.get('precipitation_type'), 'precipitation_type')
+
+    return data
 
 
 
@@ -90,6 +226,11 @@ class IosBackendNode(Node):
         self._mb_next_id = 1
         self._last_weather_data = {}    # cache last set_weather data for republish
         self._weather_station = {}      # {icao, elevation_m, lat_deg, lon_deg}
+
+        # WeatherPatch lifecycle (Slice 4). Patches are dicts, patch_id is
+        # monotonic uint16 owned by this process, no reuse within a session.
+        self._active_patches = []
+        self._next_patch_id = 1
 
         self._flight_model_sub = self.create_subscription(
             FlightModelState, '/aircraft/fdm/state', self._on_flight_model_state, 10)
@@ -184,6 +325,8 @@ class IosBackendNode(Node):
             GetRunways, '/navaid_sim/get_runways')
         self._search_navaids_cli = self.create_client(
             SearchNavaids, '/navaid_sim/search_navaids')
+        self._terrain_elevation_cli = self.create_client(
+            GetTerrainElevation, '/navaid_sim/get_terrain_elevation')
 
         # Own heartbeat at 1 Hz
         self._heartbeat_timer = self.create_timer(1.0, self._publish_heartbeat)
@@ -854,6 +997,47 @@ class IosBackendNode(Node):
             mb_msg.activation_time_sec = float(mb['activation_time_sec'])
             msg.microbursts.append(mb_msg)
 
+        # Append active patches (Slice 4 — regional weather)
+        for p in self._active_patches:
+            wp = WeatherPatch()
+            wp.patch_id              = int(p['patch_id'])
+            wp.patch_type            = p['patch_type']
+            wp.label                 = p['label']
+            wp.icao                  = p['icao']
+            wp.lat_deg               = float(p['lat_deg'])
+            wp.lon_deg               = float(p['lon_deg'])
+            wp.radius_m              = float(p['radius_m'])
+            wp.ground_elevation_m    = float(p['ground_elevation_m'])
+            for cl_data in p.get('cloud_layers', []):
+                cl = WeatherCloudLayer()
+                cl.cloud_type         = int(cl_data.get('cloud_type', 0))
+                cl.coverage_pct       = float(cl_data.get('coverage_pct', 0.0))
+                cl.base_elevation_m   = float(cl_data.get('base_elevation_m', 0.0))
+                cl.thickness_m        = float(cl_data.get('thickness_m', 300.0))
+                cl.transition_band_m  = float(cl_data.get('transition_band_m', 50.0))
+                cl.scud_enable        = bool(cl_data.get('scud_enable', False))
+                cl.scud_frequency_pct = float(cl_data.get('scud_frequency_pct', 0.0))
+                wp.cloud_layers.append(cl)
+            for wl_data in p.get('wind_layers', []):
+                wl = WeatherWindLayer()
+                wl.altitude_msl_m     = float(wl_data.get('altitude_msl_m', 0.0))
+                wl.wind_speed_ms      = float(wl_data.get('wind_speed_ms', 0.0))
+                wl.wind_direction_deg = float(wl_data.get('wind_direction_deg', 0.0))
+                wl.vertical_wind_ms   = float(wl_data.get('vertical_wind_ms', 0.0))
+                wl.gust_speed_ms      = float(wl_data.get('gust_speed_ms', 0.0))
+                wl.shear_direction_deg= float(wl_data.get('shear_direction_deg', 0.0))
+                wl.shear_speed_ms     = float(wl_data.get('shear_speed_ms', 0.0))
+                wl.turbulence_severity= float(wl_data.get('turbulence_severity', 0.0))
+                wp.wind_layers.append(wl)
+            wp.override_visibility    = bool(p['override_visibility'])
+            wp.visibility_m           = float(p['visibility_m'])
+            wp.override_temperature   = bool(p['override_temperature'])
+            wp.temperature_k          = float(p['temperature_k'])
+            wp.override_precipitation = bool(p['override_precipitation'])
+            wp.precipitation_rate     = float(p['precipitation_rate'])
+            wp.precipitation_type     = int(p['precipitation_type'])
+            msg.patches.append(wp)
+
         self._weather_pub.publish(msg)
         self.get_logger().info(
             f'Published WeatherState v2: station={msg.station_icao or "none"} '
@@ -1051,6 +1235,135 @@ class IosBackendNode(Node):
         # Republish weather with updated station
         if self._last_weather_data:
             self.publish_weather()
+
+    # ── WeatherPatch lifecycle (Slice 4) ─────────────────────────────────────
+    # Sync methods: receive pre-resolved ground_elevation_m from async WS
+    # handlers that look up airport ARP or SRTM terrain. These methods only
+    # mutate state + publish + broadcast; they do NOT spin rclpy or call
+    # services themselves. Validation is done by the caller via
+    # _validate_patch() before either method is invoked.
+
+    def add_patch(self, data: dict, ground_elevation_m: float) -> dict:
+        """Create a WeatherPatch with pre-resolved ground_elevation_m.
+
+        Allocates the next patch_id, appends to _active_patches, publishes
+        WeatherState, and broadcasts to WS clients. Caller is responsible
+        for validation. Raises ValueError if the 10-patch session cap is hit.
+        """
+        if len(self._active_patches) >= 10:
+            raise ValueError('max 10 patches per session')
+
+        ptype = data['patch_type']
+        patch = {
+            'patch_id':              self._next_patch_id,
+            'patch_type':            ptype,
+            'label':                 data.get('label', ''),
+            'icao':                  data.get('icao', ''),
+            'lat_deg':               float(data.get('lat_deg', 0.0)),
+            'lon_deg':               float(data.get('lon_deg', 0.0)),
+            'radius_m':              float(data.get('radius_m',
+                                          18520.0 if ptype == 'airport' else 5556.0)),
+            'ground_elevation_m':    float(ground_elevation_m),
+            'cloud_layers':          data.get('cloud_layers', []),
+            'wind_layers':           data.get('wind_layers', []),
+            'override_visibility':   bool(data.get('override_visibility', False)),
+            'visibility_m':          float(data.get('visibility_m', 10000.0)),
+            'override_temperature':  bool(data.get('override_temperature', False)),
+            'temperature_k':         float(data.get('temperature_k', 288.15)),
+            'override_precipitation':bool(data.get('override_precipitation', False)),
+            'precipitation_rate':    float(data.get('precipitation_rate', 0.0)),
+            'precipitation_type':    int(data.get('precipitation_type', 0)),
+        }
+        self._next_patch_id += 1
+        self._active_patches.append(patch)
+        self.get_logger().info(
+            f'[patch] added id={patch["patch_id"]} type={patch["patch_type"]} '
+            f'label={patch["label"]!r} ground_m={patch["ground_elevation_m"]:.1f}'
+        )
+        self.publish_weather()
+        self._broadcast_patches()
+        return patch
+
+    def update_patch(self, data: dict, new_ground_elevation_m: float = None) -> dict:
+        """Update an existing patch by patch_id. Only provided fields are
+        modified. If new_ground_elevation_m is not None, the caller decided
+        coords/ICAO changed and re-resolved; overwrite. Otherwise preserve
+        existing ground_elevation_m. Raises ValueError if patch not found.
+        """
+        patch_id = data.get('patch_id')
+        if patch_id is None:
+            raise ValueError('update_patch requires patch_id')
+
+        idx = None
+        for i, p in enumerate(self._active_patches):
+            if p['patch_id'] == patch_id:
+                idx = i
+                break
+        if idx is None:
+            raise ValueError(f'patch_id={patch_id} not found')
+
+        patch = self._active_patches[idx]
+        for k, v in data.items():
+            if k in ('patch_id', 'ground_elevation_m'):
+                continue
+            patch[k] = v
+        if new_ground_elevation_m is not None:
+            patch['ground_elevation_m'] = float(new_ground_elevation_m)
+
+        self.get_logger().info(f'[patch] updated id={patch_id}')
+        self.publish_weather()
+        self._broadcast_patches()
+        return patch
+
+    def remove_patch(self, patch_id: int) -> bool:
+        """Remove a patch by patch_id. Returns True on success, False if not
+        found. Idempotent — safe to call with unknown id.
+        """
+        for i, p in enumerate(self._active_patches):
+            if p['patch_id'] == patch_id:
+                self._active_patches.pop(i)
+                self.get_logger().info(f'[patch] removed id={patch_id}')
+                self.publish_weather()
+                self._broadcast_patches()
+                return True
+        return False
+
+    def clear_patches(self) -> None:
+        """Remove all patches."""
+        self._active_patches.clear()
+        self.get_logger().info('[patch] cleared all')
+        self.publish_weather()
+        self._broadcast_patches()
+
+    def _broadcast_patches(self):
+        """Send current patch list to all WS clients via _latest snapshot."""
+        data = {
+            'type': 'patches',
+            'patches': [
+                {
+                    'patch_id':              p['patch_id'],
+                    'patch_type':            p['patch_type'],
+                    'label':                 p['label'],
+                    'icao':                  p['icao'],
+                    'lat_deg':               p['lat_deg'],
+                    'lon_deg':               p['lon_deg'],
+                    'radius_m':              p['radius_m'],
+                    'ground_elevation_m':    p['ground_elevation_m'],
+                    'cloud_layers':          p['cloud_layers'],
+                    'wind_layers':           p['wind_layers'],
+                    'override_visibility':   p['override_visibility'],
+                    'visibility_m':          p['visibility_m'],
+                    'override_temperature':  p['override_temperature'],
+                    'temperature_k':         p['temperature_k'],
+                    'override_precipitation':p['override_precipitation'],
+                    'precipitation_rate':    p['precipitation_rate'],
+                    'precipitation_type':    p['precipitation_type'],
+                }
+                for p in self._active_patches
+            ],
+        }
+        with self._lock:
+            self._latest['patches'] = data
 
     def _load_failures_config(self, aircraft_id: str):
         """Load failure catalog from aircraft package failures.yaml."""
@@ -1753,6 +2066,193 @@ async def _handle_set_weather_station(ws, icao):
         await ws.send_text(json.dumps({'type': 'weather_station_error', 'error': str(e)}))
 
 
+async def _resolve_ground_elevation_async(data: dict):
+    """Returns (ground_elevation_m, lat_override_or_None, lon_override_or_None).
+
+    Airport patches: look up ARP via SearchAirports; returns canonical ARP
+    lat/lon so the caller can override user-supplied coords (airport DB is
+    authoritative for airport patches).
+
+    Custom patches: probe /navaid_sim/get_terrain_elevation at user-supplied
+    lat/lon; returns (elevation, None, None).
+
+    On service failure / not-found / timeout: returns (NaN, None, None) so
+    the patch still creates — frontend can show the patch with AGL readout
+    unavailable until the next re-resolve.
+    """
+    ptype = data.get('patch_type')
+
+    if ptype == 'airport':
+        icao = (data.get('icao') or '').strip().upper()
+        if not ros_node or not icao:
+            return (float('nan'), None, None)
+        cli = ros_node._search_airports_cli
+        if not cli.service_is_ready():
+            ros_node.get_logger().warn(
+                f'[patch] SearchAirports service not ready; '
+                f'ground_elevation for {icao} set to NaN'
+            )
+            return (float('nan'), None, None)
+        req = SearchAirports.Request()
+        req.query = icao
+        req.max_results = 1
+        future = cli.call_async(req)
+        deadline = time.monotonic() + 2.0
+        while not future.done() and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+        if not future.done():
+            ros_node.get_logger().warn(f'[patch] SearchAirports timeout for {icao}')
+            return (float('nan'), None, None)
+        result = future.result()
+        if not result or not result.airports:
+            ros_node.get_logger().warn(
+                f'[patch] ICAO {icao} not found; ground_elevation NaN'
+            )
+            return (float('nan'), None, None)
+        ap = result.airports[0]
+        return (float(ap.elevation_m), float(ap.arp_lat_deg), float(ap.arp_lon_deg))
+
+    else:  # custom
+        lat = data.get('lat_deg')
+        lon = data.get('lon_deg')
+        if lat is None or lon is None or not ros_node:
+            return (float('nan'), None, None)
+        cli = ros_node._terrain_elevation_cli
+        if not cli.service_is_ready():
+            ros_node.get_logger().warn(
+                '[patch] GetTerrainElevation service not ready; '
+                f'ground_elevation for ({float(lat):.4f},{float(lon):.4f}) NaN'
+            )
+            return (float('nan'), None, None)
+        req = GetTerrainElevation.Request()
+        req.latitude_deg = float(lat)
+        req.longitude_deg = float(lon)
+        future = cli.call_async(req)
+        deadline = time.monotonic() + 2.0
+        while not future.done() and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+        if not future.done():
+            ros_node.get_logger().warn(
+                f'[patch] terrain probe timeout at ({float(lat):.4f},{float(lon):.4f})'
+            )
+            return (float('nan'), None, None)
+        result = future.result()
+        if not result or not result.valid:
+            ros_node.get_logger().warn(
+                f'[patch] terrain probe miss at ({float(lat):.4f},{float(lon):.4f}); NaN'
+            )
+            return (float('nan'), None, None)
+        return (float(result.elevation_msl_m), None, None)
+
+
+async def _handle_add_patch(websocket, data: dict):
+    """Async WS handler: validate, resolve ground elevation, then commit
+    via sync ros_node.add_patch(). Mirrors _handle_set_weather_station pattern.
+    """
+    if ros_node is None:
+        return
+    try:
+        data = _validate_patch(dict(data))
+    except ValueError as e:
+        await websocket.send_text(json.dumps({
+            'type': 'patch_error', 'operation': 'add', 'error': str(e),
+        }))
+        return
+
+    ground_m, lat_override, lon_override = await _resolve_ground_elevation_async(data)
+    if lat_override is not None:
+        data['lat_deg'] = lat_override
+    if lon_override is not None:
+        data['lon_deg'] = lon_override
+
+    try:
+        patch = ros_node.add_patch(data, ground_m)
+        await websocket.send_text(json.dumps({
+            'type': 'patch_added',
+            'data': {
+                'patch_id': patch['patch_id'],
+                'ground_elevation_m': patch['ground_elevation_m'],
+            },
+        }))
+    except ValueError as e:
+        await websocket.send_text(json.dumps({
+            'type': 'patch_error', 'operation': 'add', 'error': str(e),
+        }))
+
+
+async def _handle_update_patch(websocket, data: dict):
+    """Async WS handler: validate the merged shape, re-resolve ground
+    elevation only if coords or ICAO changed, then commit via sync
+    ros_node.update_patch().
+    """
+    if ros_node is None:
+        return
+
+    patch_id = data.get('patch_id')
+    if patch_id is None:
+        await websocket.send_text(json.dumps({
+            'type': 'patch_error', 'operation': 'update',
+            'error': 'update_patch requires patch_id',
+        }))
+        return
+
+    existing = None
+    for p in ros_node._active_patches:
+        if p['patch_id'] == patch_id:
+            existing = p
+            break
+    if existing is None:
+        await websocket.send_text(json.dumps({
+            'type': 'patch_error', 'operation': 'update',
+            'error': f'patch_id={patch_id} not found',
+        }))
+        return
+
+    merged = dict(existing)
+    for k, v in data.items():
+        if k == 'patch_id':
+            continue
+        merged[k] = v
+
+    try:
+        _validate_patch(merged)
+    except ValueError as e:
+        await websocket.send_text(json.dumps({
+            'type': 'patch_error', 'operation': 'update', 'error': str(e),
+        }))
+        return
+
+    # Decide if ground elevation needs re-resolving
+    coords_changed = (
+        (existing['lat_deg'] != merged['lat_deg']) or
+        (existing['lon_deg'] != merged['lon_deg'])
+    )
+    icao_changed = existing.get('icao', '') != merged.get('icao', '')
+
+    new_ground_m = None
+    if (merged['patch_type'] == 'airport' and icao_changed) or \
+       (merged['patch_type'] == 'custom'  and coords_changed):
+        new_ground_m, lat_ov, lon_ov = await _resolve_ground_elevation_async(merged)
+        if lat_ov is not None:
+            merged['lat_deg'] = lat_ov
+        if lon_ov is not None:
+            merged['lon_deg'] = lon_ov
+
+    # Preserve patch_id for the sync call
+    merged['patch_id'] = patch_id
+
+    try:
+        patch = ros_node.update_patch(merged, new_ground_m)
+        await websocket.send_text(json.dumps({
+            'type': 'patch_updated',
+            'data': {'patch_id': patch['patch_id']},
+        }))
+    except ValueError as e:
+        await websocket.send_text(json.dumps({
+            'type': 'patch_error', 'operation': 'update', 'error': str(e),
+        }))
+
+
 async def _handle_get_runways(ws, icao):
     """Call GetRunways service and send results to client."""
     if not ros_node or not icao:
@@ -2053,6 +2553,28 @@ async def websocket_endpoint(websocket: WebSocket):
                 elif msg.get('type') == 'set_weather_station' and ros_node:
                     asyncio.create_task(
                         _handle_set_weather_station(websocket, msg.get('data', {}).get('icao', '')))
+
+                elif msg.get('type') == 'add_patch' and ros_node:
+                    asyncio.create_task(
+                        _handle_add_patch(websocket, msg.get('data', {})))
+
+                elif msg.get('type') == 'update_patch' and ros_node:
+                    asyncio.create_task(
+                        _handle_update_patch(websocket, msg.get('data', {})))
+
+                elif msg.get('type') == 'remove_patch' and ros_node:
+                    pid = int(msg.get('data', {}).get('patch_id', 0))
+                    ok = ros_node.remove_patch(pid)
+                    await websocket.send_text(json.dumps({
+                        'type': 'patch_removed' if ok else 'patch_not_found',
+                        'data': {'patch_id': pid},
+                    }))
+
+                elif msg.get('type') == 'clear_patches' and ros_node:
+                    ros_node.clear_patches()
+                    await websocket.send_text(json.dumps({
+                        'type': 'patches_cleared',
+                    }))
 
             except json.JSONDecodeError:
                 pass
