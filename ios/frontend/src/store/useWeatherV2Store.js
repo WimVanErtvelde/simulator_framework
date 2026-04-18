@@ -1,14 +1,17 @@
 import { create } from 'zustand'
+import { useSimStore } from './useSimStore'
+import {
+  globalDraftToWire,
+  activeWeatherToGlobalDraft,
+  uiToWireRunwayFriction,
+} from '../components/panels/weatherV2/weatherUnits'
 
 // Draft state for WeatherPanelV2.
 //
-// Session-volatile: lives only in React memory. Committing via Accept sends to
-// ios_backend (Slice 5a-ii+). serverState mirrors the last accepted snapshot,
-// so `draft !== serverState` drives the dirty indicator.
-//
-// Slice 5a-i: only `units` and `activeTab` have real behavior. draft fields
-// exist so dirty-state wiring can be demonstrated end-to-end, but no tab
-// actually mutates them yet.
+// Session-volatile: lives only in React memory. serverState mirrors the last
+// accepted snapshot (optimistically updated on Accept, then corrected by the
+// next /world/weather broadcast via syncFromBroadcast). draft !== serverState
+// drives the dirty indicator.
 
 const initialDraft = {
   global: {
@@ -18,18 +21,20 @@ const initialDraft = {
     humidity_pct:         50,
     precipitation_rate:   0.0,
     precipitation_type:   0,
-    runway_friction:      2,
-    runway_conditions:    0,
-    wave_height_m:        0.0,
-    wave_direction_deg:   0.0,
-    cloud_layers:         [],
-    wind_layers:          [],
+    runway_friction:      2,    // UI enum 0-2 (Poor/Fair/Good), not wire 0-15
+    runway_conditions:    0,    // UI enum (Uniform/Patchy) — no wire field yet
+    cloud_layers:         [],   // Slice 5a-iii
+    wind_layers:          [],   // Slice 5a-iv
   },
   patches: [],
   microbursts: [],
 }
 
-export const useWeatherV2Store = create((set) => ({
+function draftEquals(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
+export const useWeatherV2Store = create((set, get) => ({
   draft:       structuredClone(initialDraft),
   serverState: structuredClone(initialDraft),
 
@@ -51,11 +56,54 @@ export const useWeatherV2Store = create((set) => ({
     return { draft: next }
   }),
 
-  // Slice 5a-i: no-op placeholder — copies draft → serverState so dirty-state
-  // wiring can be tested. Slice 5a-ii wires real WebSocket messages.
+  // Called when useSimStore.activeWeather changes (a weather_state broadcast
+  // arrived). Merges scalar fields into serverState.global, and into draft
+  // only if draft was clean at the moment of sync — never clobbers in-flight
+  // user edits. cloud_layers / wind_layers are not touched here; their sync
+  // lands in Slices 5a-iii / 5a-iv.
+  syncFromBroadcast: (activeWeather) => set((state) => {
+    const fresh = activeWeatherToGlobalDraft(activeWeather)
+    const wasClean = draftEquals(state.draft, state.serverState)
+    const nextServer = {
+      ...state.serverState,
+      global: { ...state.serverState.global, ...fresh },
+    }
+    const nextDraft = wasClean
+      ? { ...state.draft, global: { ...state.draft.global, ...fresh } }
+      : state.draft
+    return { serverState: nextServer, draft: nextDraft }
+  }),
+
+  // Commits the draft to the backend via the existing set_weather handler
+  // (ios_backend_node.py:2526). Runway friction goes separately via the
+  // existing set_runway_condition handler because the wire uses a 0-15
+  // EURAMEC index and the UI stores a 0-2 enum.
   accept: () => {
-    console.log('[WeatherV2] accept() — not yet wired to backend (Slice 5a-ii)')
-    set((state) => ({ serverState: structuredClone(state.draft) }))
+    const state = get()
+    if (draftEquals(state.draft, state.serverState)) return
+
+    const { ws, wsConnected } = useSimStore.getState()
+    if (!wsConnected || !ws) {
+      console.warn('[WeatherV2] accept(): WS not connected — commit dropped')
+      return
+    }
+
+    ws.send(JSON.stringify({
+      type: 'set_weather',
+      data: globalDraftToWire(state.draft.global),
+    }))
+
+    if (state.draft.global.runway_friction !== state.serverState.global.runway_friction) {
+      ws.send(JSON.stringify({
+        type: 'set_runway_condition',
+        data: { index: uiToWireRunwayFriction(state.draft.global.runway_friction) },
+      }))
+    }
+
+    // Optimistic commit. A subsequent weather_state broadcast will correct
+    // serverState via syncFromBroadcast if the backend clamped or rejected
+    // any field.
+    set((s) => ({ serverState: structuredClone(s.draft) }))
   },
 
   discard: () => set((state) => ({ draft: structuredClone(state.serverState) })),
