@@ -3059,3 +3059,19 @@ Corrects field-naming decisions from the preceding "Weather Step 10 Architecture
 - AFFECTS: sim_msgs/WeatherPatch.msg, cigi_bridge weather encoder (check flag before emitting Weather Control packet for scalar field), ios/frontend override toggles
 
 - UNCHANGED from the architecture lock entry: patch_id (uint16, monotonic per session), label (string, IOS tab title), lat_deg / lon_deg (float64), radius_m (float32), cloud_layers[] / wind_layers[] sub-messages. Radius defaults (3 nm custom, 10 nm airport), bounds (1–50 nm), CIGI Environmental Region Control + Weather Control Scope=Regional wire mapping, cigi_bridge sent-state tracking discipline, xplanecigi plugin region tracking, IOS UI vertical-MSL-column pattern, and phase 2 map deferral — all as previously decided.
+
+## 2026-04-18 — Claude Chat (Weather Step 10 — WeatherPatch.msg ground_elevation_m addition)
+
+Corrects the WeatherPatch.msg shape established in the 2026-04-18 "WeatherPatch.msg field evolution" amendment. A single field is added; no other fields change.
+
+- DECIDED: **ground_elevation_m added to WeatherPatch**. New `float64 ground_elevation_m` field between `radius_m` and the cloud_layers[] block.
+- REASON: IOS frontend needs a per-patch ground reference to display live AGL alongside the authored MSL values on cloud and wind altitude sliders — matches the X-Plane 12 manual weather UI pattern. Without this, AGL annotation either falls back to the global station elevation (wrong for patches far from station) or forces the instructor to mentally convert.
+- POPULATED BY: ios_backend on patch create or lat-lon change:
+  - `patch_type="airport"` — ARP elevation from airport DB (navaid_sim `SearchAirports` service) via ICAO lookup
+  - `patch_type="custom"`  — SRTM terrain elevation from `/navaid_sim/get_terrain_elevation` service at patch lat/lon
+  Default: NaN until populated.
+- CONSUMED BY: ios/frontend WeatherPanel (Slice 5) for live AGL/MSL display. NOT consumed by cigi_bridge or xplanecigi — framework-to-IG wire uses MSL only; plugin derives its own ground reference via `XPLMProbeTerrainXYZ` at the patch lat/lon (X-Plane must render against its own terrain, not SRTM, to stay consistent with its rendered world).
+- ACCEPTED DRIFT: For custom patches in hilly terrain, IOS-displayed AGL and plugin-rendered ground reference may differ by tens of meters where SRTM and X-Plane terrain diverge. Acceptable for FTD training. Mitigation path if needed: restore navaid_sim's full-resolution SRTM data (replacing the current compressed 3GB dataset).
+- AFFECTS: sim_msgs/WeatherPatch.msg (this slice), ios_backend patch handlers (Slice 4), ios/frontend WeatherPanel sliders (Slice 5)
+
+- UNCHANGED: CIGI wire protocol (Environmental Region Control + Weather Control Scope=Regional) carries no ground elevation field — plugin probes terrain at the patch lat/lon. cigi_bridge weather encoder and WeatherSync diff logic ignore ground_elevation_m. xplanecigi plugin ignores the field even though it receives the full WeatherPatch via /world/weather routing (not via CIGI — ground_elevation_m is a IOS-display-only concept).

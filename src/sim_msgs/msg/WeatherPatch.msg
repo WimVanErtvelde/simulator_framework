@@ -26,6 +26,18 @@ float64 lon_deg                    # Patch center longitude
 float32 radius_m                   # Horizontal radius; bounds 1852.0 (1 nm) - 92600.0 (50 nm)
                                    # Default 5556.0 (3 nm) for custom, 18520.0 (10 nm) for airport
 
+# ── Ground elevation reference ─────────────────────────────────────────
+# Populated by ios_backend on patch create / lat-lon change:
+#   - patch_type="airport": ARP elevation from airport DB (navaid_sim
+#     SearchAirports service) via ICAO lookup
+#   - patch_type="custom":  SRTM terrain elevation from navaid_sim
+#     /navaid_sim/get_terrain_elevation service at patch lat/lon
+# Used by ios/frontend for live AGL/MSL display on cloud and wind altitude
+# sliders. NOT transmitted over CIGI (framework-to-IG wire uses MSL only;
+# plugin derives its own ground reference via XPLMProbeTerrainXYZ at patch
+# lat/lon). Set to NaN until populated.
+float64 ground_elevation_m
+
 # ── Layer overrides ──────────────────────────────────────────────────────
 # Empty array = no override for that layer type (global layers apply within patch)
 sim_msgs/WeatherCloudLayer[] cloud_layers
