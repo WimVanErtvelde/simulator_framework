@@ -40,22 +40,13 @@ for approval before writing any code.
 
 ### Diagnostic-first rule
 
-When investigating a bug or unexpected behavior:
-1. Add diagnostic logging (RCLCPP_INFO with relevant state)
-2. Build and test — observe the logs
-3. Report findings with log evidence
-4. Propose a fix with reasoning
-5. WAIT for approval before applying the fix
-
-Never apply a fix without first understanding the root cause. The repositioning
-entity flicker (bug #0) proved this: the original hypothesis (JSBSim cache corruption)
-was wrong — the actual cause was a zombie process. Fixing the wrong thing wastes time
-and adds unnecessary code.
+When investigating a bug: (1) add diagnostic logging, (2) build + observe,
+(3) report findings with log evidence, (4) propose a fix with reasoning,
+(5) WAIT for approval. Never apply a fix before understanding the root cause.
 
 ### Git commit discipline
 
-Commit after every successfully building change. Never accumulate more than
-one logical change in uncommitted state. Use descriptive commit messages.
+Commit after every successfully building change. One logical change per commit.
 
 ### What to check before finishing
 
@@ -75,14 +66,9 @@ check bugs.md first. After fixing a bug, update bugs.md.
 
 ### Doc update task cards
 
-Design sessions in Claude Desktop produce "doc update" task cards. These contain
-exact text replacements for .md files (CLAUDE.md, DECISIONS.md, agent files, bugs.md).
-When you receive one:
-- Apply the edits mechanically — do not rephrase, expand, or reinterpret
-- Do not modify any source code
-- Verify with grep or cat that the new text is in place
-- If a replacement target doesn't match (file changed since the card was written),
-  report the mismatch — do not guess at the correct edit
+Design sessions produce "doc update" cards with exact text replacements for .md files.
+Apply edits mechanically — don't rephrase, don't touch source code. If a replacement
+target doesn't match, report the mismatch rather than guess.
 
 ---
 
@@ -120,12 +106,9 @@ Useful topics for FDM tuning:
 - `/aircraft/engines/state` — RPM, MAP, temps
 
 **Notes**
-- Backend MUST be started with ROS2 sourced — without it, DDS isolation means no nodes are visible
-- Backend is NOT in sim_full.launch.py (removed — it conflicts on port 8080 if already running)
-- Backend uses `rclpy.spin_once()` in a thread (NOT `rclpy.spin()` — that silently fails under uvicorn)
-- Backend JSON encoder handles numpy types from ROS2 message arrays (`_RosEncoder`)
-- Kill stale backend: `fuser -k 8080/tcp`
-- Kill stale frontend: `fuser -k 5173/tcp`
+- Backend MUST be started with ROS2 sourced (DDS isolation otherwise)
+- Backend uses `rclpy.spin_once()` in a thread (`rclpy.spin()` silently fails under uvicorn)
+- Kill stale: `fuser -k 8080/tcp` (backend), `fuser -k 5173/tcp` (frontend)
 
 ---
 
@@ -158,14 +141,18 @@ validation output (QTG) need to meet authority requirements.
 
 ## Core Design Principles
 
-1. **Swappable Flight Model** — the flight model is behind an adapter interface. The rest of the sim never calls flight model code directly.
-2. **Swappable IG** — visual system is decoupled via CIGI. Any CIGI-compliant IG can be used.
-3. **ROS2 as the backbone** — all systems communicate via ROS2 topics. No direct cross-node function calls.
-4. **Systems nodes do not cross-subscribe** except for documented physical dependencies (engines→electrical for bus voltage, engines→fuel for fuel available, air_data→electrical for pitot heat). All other coupling goes through `/aircraft/fdm/state`, `/sim/failures/route/<handler>`, or `/world/`.
-5. **Input arbitration** — all control inputs (hardware, virtual panels, instructor override) are arbitrated by the Input Arbitrator node before reaching the sim. No sim node ever reads device topics directly. The arbitrator is the single source of truth for all control inputs, with per-channel source selection configurable at runtime via IOS.
-6. **Aircraft config drives everything** — which nodes load, which Flight Model Adapter runs, which instrument panels show, all driven by YAML config per aircraft type.
-7. **IOS is purely a control surface** — it injects commands via ROS2 topics. It has no privileged access to sim internals.
-8. **World environment is shared infrastructure** — atmosphere, weather, nav signals, and terrain are published under `/world/` and consumed by any node that needs them. Systems nodes never compute environmental state themselves.
+1. **Swappable FDM** — flight model behind an adapter interface. Sim never calls FDM code directly.
+2. **Swappable IG** — visual system decoupled via CIGI.
+3. **ROS2 backbone** — all systems communicate via topics, no cross-node function calls.
+4. **No cross-subscribes** except documented physical dependencies (engines→electrical,
+   engines→fuel, air_data→electrical). Other coupling goes through `/aircraft/fdm/state`,
+   `/sim/failures/route/<handler>`, or `/world/`.
+5. **Input arbitration** — all control inputs go through Input Arbitrator. No sim node
+   reads device topics directly. Per-channel source selection configurable at runtime via IOS.
+6. **Aircraft config drives everything** — nodes, FDM, panels all driven by YAML per aircraft.
+7. **IOS is purely a control surface** — injects commands via ROS2, no privileged access.
+8. **World is shared infrastructure** — atmosphere/weather/nav/terrain live under `/world/`.
+   Systems nodes never compute environmental state.
 
 ---
 
@@ -198,49 +185,34 @@ directories (frontend, launch files, tools) and colcon output (build/, install/,
 simulator_framework/
 ├── CLAUDE.md                        ← this file
 ├── DECISIONS.md                     ← decision log (CURRENT STATE + append-only CHANGE LOG)
-├── docker-compose.yml
-├── src/                             ← ALL ROS2 packages (colcon discovers recursively)
+├── src/                             ← ALL ROS2 packages
 │   ├── core/
-│   │   ├── sim_manager/             ← ROS2 node: sim clock, state machine, lifecycle mgmt
-│   │   ├── flight_model_adapter/    ← ROS2 node: IFlightModelAdapter interface + implementations
-│   │   ├── input_arbitrator/        ← ROS2 node: per-channel source selection
-│   │   ├── atmosphere_node/         ← SUPERSEDED by src/world/weather_solver/ (kept as dead code, not launched)
-│   │   ├── navaid_sim/              ← ROS2 node: VOR/ILS/NDB/DME/markers, DTED LOS, A424+XP format
-│   │   ├── cigi_bridge/             ← ROS2 node: CIGI host implementation
-│   │   └── sim_interfaces/          ← headers-only: shared C++ interfaces (no node)
+│   │   ├── sim_manager/             ← sim clock, state machine, lifecycle mgmt
+│   │   ├── flight_model_adapter/    ← IFlightModelAdapter interface + implementations
+│   │   ├── input_arbitrator/        ← per-channel source selection
+│   │   ├── navaid_sim/              ← VOR/ILS/NDB/DME/markers, DTED LOS, A424+XP format
+│   │   ├── cigi_bridge/             ← CIGI host implementation
+│   │   └── sim_interfaces/          ← headers-only shared C++ interfaces
 │   ├── systems/
-│   │   ├── electrical/              ← ROS2 node: DC/AC buses, breakers (pluginlib, GraphSolver)
-│   │   ├── fuel/                    ← ROS2 node: tanks, feed, transfer, CG
-│   │   ├── engine_systems/          ← ROS2 node: N1/N2, EGT, torque, start sequence
-│   │   ├── gear/                    ← ROS2 node: WoW, position, brakes, nosewheel (pluginlib)
-│   │   ├── air_data/                ← ROS2 node: pitot-static instrument model (pluginlib)
-│   │   ├── navigation/              ← ROS2 node: onboard receivers (VOR/ILS/GPS/ADF) — no pluginlib
-│   │   ├── failures/                ← ROS2 node: failure injector, active failure broadcast
-│   │   ├── hydraulic/               ← ROS2 node: system pressures (stub — not launched for C172)
-│   │   ├── ice_protection/          ← ROS2 node: de-ice, anti-ice (stub — not launched for C172)
-│   │   └── pressurization/          ← ROS2 node: applicable aircraft only (stub — not launched for C172)
-│   ├── hardware/
-│   │   └── microros_bridge/         ← ROS2 node: serial/CAN → /aircraft/devices/hardware/
-│   ├── ios_backend/                 ← ROS2 ament_python package: FastAPI + rclpy IOS bridge
-│   ├── aircraft/
-│   │   ├── c172/                    ← ROS2 package: config YAML, flight model data, panel layout, plugins
-│   │   └── ec135/                   ← ROS2 package: rotary-wing example
-│   ├── sim_msgs/                    ← ROS2 package: all custom message definitions
-│   ├── world/
-│   │   └── weather_solver/          ← ROS2 node: wind interpolation, Dryden turbulence, microburst sampling → /world/atmosphere
-│   └── qtg/
-│       └── engine/                  ← ROS2 ament_python package: test runner + QTG reports
-├── ios/
-│   └── frontend/                    ← React IOS web app (NOT a ROS2 package)
-│       ├── src/
-│       │   ├── main.jsx             ← React Router entry (/ = IOS, /cockpit/c172/* = virtual cockpit)
-│       │   ├── store/useSimStore.js  ← Zustand store, WebSocket handler
-│       │   └── components/          ← StatusStrip, NavTabs, MapView, panels/, cockpit/
-│       └── package.json
-├── launch/
-│   └── sim_full.launch.py           ← launches all sim nodes (NOT ios_backend — run manually)
-└── tools/
-    └── scenario_editor/             ← optional GUI scenario builder
+│   │   ├── electrical/              ← DC/AC buses, breakers (pluginlib, GraphSolver)
+│   │   ├── fuel/                    ← tanks, feed, transfer, CG
+│   │   ├── engine_systems/          ← N1/N2, EGT, torque, start sequence
+│   │   ├── gear/                    ← WoW, position, brakes, nosewheel (pluginlib)
+│   │   ├── air_data/                ← pitot-static instrument model (pluginlib)
+│   │   ├── navigation/              ← onboard receivers VOR/ILS/GPS/ADF (no pluginlib)
+│   │   ├── failures/                ← failure injector, active failure broadcast
+│   │   ├── hydraulic/               ← stub (not launched for C172)
+│   │   ├── ice_protection/          ← stub (not launched for C172)
+│   │   └── pressurization/          ← stub (not launched for C172)
+│   ├── hardware/microros_bridge/    ← serial/CAN → /aircraft/devices/hardware/
+│   ├── ios_backend/                 ← ament_python: FastAPI + rclpy IOS bridge
+│   ├── aircraft/{c172,ec135}/       ← config YAML + plugins per aircraft
+│   ├── sim_msgs/                    ← all custom message definitions
+│   ├── world/weather_solver/        ← wind, Dryden turbulence, microburst → /world/atmosphere
+│   └── qtg/engine/                  ← ament_python: test runner + QTG reports
+├── ios/frontend/                    ← React web app (NOT a ROS2 package)
+├── launch/sim_full.launch.py        ← launches all sim nodes (NOT ios_backend)
+└── tools/scenario_editor/           ← optional GUI scenario builder
 ```
 
 **Rule:** if it has a `package.xml`, it lives under `src/`. Everything else lives alongside `src/`.
@@ -289,11 +261,9 @@ public:
 };
 ```
 
-**Implementations (under `src/core/flight_model_adapter/`):**
-- `JSBSimAdapter` — wraps JSBSim via C++ API (FetchContent v1.2.1 static lib)
-- `XPlaneUDPAdapter` — connects to X-Plane via UDP data
-- `HelisimUDPAdapter` — connects to Helisim 6.0 via UDP ICD (doc 743-0507)
-- `CustomCertifiedAdapter` — placeholder for authority-certified flight model
+**Implementations (under `src/core/flight_model_adapter/`):** `JSBSimAdapter`
+(FetchContent v1.2.1, currently the only working implementation). UDP adapters for
+X-Plane / Helisim and a custom certified adapter are planned.
 
 **JSBSim notes:**
 - Uses wall timer (not sim timer) for its 50Hz update loop — drives JSBSim independently
@@ -410,7 +380,7 @@ All topics use `snake_case`. No abbreviations unless universally understood (e.g
 | Topic | Type | Publisher | Notes |
 |---|---|---|---|
 | `/world/atmosphere` | AtmosphereState | weather_solver | ISA + weather deviation + interpolated wind + Dryden turbulence + microburst at aircraft position |
-| `/world/weather` | WeatherState (v2 — layered, replaces flat v1) | sim_manager | Cloud layers, wind layers, precipitation, surface, turbulence model, microbursts |
+| `/world/weather` | WeatherState | sim_manager | Cloud layers, wind layers, precipitation, surface, turbulence model, microbursts |
 | `/world/hazards/microburst` | MicroburstHazard | weather_solver | Active microburst fields (Oseguera-Bowles parameters) |
 | `/world/nav_signals` | NavSignalTable | navaid_sim | Receivable navaids, signal strength, LOS |
 | `/world/terrain` | TerrainState | terrain_node (TBD) | DTED elevation + obstruction data |
@@ -436,41 +406,25 @@ Hardware timeout > 500ms → auto-fallback to VIRTUAL + alert on `/aircraft/cont
 Instructor takeover is **sticky** for flight/engine/avionics — once instructor publishes on a
 channel, source stays INSTRUCTOR until node reconfigure. No auto-release, no timeout.
 
-**Panel channel — per-switch force model (NOT sticky):**
-Panel channel uses per-switch FORCE model. Each switch tracks its own force state
-independently. IOS forcing `sw_battery` doesn't lock out cockpit page's `sw_landing_lt`.
-FORCE is engaged/released via `switch_forced[]` in PanelControls. Flight/engine channels
-remain sticky (safety). `has_inst_panel_` flag removed.
-- IOS sends `switch_forced: [true]` to force, `[false]` to release
-- Instructor commands without `switch_forced` set virtual value (no implicit force)
-- Virtual/hardware commands update their value but don't override forced switches
-- Effective value: forced > hardware (if healthy) > virtual
-- `ArbitrationState.forced_switch_ids[]` reports which switches are currently forced
+**Panel channel — per-switch FORCE model (NOT sticky):** each switch tracks its own
+force state independently via `switch_forced[]` in PanelControls. Forcing `sw_battery`
+doesn't lock out cockpit's `sw_landing_lt`. Effective value: forced > hardware (if
+healthy) > virtual. `ArbitrationState.forced_switch_ids[]` reports which switches are
+currently forced. Flight/engine/avionics channels remain sticky (safety).
 
 ---
 
 ## IOS Command Architecture
 
-**Three tiers, never cross them:**
+IOS A/C page publishes to `/aircraft/devices/instructor/*` (INSTRUCTOR). Virtual
+cockpit pages publish to `/aircraft/devices/virtual/*` (VIRTUAL). Physical hardware
+publishes to `/aircraft/devices/hardware/*` (HARDWARE).
 
-| Source | Topic | Priority | Who publishes |
-|---|---|---|---|
-| IOS A/C page switches | `/aircraft/devices/instructor/panel` | INSTRUCTOR | ios_backend |
-| IOS frequency tuning | `/aircraft/devices/instructor/controls/avionics` | INSTRUCTOR | ios_backend |
-| Virtual cockpit switches | `/aircraft/devices/virtual/panel` | VIRTUAL | cockpit browser pages |
-| Virtual cockpit avionics | `/aircraft/devices/virtual/controls/avionics` | VIRTUAL | cockpit browser pages |
-| Physical hardware | `/aircraft/devices/hardware/panel` | HARDWARE | microros_bridge |
-
-IOS A/C page switches are instructor-level. Each switch has a FORCE checkbox — ticking it
-locks the switch at its current value (cockpit/hardware cannot override). Unticking releases
-to cockpit/hardware control. Toggling a switch without the checkbox also implicitly forces.
-Amber styling on IOS switches communicates instructor authority visually.
-
-`PanelControls.msg` carries `switch_forced[]` and `selector_forced[]` arrays parallel to the
-ID arrays. Empty = normal command (cockpit/hardware). Populated = force/release (IOS).
-
-All panel UIs read displayed state from `/aircraft/controls/panel` (arbitrated output) — never
-from their own published commands. Single source of truth.
+IOS A/C page switches have a FORCE checkbox — ticking it locks the switch (cockpit/
+hardware cannot override). Toggling without the checkbox also implicitly forces.
+`PanelControls.msg` carries `switch_forced[]` / `selector_forced[]` arrays: empty =
+normal command, populated = force/release. All panel UIs read displayed state from
+`/aircraft/controls/panel` (arbitrated output) — never from their own published commands.
 
 ---
 
@@ -479,19 +433,11 @@ from their own published commands. Single source of truth.
 FastAPI + rclpy. Bridges ROS2 ↔ WebSocket ↔ React frontend.
 Run manually (not via launch file) so output is visible and it can be restarted independently.
 
-**⚠ Build constraint — ament_python packages need a rebuild on every edit:**
-`start_backend.sh` sources `install/setup.bash`, which makes Python import from
-`install/ios_backend/.../site-packages/` — NOT from the source tree. `ament_python`
-`--symlink-install` only symlinks at the egg-link level; the actual .py files are
-copied into `build/`. Editing `src/ios_backend/` without rebuilding means the
-running backend keeps executing the stale installed copy and all changes are
-invisible. **After every ios_backend edit, run:**
-```bash
-colcon build --packages-select ios_backend --symlink-install
-```
-(~3s — fast because it's just copying Python files.) Then restart the backend.
-The same rule applies to any other `ament_python` package (e.g. `qtg_engine`).
-This does NOT apply to frontend changes — Vite HMR handles those.
+**⚠ Build constraint — ament_python packages rebuild on every edit:**
+`start_backend.sh` sources `install/setup.bash`, so Python imports from the installed
+site-packages copy, not the source tree. After any `src/ios_backend/` (or `qtg_engine`)
+edit, run `colcon build --packages-select ios_backend --symlink-install` and restart.
+Frontend changes go through Vite HMR — no rebuild needed.
 
 **Node discovery:** fully dynamic — heartbeats + lifecycle_state messages + ROS2 graph queries
 every 3 seconds. **No hardcoded node list.** Has a 5-second startup delay before first query.
@@ -543,29 +489,19 @@ React + Zustand + WebSocket + React Router. Served by Vite dev server on port 51
 - `/cockpit/c172/avionics` — virtual C172 avionics panel (placeholder)
 
 **Key files:**
-- `src/main.jsx` — React Router entry point
-- `src/store/useSimStore.js` — Zustand store, WebSocket message handler, CMD dispatch
-- `src/components/StatusStrip.jsx` — top 3-row status (Row 3 = dynamic radio row from navigation.yaml)
-- `src/components/NavTabs.jsx` — 9 left-side navigation tabs (56px wide, monospace symbols)
-- `src/components/MapView.jsx` — Leaflet map, type-aware aircraft icon (color = sim state)
-- `src/components/panels/NodesPanel.jsx` — dynamic node discovery, lifecycle state, per-node controls
-- `src/components/panels/AircraftPanel.jsx` — fully dynamic A/C page — radios from navigation.yaml, electrical switches/sources/buses/loads from electrical.yaml, FORCE checkboxes per switch, engine gauges from EngineState
+- `src/main.jsx` — React Router entry
+- `src/store/useSimStore.js` — Zustand store, WebSocket handler, CMD dispatch
+- `src/components/StatusStrip.jsx` — top 3-row status (Row 3 dynamic from navigation.yaml)
+- `src/components/MapView.jsx` — Leaflet map, type-aware aircraft icon
+- `src/components/panels/NodesPanel.jsx` — dynamic node discovery, lifecycle, controls
+- `src/components/panels/AircraftPanel.jsx` — fully dynamic A/C page from YAML configs
 - `src/components/cockpit/CockpitElectrical.jsx` — virtual cockpit electrical panel (VIRTUAL)
 
-**Config-driven panels:** ios_backend loads aircraft YAML configs and sends them as WS messages
-on connect and aircraft_id change. Frontend stores these and renders dynamically:
-- `avionics_config` — from navigation.yaml (radios, displays)
-- `engine_config` — from engine.yaml (engine type, limits)
-- `fuel_config` — from fuel.yaml (tanks, display units)
-- `failures_config` — from failures.yaml (failure catalog)
-- `electrical_config` — from electrical.yaml (sources, buses, switches, loads)
+**Config-driven panels:** ios_backend loads aircraft YAMLs and sends them as WS messages
+on connect. Frontend stores and renders dynamically: `avionics_config`, `engine_config`,
+`fuel_config`, `failures_config`, `electrical_config`.
 
-The IOS AircraftPanel electrical section renders switches/sources/buses/loads/CBs from
-`electrical_config`. Each switch has a per-switch FORCE checkbox backed by `ArbitrationState.forced_switch_ids`.
-
-**Design palette:** bg `#0a0e17`, panel `#111827`, elevated `#1c2333`, borders `#1e293b`,
-text `#e2e8f0`, dim `#64748b`, accent `#00ff88`, cyan `#39d0d8`, danger `#ff3b30`.
-IOS switches: amber (instructor). Virtual cockpit switches: green (standard).
+IOS switches render amber (instructor authority). Virtual cockpit switches render green.
 
 ---
 
@@ -609,17 +545,13 @@ Pitot-static instrument model. Computes instrument IAS, altitude, VSI from truth
 - IOS and cockpit displays read AirDataState for IAS/ALT/VSI (not FlightModelState)
 - FlightModelState remains truth (for QTG, recording, CIGI, IOS TRUTH display)
 
-**Pitot-static physics:**
-- Pitot blocked (drain clear): IAS decays toward zero
-- Pitot blocked (drain blocked): IAS acts like altimeter (increases with climb)
-- Static port blocked: altitude freezes, VSI zero, IAS incorrect at different altitudes
-- Alternate static: cabin pressure offset (configurable, ~-30Pa for C172)
+**Pitot-static physics:** pitot blocked (drain clear) → IAS decays; drain blocked → IAS
+acts like altimeter. Static port blocked → altitude freezes, VSI zero. Alternate static →
+cabin pressure offset (~-30Pa for C172).
 
-**Icing model:** visible_moisture (from WeatherState, instructor-set) + OAT < 5°C + pitot heat off → ice accumulates over configurable delay (45s). Clears at 2x rate with heat on.
-
-**Turbulence on pitot:** band-limited noise scaled by turbulence_intensity × TAS × gain. ASI fluctuates more than aircraft actually changes speed.
-
-**Pitot heat:** resolved from ElectricalState load_powered (not switch position). CB popped = no heat.
+**Icing:** visible_moisture + OAT < 5°C + pitot heat off → ice accumulates (45s default),
+clears at 2x rate with heat on. Pitot heat resolved from ElectricalState load_powered
+(CB popped = no heat). Turbulence adds band-limited noise to IAS.
 
 ---
 
@@ -653,19 +585,14 @@ NOT routed through sim_failures.
 
 Core framework package. Ground navaid environment node.
 
-- Subscribes to `/aircraft/fdm/state` (position) and `/aircraft/controls/avionics` (frequencies, OBS)
-- Publishes `/world/nav_signals` (NavSignalTable.msg) at 10 Hz
-- Data source selected via ROS2 YAML parameter `data_source`:
-  - `"euramec"` — EURAMEC.PC (navaids + markers + magnetic deviation in one file)
-  - `"xplane"` — earth_nav.dat (XP810/XP12 auto-detected by token count) + WMM.COF
-- Data files installed to `share/navaid_sim/data/`
+- Subscribes to `/aircraft/fdm/state` + `/aircraft/controls/avionics`
+- Publishes `/world/nav_signals` (NavSignalTable) at 10 Hz
+- Data source via YAML param `data_source`: `"euramec"` (EURAMEC.PC) or `"xplane"`
+  (earth_nav.dat, XP810/XP12 auto-detected) + WMM.COF
 - SRTM terrain LOS checks on all VHF receivers
-- Startup log: count of VORs, ILS, NDBs, DMEs, markers loaded + source file
-- Airport DB: apt.dat (xp12 format, matches X-Plane visual scenery). Provides runway
-  threshold lat/lon, displaced threshold (metres), airport elevation. ARINC-424 (euramec.pc)
-  also supported — has per-runway-end elevation (feet) and displaced threshold (feet→metres).
-- IOS position panel: ground placement offsets displaced_threshold + 30m along runway heading
-  to place aircraft past the piano bar markings
+- Airport DB supports apt.dat (xp12) and ARINC-424 (euramec.pc) — provides runway
+  threshold lat/lon, displaced threshold, elevation
+- IOS position panel offsets displaced_threshold + 30m along runway heading
 
 ---
 
@@ -713,13 +640,8 @@ NavigationState       computed instrument outputs (/aircraft/navigation/state)
 - If a field stores 0-1 it MUST use `_norm`, never `_pct`
 - Dimensionless fields (mach, load_factor, epr) have no unit suffix — this is correct
 
-**NavigationState** includes frequency echoes (`com1/2/3_freq_mhz`, `adf1/2_freq_khz`) from
-AvionicsControls for IOS display convenience.
-
-**Extended fields** (future-proof, all zero until implemented):
-- COM3, ADF2, TACAN (channel + band), GPS source selector (GPS1/GPS2)
-- GPS2 receiver (full lat/lon/alt/gs/track/valid)
-- TACAN bearing/distance/valid
+**NavigationState** includes frequency echoes from AvionicsControls for IOS display
+convenience. COM3, ADF2, TACAN, GPS2 fields are zeroed pending implementation.
 
 **Installed avionics per aircraft** defined in `src/aircraft/<type>/config/navigation.yaml`.
 IOS A/C page and StatusStrip Row 3 render dynamically from this config.
@@ -731,15 +653,12 @@ IOS A/C page and StatusStrip Row 3 render dynamically from this config.
 Each aircraft: `src/aircraft/<type>/` — contains `package.xml`, `CMakeLists.txt`, `plugins.xml`,
 `src/` (plugin implementations), and `config/` (per-system YAML files).
 
-Config files per aircraft:
-- `config/config.yaml` — metadata, required nodes, Flight Model Adapter, limits, default IC, gear_points
-- `config/electrical.yaml` — v2 graph format: nodes (sources, buses, junctions, loads) + connections (switches, CBs, relays)
-- `config/fuel.yaml` — tanks, selectors, pumps
-- `config/engine.yaml` — engine type, count, panel control IDs
-- `config/gear.yaml` — gear type, retractable flag, leg names
-- `config/air_data.yaml` — pitot-static systems, heat load names, alternate static switch IDs
-- `config/failures.yaml` — failure catalog (ATA chapter grouped), injection handlers
-- `config/navigation.yaml` — installed avionics equipment (drives dynamic IOS A/C page)
+Config files per aircraft (all under `config/`):
+- `config.yaml` — metadata, required nodes, FDM adapter, limits, default IC, gear_points
+- `electrical.yaml` — graph v2: nodes (sources/buses/junctions/loads) + connections
+- `fuel.yaml`, `engine.yaml`, `gear.yaml`, `air_data.yaml` — per-system topology
+- `failures.yaml` — failure catalog (ATA-grouped), injection handlers
+- `navigation.yaml` — installed avionics (drives dynamic IOS A/C page)
 
 **Panel control ID naming convention:**
 - `sw_` — boolean switch (e.g. `sw_battery`, `sw_alt`)
@@ -815,42 +734,33 @@ source install/setup.bash
 
 ## What NOT to Do
 
-- Never call flight model code directly from a systems node — always go through `/aircraft/fdm/state`
-- Never hard-code aircraft parameters in node code — always read from aircraft YAML config
-- Systems nodes do not cross-subscribe except for documented physical dependencies: engines→electrical (starter bus voltage), engines→fuel (fuel available), air_data→electrical (pitot heat). All others require design review
-- Never subscribe to `/sim/failures/active` (FailureList) — this topic does not exist. Failure broadcast uses `/sim/failures/state` (FailureState). Failure injection uses `/sim/failures/route/<handler>` (FailureInjection).
-- Never let any sim node subscribe to `/aircraft/devices/` topics — only input_arbitrator reads device topics
-- IOS backend publishes inputs to `/aircraft/devices/instructor/` and operational commands to `/sim/command`. IOS backend NEVER publishes to `/sim/*/state` topics.
-- Never put IOS logic in Sim Manager — IOS sends commands, Sim Manager executes them
-- Never store sim state in the IOS backend — it is stateless, ROS2 is the source of truth
-- Never put a ROS2 package outside `src/` — if it has a `package.xml` it belongs under `src/`
-- Never start ios_backend via sim_full.launch.py — run it manually in its own terminal
-- Never compute atmosphere, signal reception, or terrain in a systems node — subscribe to `/world/` instead
-- Never use a bare `_freq` suffix on avionics message fields — always `_freq_mhz` or `_freq_khz`
-- Never publish IOS A/C page commands to `/aircraft/devices/virtual/` — always `/aircraft/devices/instructor/`
+- Never call flight model code directly — always go through `/aircraft/fdm/state`
+- Never hard-code aircraft parameters in node code — always read from aircraft YAML
+- Never cross-subscribe systems nodes except for documented physical dependencies
+  (engines→electrical, engines→fuel, air_data→electrical)
+- Never subscribe to `/sim/failures/active` — doesn't exist. Broadcast is `/sim/failures/state`,
+  injection is `/sim/failures/route/<handler>`.
+- Never let a sim node subscribe to `/aircraft/devices/*` — only input_arbitrator reads those
+- IOS backend publishes only to `/aircraft/devices/instructor/*` and `/sim/command` —
+  NEVER to `/sim/*/state` or `/aircraft/devices/virtual/*`
+- Never put IOS logic in Sim Manager — IOS sends commands, Sim Manager executes
+- Never store sim state in ios_backend — it's stateless, ROS2 is the source of truth
+- Never compute atmosphere, signal reception, or terrain in a systems node — `/world/` only
+- Never use bare `_freq` suffix on avionics fields — `_freq_mhz` or `_freq_khz`
 - Never hardcode a node list in ios_backend — node discovery is fully dynamic
-- Never use `rclpy.spin()` in a daemon thread under uvicorn — use `spin_once()` in a thread loop instead
-- Never use `json.dumps()` directly on ROS2 message data — use `_dumps()` with `_RosEncoder` to handle numpy types
+- Never use `rclpy.spin()` in a thread under uvicorn — use `spin_once()` loop
+- Never `json.dumps()` ROS2 message data — use `_dumps()` with `_RosEncoder` (numpy types)
+- Never start ios_backend via sim_full.launch.py — manual terminal only
+- Never put a ROS2 package outside `src/`
 
 ---
 
 ## Open Decisions
 
-- [x] Sim clock: ROS2 native sim time (`/clock` + `use_sim_time`) ✓
-- [x] Nav signals: `/world/` namespace, navaid_sim as core package ✓
-- [x] NavSignalTable interface: finalised ✓
-- [x] Virtual panel rendering: web-based (React, WebSocket → FastAPI → ROS2) ✓
-- [x] CGF: scripted entities in scenario files first; live panel deferred ✓
-- [x] Workspace layout: all ROS2 packages under `src/`, frontend outside ✓
-- [x] ios_backend excluded from launch file — run manually ✓
-- [x] IOS panel priority: instructor-level by default ✓
-- [x] Virtual cockpit pages: VIRTUAL priority, URL-routed via React Router ✓
-- [x] Terrain service: sim-side SRTM/DTED, IG provides supplementary CIGI HOT ✓
-- [x] Air data: always modeled by sim_air_data (EXTERNAL_DECOUPLED), all FDMs output truth only ✓
-- [x] CIGI IG repositioning handshake: host sends IG Mode Reset/Operate, plugin probes terrain, reports via SOF ✓
-- [x] IC terrain: runway DB altitude initial, CIGI HOT refinement for precision ground placement ✓
+Resolved decisions live in DECISIONS.md. Still open:
+
 - [ ] CIGI library: from scratch or cigicl? (currently raw encoding, no CCL)
 - [ ] micro-ROS transport: serial UART or CAN?
 - [ ] IOS auth: single-user or multi-role (instructor / examiner / admin)?
 - [ ] Scenario file format: custom YAML or existing standard?
-- [ ] IG manager: lifecycle node on remote hardware (e.g. Raspberry Pi) to spawn/monitor OpenGL IG executables
+- [ ] IG manager: lifecycle node on remote hardware for spawning OpenGL IGs?
