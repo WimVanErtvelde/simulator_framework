@@ -93,4 +93,19 @@ else()
     "  The cigi_bridge_node still builds and sends raw CIGI 3.3 packets without CCL.")
 endif()
 
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_weather_encoder
+    test/test_weather_encoder.cpp
+    src/weather_encoder.cpp
+  )
+  target_include_directories(test_weather_encoder PRIVATE
+    include
+  )
+  ament_target_dependencies(test_weather_encoder
+    rclcpp
+    sim_msgs
+  )
+endif()
+
 ament_package()

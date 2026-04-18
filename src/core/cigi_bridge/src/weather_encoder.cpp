@@ -23,6 +23,15 @@ static void write_be_float(uint8_t * p, float v)
     p[3] =  u        & 0xFF;
 }
 
+static void write_be_float64(uint8_t * p, double v)
+{
+    uint64_t u;
+    memcpy(&u, &v, sizeof u);
+    for (int i = 0; i < 8; ++i) {
+        p[i] = (u >> (56 - 8 * i)) & 0xFF;
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CIGI 3.3 packet constants
 // ─────────────────────────────────────────────────────────────────────────────
@@ -35,6 +44,26 @@ static constexpr uint8_t CIGI_WEATHER_CTRL_SIZE = 56;
 // User-defined — runway surface friction (visual wetness / ice / snow)
 static constexpr uint8_t CIGI_PKT_RUNWAY_FRICTION  = 0xCB;
 static constexpr uint8_t CIGI_RUNWAY_FRICTION_SIZE = 8;
+
+static constexpr uint8_t CIGI_PKT_ENV_REGION_CTRL  = 11;  // 0x0B
+static constexpr uint8_t CIGI_ENV_REGION_CTRL_SIZE = 48;
+
+// Scope values for Weather Control packet
+static constexpr uint8_t CIGI_SCOPE_GLOBAL   = 0;
+static constexpr uint8_t CIGI_SCOPE_REGIONAL = 1;
+static constexpr uint8_t CIGI_SCOPE_ENTITY   = 2;
+
+// Region State values for Environmental Region Control
+static constexpr uint8_t CIGI_REGION_STATE_INACTIVE  = 0;
+static constexpr uint8_t CIGI_REGION_STATE_ACTIVE    = 1;
+static constexpr uint8_t CIGI_REGION_STATE_DESTROYED = 2;
+
+// Framework convention: layer IDs for scalar overrides in regional Weather Control.
+// Cloud layers use CIGI standard 1-3 (mapped directly from WeatherCloudLayer index).
+// Wind layers use 10+ (IG-defined range per CIGI 3.3).
+// Scalar overrides use these reserved IDs:
+static constexpr uint8_t CIGI_LAYER_ID_SCALAR_VIS_TEMP = 20;  // visibility + temperature
+static constexpr uint8_t CIGI_LAYER_ID_SCALAR_PRECIP   = 21;  // precipitation
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Atmosphere Control (Packet ID = 10, 32 bytes)
@@ -272,6 +301,199 @@ size_t encode_weather_packets(
     }
 
     return offset;
+}
+
+}  // namespace cigi_bridge
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Environmental Region Control (Packet ID = 11, 48 bytes)
+//
+// Byte layout per CIGI 3.3 ICD section 4.1.11:
+//   0      Packet ID (11)
+//   1      Packet Size (48)
+//   2-3    Region ID (uint16 BE)
+//   4      Flags byte:
+//            bits 0-1 Region State (2=Destroyed, 1=Active, 0=Inactive)
+//            bit  2   Merge Weather Properties
+//            bit  3   Merge Aerosol Concentrations
+//            bit  4   Merge Maritime Surface Conditions
+//            bit  5   Merge Terrestrial Surface Conditions
+//            bits 6-7 Reserved
+//   5-7    Reserved
+//   8-15   Latitude (float64 BE, degrees)
+//   16-23  Longitude (float64 BE, degrees)
+//   24-27  Size X (float32 BE, meters; 0 for circle)
+//   28-31  Size Y (float32 BE, meters; 0 for circle)
+//   32-35  Corner Radius (float32 BE, meters; = radius for circle)
+//   36-39  Rotation (float32 BE, degrees; 0 for circle)
+//   40-43  Transition Perimeter (float32 BE, meters)
+//   44-47  Reserved
+// ─────────────────────────────────────────────────────────────────────────────
+namespace cigi_bridge
+{
+
+size_t encode_region_control(
+    uint8_t * buf, size_t capacity,
+    const sim_msgs::msg::WeatherPatch & patch,
+    uint8_t region_state)
+{
+    if (capacity < CIGI_ENV_REGION_CTRL_SIZE) return 0;
+    memset(buf, 0, CIGI_ENV_REGION_CTRL_SIZE);
+
+    buf[0] = CIGI_PKT_ENV_REGION_CTRL;
+    buf[1] = CIGI_ENV_REGION_CTRL_SIZE;
+
+    write_be16(&buf[2], patch.patch_id);
+
+    // Flags byte: region state (bits 0-1) + merge_weather (bit 2) = 1
+    uint8_t flags = (region_state & 0x03) | (1u << 2);
+    buf[4] = flags;
+    // Bytes 5-7 reserved (already zeroed)
+
+    write_be_float64(&buf[8],  patch.lat_deg);
+    write_be_float64(&buf[16], patch.lon_deg);
+
+    // Circular region: SizeX = SizeY = 0, CornerRadius = radius_m
+    write_be_float(&buf[24], 0.0f);
+    write_be_float(&buf[28], 0.0f);
+    write_be_float(&buf[32], patch.radius_m);
+    write_be_float(&buf[36], 0.0f);                      // Rotation (irrelevant for circle)
+    write_be_float(&buf[40], patch.radius_m * 0.10f);    // Transition Perimeter = 10% of radius
+    // Bytes 44-47 reserved (already zeroed)
+
+    return CIGI_ENV_REGION_CTRL_SIZE;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Weather Control (Packet ID = 12, 56 bytes) — Scope=Regional variants
+//
+// Byte layout per CIGI 3.3 ICD section 4.1.12:
+//   0      Packet ID (12)
+//   1      Packet Size (56)
+//   2-3    Entity ID / Region ID (uint16 BE)
+//   4      Layer ID (uint8)
+//   5      Humidity (uint8, 0-100 %)
+//   6      Flags byte:
+//            bit  0   Weather Enable
+//            bit  1   Scud Enable
+//            bit  2   Random Winds Enable
+//            bit  3   Random Lightning Enable
+//            bits 4-7 Cloud Type (enum 0-15)
+//   7      Scope + Severity + Reserved:
+//            bits 0-1 Scope (0=Global, 1=Regional, 2=Entity)
+//            bits 2-4 Severity (0-5)
+//            bits 5-7 Reserved
+//   8-11   Air Temperature (float BE, °C)
+//   12-15  Visibility Range (float BE, meters)
+//   16-19  Scud Frequency (float BE, %)
+//   20-23  Coverage (float BE, %)
+//   24-27  Base Elevation (float BE, meters MSL)
+//   28-31  Thickness (float BE, meters)
+//   32-35  Transition Band (float BE, meters)
+//   36-39  Horizontal Wind Speed (float BE, m/s)
+//   40-43  Vertical Wind Speed (float BE, m/s)
+//   44-47  Wind Direction (float BE, degrees true, FROM)
+//   48-51  Barometric Pressure (float BE, mbar)
+//   52-55  Aerosol Concentration (float BE, reserved)
+// ─────────────────────────────────────────────────────────────────────────────
+
+static size_t encode_weather_control_regional_base(
+    uint8_t * buf, size_t capacity,
+    uint16_t region_id,
+    uint8_t layer_id,
+    bool weather_enable,
+    uint8_t cloud_type)
+{
+    if (capacity < CIGI_WEATHER_CTRL_SIZE) return 0;
+    memset(buf, 0, CIGI_WEATHER_CTRL_SIZE);
+
+    buf[0] = CIGI_PKT_WEATHER_CTRL;
+    buf[1] = CIGI_WEATHER_CTRL_SIZE;
+    write_be16(&buf[2], region_id);
+    buf[4] = layer_id;
+    buf[5] = 0;  // Humidity — default, overridden below if caller populates
+    uint8_t flags = (weather_enable ? 0x01 : 0x00) | ((cloud_type & 0x0F) << 4);
+    buf[6] = flags;
+    buf[7] = CIGI_SCOPE_REGIONAL & 0x03;  // Scope=Regional, Severity=0
+
+    return CIGI_WEATHER_CTRL_SIZE;
+}
+
+size_t encode_regional_cloud_layer(
+    uint8_t * buf, size_t capacity,
+    uint16_t region_id,
+    uint8_t layer_id,
+    const sim_msgs::msg::WeatherCloudLayer & layer,
+    bool weather_enable)
+{
+    size_t n = encode_weather_control_regional_base(
+        buf, capacity, region_id, layer_id, weather_enable, layer.cloud_type);
+    if (n == 0) return 0;
+
+    // Scud enable (bit 1 of flags at buf[6])
+    if (layer.scud_enable) buf[6] |= 0x02;
+
+    write_be_float(&buf[12], 0.0f);                                   // vis (not overridden here)
+    write_be_float(&buf[16], layer.scud_frequency_pct);
+    write_be_float(&buf[20], layer.coverage_pct);
+    write_be_float(&buf[24], layer.base_elevation_m);
+    write_be_float(&buf[28], layer.thickness_m);
+    write_be_float(&buf[32], layer.transition_band_m);
+    // Wind fields zeroed (bytes 36-47) — this is a cloud layer
+    return n;
+}
+
+size_t encode_regional_wind_layer(
+    uint8_t * buf, size_t capacity,
+    uint16_t region_id,
+    uint8_t layer_id,
+    const sim_msgs::msg::WeatherWindLayer & layer,
+    bool weather_enable)
+{
+    size_t n = encode_weather_control_regional_base(
+        buf, capacity, region_id, layer_id, weather_enable, 0 /*cloud_type=None*/);
+    if (n == 0) return 0;
+
+    // Cloud/coverage fields zeroed (this is a wind layer)
+    // Base elevation = altitude of wind layer
+    write_be_float(&buf[24], layer.altitude_msl_m);
+    write_be_float(&buf[36], layer.wind_speed_ms);
+    write_be_float(&buf[40], layer.vertical_wind_ms);
+    write_be_float(&buf[44], layer.wind_direction_deg);
+    return n;
+}
+
+size_t encode_regional_scalar_override(
+    uint8_t * buf, size_t capacity,
+    uint16_t region_id,
+    uint8_t layer_id,
+    float visibility_m,
+    float temperature_k,
+    float precipitation_rate,
+    uint8_t precipitation_type,
+    bool weather_enable)
+{
+    (void)precipitation_rate;
+    (void)precipitation_type;
+
+    size_t n = encode_weather_control_regional_base(
+        buf, capacity, region_id, layer_id, weather_enable, 0 /*cloud_type=None*/);
+    if (n == 0) return 0;
+
+    if (!std::isnan(temperature_k)) {
+        write_be_float(&buf[8], static_cast<float>(temperature_k - 273.15));
+    }
+    if (!std::isnan(visibility_m)) {
+        write_be_float(&buf[12], visibility_m);
+    }
+    // Precipitation rate/type are stored in this packet via layer_id=4(Rain)/5(Snow)
+    // per the CIGI convention already used in the global weather encoder; Slice 2b
+    // will emit a separate Weather Control with the precip layer_id when the
+    // override_precipitation flag is set. This function is for vis+temp overrides;
+    // precipitation overrides use this same function with layer_id=4 or 5 but are
+    // dispatched by Slice 2b. The precipitation_rate and precipitation_type
+    // parameters are retained in the signature for symmetry and future use.
+    return n;
 }
 
 }  // namespace cigi_bridge
