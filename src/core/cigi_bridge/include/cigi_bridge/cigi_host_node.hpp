@@ -114,6 +114,7 @@ private:
     uint8_t    sim_state_     = 0;   // from /sim/state
     bool       reposition_active_ = false;  // from SimState.reposition_active
     bool       sent_reset_    = false;      // true after Reset sent, cleared on next frame
+    bool       startup_reset_pending_ = false;  // send IG Mode=Reset once on first frame after activate
 
     // ── HOT rate gating ───────────────────────────────────────────────────
     uint32_t hot_frame_counter_ = 0;  // counts frames since last HOT send
@@ -140,5 +141,6 @@ private:
 
     rclcpp::TimerBase::SharedPtr send_timer_;
     rclcpp::TimerBase::SharedPtr heartbeat_timer_;
+    rclcpp::TimerBase::SharedPtr weather_reassert_timer_;
     rclcpp::TimerBase::SharedPtr auto_start_timer_;
 };

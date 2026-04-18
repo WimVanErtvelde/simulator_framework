@@ -345,6 +345,145 @@ TEST(WeatherSync, AllOverridesEmitTwoWeatherControls)
     EXPECT_EQ(count_packets(buf, n, 12, 13), 2u);
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// Slice 2c — Periodic re-assertion
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST(WeatherSyncReassertion, ReEmitsActiveForTrackedPatches)
+{
+    WeatherSync sync;
+
+    sim_msgs::msg::WeatherState ws;
+    ws.patches.push_back(make_patch(1));
+    ws.patches.push_back(make_patch(2));
+    uint8_t buf[2048] = {};
+    sync.process_update(ws, buf, sizeof buf);
+    ASSERT_EQ(sync.sent_count(), 2u);
+
+    std::memset(buf, 0, sizeof buf);
+    size_t n = sync.emit_reassertion(buf, sizeof buf);
+
+    EXPECT_GT(n, 0u);
+    EXPECT_EQ(count_packets(buf, n, 11 /*Region*/), 2u);
+    // Both should be Active, not Destroyed
+    size_t off1 = find_packet(buf, n, 11, 1);
+    size_t off2 = find_packet(buf, n, 11, 2);
+    ASSERT_NE(off1, SIZE_MAX);
+    ASSERT_NE(off2, SIZE_MAX);
+    EXPECT_EQ(buf[off1 + 4] & 0x03, 1);
+    EXPECT_EQ(buf[off2 + 4] & 0x03, 1);
+}
+
+TEST(WeatherSyncReassertion, NoOutputWhenNoPatchesTracked)
+{
+    WeatherSync sync;
+    uint8_t buf[1024] = {};
+    size_t n = sync.emit_reassertion(buf, sizeof buf);
+    EXPECT_EQ(n, 0u);
+}
+
+TEST(WeatherSyncReassertion, DoesNotModifyTrackedState)
+{
+    WeatherSync sync;
+    sim_msgs::msg::WeatherState ws;
+    ws.patches.push_back(make_patch(1));
+    uint8_t buf[1024] = {};
+    sync.process_update(ws, buf, sizeof buf);
+    ASSERT_EQ(sync.sent_count(), 1u);
+
+    sync.emit_reassertion(buf, sizeof buf);
+    EXPECT_EQ(sync.sent_count(), 1u);  // unchanged
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Slice 2c — Destroy retry
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST(WeatherSyncDestroyRetry, InitialDestroyQueuesRemainingRetries)
+{
+    WeatherSync sync;
+
+    sim_msgs::msg::WeatherState ws;
+    ws.patches.push_back(make_patch(99));
+    uint8_t buf[1024] = {};
+    sync.process_update(ws, buf, sizeof buf);
+
+    // Remove the patch
+    sim_msgs::msg::WeatherState ws_empty;
+    std::memset(buf, 0, sizeof buf);
+    sync.process_update(ws_empty, buf, sizeof buf);
+
+    // After initial destroy: 2 retries pending (DESTROY_RETRY_COUNT=3 total, 1 already emitted)
+    EXPECT_TRUE(sync.has_pending_destroys());
+    EXPECT_EQ(sync.pending_destroy_count(), WeatherSync::DESTROY_RETRY_COUNT - 1);
+}
+
+TEST(WeatherSyncDestroyRetry, SubsequentCallsDrainRetryQueue)
+{
+    WeatherSync sync;
+
+    sim_msgs::msg::WeatherState ws;
+    ws.patches.push_back(make_patch(99));
+    uint8_t buf[1024] = {};
+    sync.process_update(ws, buf, sizeof buf);
+
+    sim_msgs::msg::WeatherState ws_empty;
+    sync.process_update(ws_empty, buf, sizeof buf);
+    size_t initial_pending = sync.pending_destroy_count();
+    ASSERT_GT(initial_pending, 0u);
+
+    // Each subsequent process_update (or emit_reassertion) decrements retry count.
+    // After DESTROY_RETRY_COUNT-1 further calls, queue should be empty.
+    for (uint32_t i = 0; i < WeatherSync::DESTROY_RETRY_COUNT - 1; ++i) {
+        std::memset(buf, 0, sizeof buf);
+        sync.process_update(ws_empty, buf, sizeof buf);
+    }
+    EXPECT_FALSE(sync.has_pending_destroys());
+}
+
+TEST(WeatherSyncDestroyRetry, ReassertionAlsoDrainsPendingDestroys)
+{
+    WeatherSync sync;
+
+    sim_msgs::msg::WeatherState ws;
+    ws.patches.push_back(make_patch(7));
+    uint8_t buf[1024] = {};
+    sync.process_update(ws, buf, sizeof buf);
+
+    sim_msgs::msg::WeatherState ws_empty;
+    sync.process_update(ws_empty, buf, sizeof buf);
+    ASSERT_TRUE(sync.has_pending_destroys());
+
+    size_t before = sync.pending_destroy_count();
+    std::memset(buf, 0, sizeof buf);
+    size_t n = sync.emit_reassertion(buf, sizeof buf);
+    EXPECT_GT(n, 0u);
+    EXPECT_LT(sync.pending_destroy_count(), before);
+
+    // Destroyed packet for region 7 should appear in re-assertion output
+    size_t off = find_packet(buf, n, 11, 7);
+    ASSERT_NE(off, SIZE_MAX);
+    EXPECT_EQ(buf[off + 4] & 0x03, 2);  // Destroyed
+}
+
+TEST(WeatherSyncDestroyRetry, FlushOnRepositionClearsRetries)
+{
+    WeatherSync sync;
+
+    sim_msgs::msg::WeatherState ws;
+    ws.patches.push_back(make_patch(1));
+    uint8_t buf[1024] = {};
+    sync.process_update(ws, buf, sizeof buf);
+
+    sim_msgs::msg::WeatherState ws_empty;
+    sync.process_update(ws_empty, buf, sizeof buf);
+    ASSERT_TRUE(sync.has_pending_destroys());
+
+    sync.flush_on_reposition();
+    EXPECT_FALSE(sync.has_pending_destroys());
+    EXPECT_EQ(sync.sent_count(), 0u);
+}
+
 int main(int argc, char ** argv)
 {
     ::testing::InitGoogleTest(&argc, argv);
