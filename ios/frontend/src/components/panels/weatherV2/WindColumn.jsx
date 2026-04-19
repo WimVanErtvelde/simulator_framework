@@ -1,4 +1,5 @@
 import { useShallow } from 'zustand/react/shallow'
+import { useSimStore } from '../../../store/useSimStore'
 import { useWeatherV2Store } from '../../../store/useWeatherV2Store'
 import LayerBand from './graph/LayerBand'
 import { MAX_FT, MIN_FT, M_TO_FT, FT_TO_M } from './graph/mslScale'
@@ -15,6 +16,8 @@ const MS_TO_KT     = 1 / KT_TO_MS
 // altitude. Parallel to CloudColumn; reads draft wind_layers and
 // dispatches store actions only — no WS until Accept.
 export default function WindColumn({ height, width }) {
+  const magVarDeg = useSimStore(s => s.nav?.magVariationDeg ?? 0)
+
   const { windLayers, addWind, updateWind, selectedLayer, selectLayer } =
     useWeatherV2Store(useShallow(s => ({
       windLayers:    s.draft.global.wind_layers ?? [],
@@ -57,12 +60,20 @@ export default function WindColumn({ height, width }) {
 
       {windLayers.map((wl, i) => {
         const altMslFt = (wl.altitude_msl_m ?? 0) * M_TO_FT
-        const dirDeg   = Math.round(wl.wind_direction_deg ?? 0)
+        const trueDeg  = Math.round(wl.wind_direction_deg ?? 0)
+        const magDeg   = Math.round((((trueDeg - magVarDeg) % 360) + 360) % 360)
         const spdKt    = Math.round((wl.wind_speed_ms ?? 0) * MS_TO_KT)
         const gustKt   = Math.round((wl.gust_speed_ms ?? 0) * MS_TO_KT)
-        const label    = gustKt > spdKt
-          ? `${String(dirDeg).padStart(3, '0')}° / ${spdKt}G${gustKt} kt`
-          : `${String(dirDeg).padStart(3, '0')}° / ${spdKt} kt`
+        // Show T/M when magnetic variation is meaningful; otherwise the two
+        // strings would be identical and add noise. 0.5° threshold keeps
+        // mid-Atlantic / magnetic-equator regions clean.
+        const dirStr   = Math.abs(magVarDeg) >= 0.5
+          ? `${String(trueDeg).padStart(3, '0')}T/${String(magDeg).padStart(3, '0')}M`
+          : `${String(trueDeg).padStart(3, '0')}°T`
+        const speedStr = gustKt > spdKt
+          ? `${spdKt}G${gustKt} kt`
+          : `${spdKt} kt`
+        const label    = `${dirStr} / ${speedStr}`
         const isSelected = selectedLayer?.kind === 'wind' && selectedLayer?.index === i
 
         return (

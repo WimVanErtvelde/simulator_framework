@@ -14,8 +14,9 @@ const MAX_ALT_FT = MAX_FT
 
 // Left-column editor for the selected wind layer. All controls mutate
 // draft only — no WS until Accept. Altitude uses a NumpadField + sqrt
-// slider; direction combines CompassDial + NumpadField + T/M toggle with
-// the reciprocal mode shown as a reference line.
+// slider; direction combines CompassDial + two side-by-side NumpadField
+// inputs (TRUE and MAGNETIC) that are bidirectionally bound via
+// magVarDeg. Storage is always true — only authoring surface varies.
 export default function WindPropertiesEditor({ index }) {
   const magVarDeg = useSimStore(s => s.nav?.magVariationDeg ?? 0)
 
@@ -25,13 +26,11 @@ export default function WindPropertiesEditor({ index }) {
     removeWind: s.removeWind,
   })))
 
-  const [dirMode, setDirMode] = useState('true')   // 'true' | 'mag'
-
   if (!wl) return null
 
   const altMslFt   = Math.round((wl.altitude_msl_m ?? 0) * M_TO_FT)
   const trueDeg    = Math.round(wl.wind_direction_deg ?? 0)
-  const magDeg     = (((trueDeg - magVarDeg) % 360) + 360) % 360
+  const magDeg     = Math.round((((trueDeg - magVarDeg) % 360) + 360) % 360)
   const spdKt      = Math.round((wl.wind_speed_ms ?? 0) * MS_TO_KT)
   // Display gust value clamped to >= sustained so the UI never shows a
   // nonsensical "gust below sustained" state even if the stored value
@@ -40,17 +39,12 @@ export default function WindPropertiesEditor({ index }) {
   const verticalMs = wl.vertical_wind_ms ?? 0
   const turbPct    = Math.round((wl.turbulence_severity ?? 0) * 100)
 
-  const displayDeg = dirMode === 'true' ? trueDeg : Math.round(magDeg)
-
   const setTrueDeg = (newTrue) => {
     const wrapped = ((Number(newTrue) % 360) + 360) % 360
     updateWind(index, { wind_direction_deg: wrapped })
   }
-  const setDisplayDeg = (newDisp) => {
-    // Storage is always in true. Convert if user entered magnetic.
-    const newTrue = dirMode === 'true' ? newDisp : (newDisp + magVarDeg)
-    setTrueDeg(newTrue)
-  }
+  // Typing in M input: convert to true via variation, then wrap.
+  const setFromMag = (newMag) => setTrueDeg(Number(newMag) + magVarDeg)
   const setAltMslFt = (ft) => {
     const clamped = Math.max(MIN_ALT_FT, Math.min(MAX_ALT_FT, ft))
     updateWind(index, { altitude_msl_m: clamped * FT_TO_M })
@@ -102,42 +96,40 @@ export default function WindPropertiesEditor({ index }) {
       </div>
 
       {/* Direction */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <div style={fieldRow}>
-          <span style={fieldLabel}>Direction (from)</span>
-          <div style={{ display: 'flex' }}>
-            <button type="button"
-              onClick={() => setDirMode('true')}
-              style={pillBtn(dirMode === 'true', 'left')}>T</button>
-            <button type="button"
-              onClick={() => setDirMode('mag')}
-              style={pillBtn(dirMode === 'mag', 'right')}>M</button>
-          </div>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12,
-                      justifyContent: 'center' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <span style={fieldLabel}>Direction (from)</span>
+        <div style={{ display: 'flex', justifyContent: 'center' }}>
           <CompassDial
             valueDeg={trueDeg}
             onChange={setTrueDeg}
             size={108}
             indicatorColor="#a78bfa"
           />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'center' }}>
+        </div>
+        <div style={{
+          display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8,
+        }}>
+          <div style={{ display: 'flex', flexDirection: 'column',
+                        alignItems: 'center', gap: 2 }}>
+            <span style={fieldSubLabel}>TRUE</span>
             <NumpadField
-              label={`Direction ${dirMode === 'true' ? 'True' : 'Magnetic'}`}
-              unit={dirMode === 'true' ? '°T' : '°M'}
-              valueFt={displayDeg}
-              onSubmit={setDisplayDeg}
-              wrap360
+              label="Direction True"
+              unit="°T"
+              valueFt={trueDeg}
+              onSubmit={setTrueDeg}
+              min={0} max={359}
             />
-            <span style={{
-              fontSize: 10, color: '#64748b',
-              fontFamily: 'monospace',
-            }}>
-              {dirMode === 'true'
-                ? `M: ${String(Math.round(magDeg)).padStart(3, '0')}°`
-                : `T: ${String(trueDeg).padStart(3, '0')}°`}
-            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column',
+                        alignItems: 'center', gap: 2 }}>
+            <span style={fieldSubLabel}>MAGNETIC</span>
+            <NumpadField
+              label="Direction Magnetic"
+              unit="°M"
+              valueFt={magDeg}
+              onSubmit={setFromMag}
+              min={0} max={359}
+            />
           </div>
         </div>
       </div>
@@ -219,16 +211,22 @@ function ValueSliderField({ label, value, min, max, step, suffix, format, onChan
   )
 }
 
-// Click-to-open numpad input for any integer quantity. When wrap360 is
-// set, submitted values are wrapped into [0, 360) before propagation.
-function NumpadField({ label, unit, valueFt, onSubmit, wrap360 = false }) {
+// Click-to-open numpad input for any integer quantity. When min/max are
+// specified, submissions outside the range are rejected with a red flash
+// (popup stays open). When wrap360 is set (and no min/max), submitted
+// values are wrapped into [0, 360) before propagation. Rejection pattern
+// matches the navaid page FreqInput.
+function NumpadField({ label, unit, valueFt, onSubmit, wrap360 = false,
+                      min, max }) {
   const [open, setOpen] = useState(false)
+  const [error, setError] = useState(false)
+  const hint = (min != null && max != null) ? `${min}\u2013${max}` : undefined
   return (
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
-        onTouchEnd={(e) => { e.preventDefault(); setOpen(true) }}
+        onClick={() => { setError(false); setOpen(true) }}
+        onTouchEnd={(e) => { e.preventDefault(); setError(false); setOpen(true) }}
         style={{
           height: 22, padding: '0 6px',
           background: '#1c2333',
@@ -249,14 +247,17 @@ function NumpadField({ label, unit, valueFt, onSubmit, wrap360 = false }) {
       {open && (
         <NumpadPopup
           label={label}
+          hint={hint}
           value={String(Math.round(valueFt))}
           allowDecimal={false}
+          error={error}
           onSubmit={(v) => {
             let n = Number(v)
-            if (Number.isFinite(n)) {
-              if (wrap360) n = ((n % 360) + 360) % 360
-              onSubmit(n)
-            }
+            if (!Number.isFinite(n)) { setError(true); return }
+            if (min != null && n < min) { setError(true); return }
+            if (max != null && n > max) { setError(true); return }
+            if (wrap360) n = ((n % 360) + 360) % 360
+            onSubmit(n)
             setOpen(false)
           }}
           onCancel={() => setOpen(false)}
@@ -272,16 +273,9 @@ const fieldRow = {
 }
 const fieldLabel = {
   color: '#64748b', letterSpacing: 1, textTransform: 'uppercase',
+  fontSize: 11, fontFamily: 'monospace',
 }
-function pillBtn(active, side) {
-  return {
-    height: 22, padding: '0 10px',
-    background: active ? 'rgba(167, 139, 250, 0.10)' : '#111827',
-    border: `1px solid ${active ? '#a78bfa' : '#1e293b'}`,
-    borderRadius: side === 'left' ? '3px 0 0 3px' : '0 3px 3px 0',
-    color: active ? '#a78bfa' : '#64748b',
-    fontSize: 10, fontFamily: 'monospace', fontWeight: 700,
-    letterSpacing: 1, cursor: 'pointer',
-    touchAction: 'manipulation',
-  }
+const fieldSubLabel = {
+  fontSize: 9, color: '#475569',
+  fontFamily: 'monospace', letterSpacing: 1,
 }
