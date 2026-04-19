@@ -938,21 +938,38 @@ class IosBackendNode(Node):
         msg.visibility_m = float(source.get('visibility_m', 9999.0))
         msg.humidity_pct = int(source.get('humidity_pct', 50))
 
-        # Surface wind layer (if direction/speed/turbulence provided)
-        wind_dir = source.get('wind_direction_deg')
-        wind_spd = source.get('wind_speed_ms')
-        turb_sev = source.get('turbulence_severity')
-        if wind_dir is not None or wind_spd is not None or turb_sev is not None:
-            wl = WeatherWindLayer()
-            wl.altitude_msl_m = 0.0  # surface
-            wl.wind_speed_ms = float(wind_spd or 0.0)
-            wl.wind_direction_deg = float(wind_dir or 0.0)
-            wl.vertical_wind_ms = 0.0
-            wl.gust_speed_ms = float(source.get('gust_speed_ms', 0.0))
-            wl.shear_direction_deg = 0.0
-            wl.shear_speed_ms = 0.0
-            wl.turbulence_severity = float(turb_sev or 0.0)
-            msg.wind_layers.append(wl)
+        # Wind layers. V2 Accept path sends a `wind_layers` list with full
+        # per-layer fields. V1 (WX) Accept sends a flat
+        # wind_direction_deg / wind_speed_ms / turbulence_severity triple
+        # that represents a single surface wind — legacy fallback preserved.
+        wind_list = source.get('wind_layers')
+        if isinstance(wind_list, list):
+            for wl_data in wind_list:
+                wl = WeatherWindLayer()
+                wl.altitude_msl_m      = float(wl_data.get('altitude_msl_m', 0.0))
+                wl.wind_speed_ms       = float(wl_data.get('wind_speed_ms', 0.0))
+                wl.wind_direction_deg  = float(wl_data.get('wind_direction_deg', 0.0))
+                wl.vertical_wind_ms    = float(wl_data.get('vertical_wind_ms', 0.0))
+                wl.gust_speed_ms       = float(wl_data.get('gust_speed_ms', 0.0))
+                wl.shear_direction_deg = float(wl_data.get('shear_direction_deg', 0.0))
+                wl.shear_speed_ms      = float(wl_data.get('shear_speed_ms', 0.0))
+                wl.turbulence_severity = float(wl_data.get('turbulence_severity', 0.0))
+                msg.wind_layers.append(wl)
+        else:
+            wind_dir = source.get('wind_direction_deg')
+            wind_spd = source.get('wind_speed_ms')
+            turb_sev = source.get('turbulence_severity')
+            if wind_dir is not None or wind_spd is not None or turb_sev is not None:
+                wl = WeatherWindLayer()
+                wl.altitude_msl_m      = 0.0  # surface
+                wl.wind_speed_ms       = float(wind_spd or 0.0)
+                wl.wind_direction_deg  = float(wind_dir or 0.0)
+                wl.vertical_wind_ms    = 0.0
+                wl.gust_speed_ms       = float(source.get('gust_speed_ms', 0.0))
+                wl.shear_direction_deg = 0.0
+                wl.shear_speed_ms      = 0.0
+                wl.turbulence_severity = float(turb_sev or 0.0)
+                msg.wind_layers.append(wl)
 
         # Cloud layers — base authored in ft AGL, convert to m MSL using station elevation
         station_elev_m = msg.station_elevation_m
@@ -1149,18 +1166,38 @@ class IosBackendNode(Node):
                 'coverage_pct': float(cl.get('coverage_pct', 0)),
             })
 
-        # Wind — currently stored as single flat surface triple
+        # Wind. V2 Accept path stores a `wind_layers` list; V1 Accept path
+        # stores the flat triple. Broadcast the full 8-field shape so the
+        # frontend doesn't round-trip-lose vertical/gust/shear.
         wind_layers = []
-        wd = source.get('wind_direction_deg')
-        ws = source.get('wind_speed_ms')
-        turb = source.get('turbulence_severity')
-        if wd is not None or ws is not None or turb is not None:
-            wind_layers.append({
-                'altitude_msl_m': 0.0,
-                'wind_direction_deg': float(wd or 0.0),
-                'wind_speed_ms': float(ws or 0.0),
-                'turbulence_severity': float(turb or 0.0),
-            })
+        src_wind = source.get('wind_layers')
+        if isinstance(src_wind, list):
+            for wl in src_wind:
+                wind_layers.append({
+                    'altitude_msl_m':      float(wl.get('altitude_msl_m', 0.0)),
+                    'wind_direction_deg':  float(wl.get('wind_direction_deg', 0.0)),
+                    'wind_speed_ms':       float(wl.get('wind_speed_ms', 0.0)),
+                    'vertical_wind_ms':    float(wl.get('vertical_wind_ms', 0.0)),
+                    'gust_speed_ms':       float(wl.get('gust_speed_ms', 0.0)),
+                    'shear_direction_deg': float(wl.get('shear_direction_deg', 0.0)),
+                    'shear_speed_ms':      float(wl.get('shear_speed_ms', 0.0)),
+                    'turbulence_severity': float(wl.get('turbulence_severity', 0.0)),
+                })
+        else:
+            wd = source.get('wind_direction_deg')
+            ws = source.get('wind_speed_ms')
+            turb = source.get('turbulence_severity')
+            if wd is not None or ws is not None or turb is not None:
+                wind_layers.append({
+                    'altitude_msl_m':      0.0,
+                    'wind_direction_deg':  float(wd or 0.0),
+                    'wind_speed_ms':       float(ws or 0.0),
+                    'vertical_wind_ms':    0.0,
+                    'gust_speed_ms':       float(source.get('gust_speed_ms', 0.0)),
+                    'shear_direction_deg': 0.0,
+                    'shear_speed_ms':      0.0,
+                    'turbulence_severity': float(turb or 0.0),
+                })
 
         data = {
             'type': 'weather_state',

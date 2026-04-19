@@ -1,15 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
 import MSLAxis, { AXIS_WIDTH } from './graph/MSLAxis'
 import CloudColumn from './CloudColumn'
+import WindColumn from './WindColumn'
 
 const MIN_GRAPH_HEIGHT   = 320
-const BUTTON_ROW_SPACING = 44   // space reserved above graph for + Cloud Layer btn
+const BUTTON_ROW_SPACING = 44   // headroom for the + buttons above graph
+const COLUMN_GAP_PX      = 12
+const MIN_COL_WIDTH      = 120
 
-// Middle column of WeatherPanelV2 Global tab. Hosts the MSL axis and the
-// cloud-layer graph. Wind column is added alongside CloudColumn in 5a-iv.
+// Middle column of WeatherPanelV2 Global tab. Hosts the MSL axis plus
+// the cloud + wind layer columns side-by-side. Each column owns its
+// own `+ …` button (anchored top: -36 inside its root), so they sit
+// inside their respective column roots and don't collide horizontally.
 export default function MSLGraphColumn() {
   const hostRef = useRef(null)
-  const [size, setSize] = useState({ w: 400, h: 520 })
+  const [size, setSize] = useState({ w: 600, h: 520 })
 
   useEffect(() => {
     if (!hostRef.current) return
@@ -22,8 +27,10 @@ export default function MSLGraphColumn() {
     return () => ro.disconnect()
   }, [])
 
-  const graphH = Math.max(MIN_GRAPH_HEIGHT, size.h - BUTTON_ROW_SPACING)
-  const cloudColW = Math.max(120, size.w - AXIS_WIDTH - 12)
+  const graphH  = Math.max(MIN_GRAPH_HEIGHT, size.h - BUTTON_ROW_SPACING)
+  // Split the remaining width 50/50 between clouds and winds.
+  const bodyW   = size.w - AXIS_WIDTH - COLUMN_GAP_PX
+  const colW    = Math.max(MIN_COL_WIDTH, Math.floor(bodyW / 2))
 
   return (
     <div style={{
@@ -40,8 +47,7 @@ export default function MSLGraphColumn() {
         padding: '4px 0 6px', borderBottom: '1px solid #1e293b', marginBottom: 10,
       }}>Layer Graph</div>
 
-      {/* Spacer so the absolutely-positioned "+ Cloud Layer" button has
-          room at the top of the graph body. */}
+      {/* Headroom for the absolutely-positioned + buttons at top of each column */}
       <div style={{ height: 32 }} />
 
       <div ref={hostRef} style={{
@@ -52,7 +58,8 @@ export default function MSLGraphColumn() {
         gap: 0,
       }}>
         <MSLAxis height={graphH} />
-        <CloudColumn height={graphH} width={cloudColW} />
+        <CloudColumn height={graphH} width={colW} />
+        <WindColumn  height={graphH} width={colW} />
       </div>
     </div>
   )

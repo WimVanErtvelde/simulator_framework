@@ -183,4 +183,63 @@ export const useWeatherV2Store = create((set, get) => ({
       },
     },
   })),
+
+  // ── Wind layer actions (draft only — committed on Accept) ──────────────
+  // All mutate draft.global.wind_layers in-memory; no WS traffic until
+  // accept() fires. Cap at 13 (X-Plane WeatherState max).
+  addWind: () => set((state) => {
+    const cur = state.draft.global.wind_layers ?? []
+    if (cur.length >= 13) return state
+    // Stack upward: new altitude = max existing + 2000 ft, else 5000 ft MSL.
+    let new_alt_m = 5000 * FT_TO_M_CONST
+    if (cur.length > 0) {
+      const maxAlt = Math.max(...cur.map(wl => wl.altitude_msl_m ?? 0))
+      new_alt_m = Math.min(45000 * FT_TO_M_CONST, maxAlt + 2000 * FT_TO_M_CONST)
+    }
+    const newLayer = {
+      altitude_msl_m:       new_alt_m,
+      wind_direction_deg:   240,              // prevailing westerly default
+      wind_speed_ms:        10 * 0.514444,    // ~10 kt
+      vertical_wind_ms:     0.0,
+      gust_speed_ms:        0.0,
+      shear_direction_deg:  0.0,
+      shear_speed_ms:       0.0,
+      turbulence_severity:  0.0,
+    }
+    return {
+      draft: {
+        ...state.draft,
+        global: { ...state.draft.global, wind_layers: [...cur, newLayer] },
+      },
+    }
+  }),
+
+  removeWind: (index) => set((state) => {
+    const cur = state.draft.global.wind_layers ?? []
+    const next = cur.filter((_, i) => i !== index)
+    let nextSel = state.selectedLayer
+    if (nextSel?.kind === 'wind') {
+      if (nextSel.index === index)    nextSel = null
+      else if (nextSel.index > index) nextSel = { ...nextSel, index: nextSel.index - 1 }
+    }
+    return {
+      draft: {
+        ...state.draft,
+        global: { ...state.draft.global, wind_layers: next },
+      },
+      selectedLayer: nextSel,
+    }
+  }),
+
+  updateWind: (index, patch) => set((state) => {
+    const cur = state.draft.global.wind_layers ?? []
+    if (index < 0 || index >= cur.length) return state
+    const next = cur.map((wl, i) => (i === index ? { ...wl, ...patch } : wl))
+    return {
+      draft: {
+        ...state.draft,
+        global: { ...state.draft.global, wind_layers: next },
+      },
+    }
+  }),
 }))

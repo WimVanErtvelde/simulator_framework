@@ -44,6 +44,16 @@ export function globalDraftToWire(global) {
       thickness_m:  cl.thickness_m,
       coverage_pct: cl.coverage_pct,
     })),
+    wind_layers: (global.wind_layers ?? []).map(wl => ({
+      altitude_msl_m:       wl.altitude_msl_m,
+      wind_direction_deg:   wl.wind_direction_deg,
+      wind_speed_ms:        wl.wind_speed_ms,
+      vertical_wind_ms:     wl.vertical_wind_ms     ?? 0,
+      gust_speed_ms:        wl.gust_speed_ms        ?? 0,
+      shear_direction_deg:  wl.shear_direction_deg  ?? 0,
+      shear_speed_ms:       wl.shear_speed_ms       ?? 0,
+      turbulence_severity:  wl.turbulence_severity  ?? 0,
+    })),
   }
 }
 
@@ -58,6 +68,18 @@ export function activeWeatherToGlobalDraft(active) {
     thickness_m:  cl.thickness_m,
     coverage_pct: cl.coverage_pct,
   }))
+  // windLayers is a pass-through of the snake-case objects the backend
+  // broadcasts. Reshape defensively to drop unknown keys.
+  const wind_layers = (active.windLayers ?? []).map(wl => ({
+    altitude_msl_m:       wl.altitude_msl_m       ?? 0,
+    wind_direction_deg:   wl.wind_direction_deg   ?? 0,
+    wind_speed_ms:        wl.wind_speed_ms        ?? 0,
+    vertical_wind_ms:     wl.vertical_wind_ms     ?? 0,
+    gust_speed_ms:        wl.gust_speed_ms        ?? 0,
+    shear_direction_deg:  wl.shear_direction_deg  ?? 0,
+    shear_speed_ms:       wl.shear_speed_ms       ?? 0,
+    turbulence_severity:  wl.turbulence_severity  ?? 0,
+  }))
   return {
     temperature_c:      (active.temperatureSlK ?? 288.15) - K_OFFSET,
     pressure_hpa:       (active.pressureSlPa   ?? 101325) / HPA_TO_PA,
@@ -67,6 +89,7 @@ export function activeWeatherToGlobalDraft(active) {
     precipitation_type:  active.precipitationType  ?? 0,
     runway_friction:     active.runwayFriction     ?? 0,
     cloud_layers,
+    wind_layers,
   }
 }
 

@@ -1,8 +1,9 @@
 import { useWeatherV2Store } from '../../../store/useWeatherV2Store'
 import CloudPropertiesEditor from './CloudPropertiesEditor'
+import WindPropertiesEditor from './WindPropertiesEditor'
 
 // Left column of WeatherPanelV2 Global tab. Dispatches on the current
-// selection: empty-state message, cloud editor, or wind editor (stub).
+// selection: empty-state message, cloud editor, or wind editor.
 export default function LayerPropertiesColumn() {
   const selectedLayer = useWeatherV2Store(s => s.selectedLayer)
 
@@ -17,11 +18,7 @@ export default function LayerPropertiesColumn() {
   } else if (selectedLayer.kind === 'cloud') {
     content = <CloudPropertiesEditor index={selectedLayer.index} />
   } else if (selectedLayer.kind === 'wind') {
-    content = (
-      <div style={{ color: '#64748b', fontFamily: 'monospace', fontSize: 12 }}>
-        Wind layer properties — Slice 5a-iv.
-      </div>
-    )
+    content = <WindPropertiesEditor index={selectedLayer.index} />
   }
 
   return (
