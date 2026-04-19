@@ -1228,19 +1228,55 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     if (dr_cloud_coverage) XPLMSetDatavf(dr_cloud_coverage, cloud_cov,  0, 3);
     if (dr_cloud_type)     XPLMSetDatavf(dr_cloud_type,     cloud_tp,   0, 3);
 
-    // Wind layers [13]
-    float w_alt[13]={}, w_dir[13]={}, w_spd[13]={}, w_turb[13]={};
-    int valid_winds = 0;
+    // Wind layers [13] — pack authored into lowest indices, extrapolate above.
+    // X-Plane's wind_* arrays are live weather. Leaving unauthored slots at
+    // zero caused X-Plane to blend phantom "wind=0 at altitude=0" layers,
+    // pulling high-altitude winds toward a default direction regardless of
+    // what was authored. Fix: collect valid layers, sort ascending by alt,
+    // pack into [0..n-1], then fill [n..12] with top_alt + k*5000m using
+    // the highest-authored layer's dir/spd/turb. Mirrors what weather_solver
+    // does internally (clamp above the highest authored layer).
+    struct AuthoredWind {
+        float alt_m;
+        float dir_deg;
+        float spd_kt;
+        float turb_0_10;
+    };
+    std::vector<AuthoredWind> authored;
+    authored.reserve(13);
     for (int i = 0; i < 13; i++) {
         if (pending_wx.wind[i].valid) {
-            w_alt[i]  = pending_wx.wind[i].alt_m;
-            w_dir[i]  = pending_wx.wind[i].dir_deg;
-            w_spd[i]  = pending_wx.wind[i].speed_ms / 0.51444f;  // m/s → kts
-            w_turb[i] = pending_wx.wind[i].turb * 10.0f;         // 0-1 → 0-10
-            valid_winds++;
+            authored.push_back({
+                pending_wx.wind[i].alt_m,
+                pending_wx.wind[i].dir_deg,
+                pending_wx.wind[i].speed_ms / 0.51444f,  // m/s → kts
+                pending_wx.wind[i].turb * 10.0f,         // 0-1 → 0-10
+            });
         }
     }
-    if (valid_winds > 0) {
+    if (!authored.empty()) {
+        std::sort(authored.begin(), authored.end(),
+                  [](const AuthoredWind & a, const AuthoredWind & b) {
+                      return a.alt_m < b.alt_m;
+                  });
+        float w_alt[13]={}, w_dir[13]={}, w_spd[13]={}, w_turb[13]={};
+        const int n = static_cast<int>(authored.size());
+        for (int i = 0; i < n; i++) {
+            w_alt[i]  = authored[i].alt_m;
+            w_dir[i]  = authored[i].dir_deg;
+            w_spd[i]  = authored[i].spd_kt;
+            w_turb[i] = authored[i].turb_0_10;
+        }
+        // Extrapolate above the highest authored layer. First extrapolated
+        // slot (i = n) sits at top_alt + 5000m; each subsequent slot adds
+        // another 5000m. Direction/speed/turbulence copied from top.
+        const AuthoredWind & top = authored.back();
+        for (int i = n; i < 13; i++) {
+            w_alt[i]  = top.alt_m + (i - (n - 1)) * 5000.0f;
+            w_dir[i]  = top.dir_deg;
+            w_spd[i]  = top.spd_kt;
+            w_turb[i] = top.turb_0_10;
+        }
         if (dr_wind_alt)  XPLMSetDatavf(dr_wind_alt,  w_alt,  0, 13);
         if (dr_wind_dir)  XPLMSetDatavf(dr_wind_dir,  w_dir,  0, 13);
         if (dr_wind_spd)  XPLMSetDatavf(dr_wind_spd,  w_spd,  0, 13);
