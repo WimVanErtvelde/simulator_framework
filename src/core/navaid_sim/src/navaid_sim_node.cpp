@@ -139,17 +139,21 @@ public:
     world_ = std::make_unique<AS::World>();
     model_ = std::make_unique<AS::Model>();
 
+    // Load WMM regardless of navdb format — magnetic variation at the aircraft
+    // position is an independent concern from navaid DB parsing. xp12 also
+    // uses magdec_ to apply declination to VOR radials during parse.
+    magdec_ = std::make_unique<MagDec>();
+    if (!magdec_->load(magdec_path)) {
+      RCLCPP_WARN(this->get_logger(), "Failed to load magdec: %s — bearings may be inaccurate",
+                  magdec_path.c_str());
+    }
+
     if (navdb_format == "a424") {
       if (!A424::A424Parser::ParseA424(navdb_path, world_.get())) {
         RCLCPP_ERROR(this->get_logger(), "Failed to load navaid database: %s", navdb_path.c_str());
         return CallbackReturn::FAILURE;
       }
     } else {
-      magdec_ = std::make_unique<MagDec>();
-      if (!magdec_->load(magdec_path)) {
-        RCLCPP_WARN(this->get_logger(), "Failed to load magdec: %s — bearings may be inaccurate",
-                    magdec_path.c_str());
-      }
       AS::WorldParser parser;
       parser.parseXP12(navdb_path, *world_,
                        magdec_ && magdec_->isLoaded() ? magdec_.get() : nullptr);
