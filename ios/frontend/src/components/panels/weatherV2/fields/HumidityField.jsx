@@ -1,21 +1,30 @@
-import { useWeatherV2Store } from '../../../../store/useWeatherV2Store'
 import { fieldBox, fieldHeader, fieldLabel, fieldValue, slider } from './fieldStyles'
+import OverridePill from './OverridePill'
 
-export default function HumidityField() {
-  const humidity_pct = useWeatherV2Store(s => s.draft.global.humidity_pct)
-  const updateDraft  = useWeatherV2Store(s => s.updateDraft)
+export default function HumidityField({
+  value,
+  onChange,
+  showOverrideToggle = false,
+  overrideEnabled    = true,
+  onToggleOverride   = () => {},
+}) {
+  const disabled = !overrideEnabled
 
   return (
-    <div style={fieldBox}>
+    <div style={{ ...fieldBox, opacity: disabled ? 0.4 : 1 }}>
       <div style={fieldHeader}>
         <span style={fieldLabel}>Humidity</span>
-        <span style={fieldValue}>{Math.round(humidity_pct)} %</span>
+        {showOverrideToggle && (
+          <OverridePill enabled={overrideEnabled} onToggle={onToggleOverride} />
+        )}
+        <span style={fieldValue}>{Math.round(value)} %</span>
       </div>
       <input
         type="range"
         min={0} max={100} step={1}
-        value={humidity_pct}
-        onChange={(e) => updateDraft(['global', 'humidity_pct'], Number(e.target.value))}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(Number(e.target.value))}
         style={slider}
       />
     </div>

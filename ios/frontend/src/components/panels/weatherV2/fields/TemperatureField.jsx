@@ -1,36 +1,58 @@
 import { useSimStore } from '../../../../store/useSimStore'
 import { useShallow } from 'zustand/react/shallow'
-import { useWeatherV2Store } from '../../../../store/useWeatherV2Store'
+import { isaTemperatureAt } from '../weatherUnits'
+import { M_TO_FT } from '../graph/mslScale'
 import { fieldBox, fieldHeader, fieldLabel, fieldValue, slider,
          COLOR_TEXT_MUTED } from './fieldStyles'
+import OverridePill from './OverridePill'
 
 const READOUT_VALUE_COLOR = '#94a3b8'
+const K_OFFSET = 273.15
 
 // Authors sea-level temperature. "At aircraft" readout resolves the
 // authored SL value to the aircraft's current position via the live
-// atmosphere broadcast.
-export default function TemperatureField() {
-  const temperature_c = useWeatherV2Store(s => s.draft.global.temperature_c)
-  const updateDraft   = useWeatherV2Store(s => s.updateDraft)
-
+// atmosphere broadcast (always visible — display-only, independent of
+// override state). Station readout (dormant on Global) resolves the
+// authored SL value to the station elevation via ISA lapse.
+export default function TemperatureField({
+  value,
+  onChange,
+  showOverrideToggle  = false,
+  overrideEnabled     = true,
+  onToggleOverride    = () => {},
+  showStationReadout  = false,
+  stationIcao         = '',
+  stationElevM        = 0,
+}) {
   const { oatAtAircraftC, altFtAgl } = useSimStore(useShallow(s => ({
-    oatAtAircraftC: s.atmosphere?.oatCelsius,   // may be undefined until broadcast
+    oatAtAircraftC: s.atmosphere?.oatCelsius,
     altFtAgl:       s.fdm?.altFtAgl ?? 0,
   })))
 
+  const disabled      = !overrideEnabled
   const aircraftAglFt = Math.round(altFtAgl)
 
+  // Resolve authored SL temperature to station elevation via ISA lapse.
+  // isaTemperatureAt returns Kelvin; convert back to °C for display.
+  const stationTempC = showStationReadout && stationIcao
+    ? isaTemperatureAt(value + K_OFFSET, stationElevM) - K_OFFSET
+    : null
+
   return (
-    <div style={fieldBox}>
+    <div style={{ ...fieldBox, opacity: disabled ? 0.4 : 1 }}>
       <div style={fieldHeader}>
         <span style={fieldLabel}>Sea Level Temp</span>
-        <span style={fieldValue}>{temperature_c.toFixed(0)} °C</span>
+        {showOverrideToggle && (
+          <OverridePill enabled={overrideEnabled} onToggle={onToggleOverride} />
+        )}
+        <span style={fieldValue}>{value.toFixed(0)} °C</span>
       </div>
       <input
         type="range"
         min={-100} max={60} step={1}
-        value={temperature_c}
-        onChange={(e) => updateDraft(['global', 'temperature_c'], Number(e.target.value))}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(Number(e.target.value))}
         style={slider}
       />
 
@@ -42,6 +64,18 @@ export default function TemperatureField() {
           At aircraft ({aircraftAglFt.toLocaleString()} ft AGL):{' '}
           <span style={{ color: READOUT_VALUE_COLOR }}>
             {oatAtAircraftC.toFixed(1)} °C
+          </span>
+        </div>
+      )}
+
+      {stationTempC !== null && (
+        <div style={{
+          fontSize: 11, fontFamily: 'monospace', lineHeight: 1.4,
+          color: COLOR_TEXT_MUTED,
+        }}>
+          At {stationIcao} ({Math.round(stationElevM * M_TO_FT).toLocaleString()} ft):{' '}
+          <span style={{ color: READOUT_VALUE_COLOR }}>
+            {stationTempC.toFixed(1)} °C
           </span>
         </div>
       )}

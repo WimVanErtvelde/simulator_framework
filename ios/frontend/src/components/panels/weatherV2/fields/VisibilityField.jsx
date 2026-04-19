@@ -1,32 +1,43 @@
 import { useState } from 'react'
-import { useWeatherV2Store } from '../../../../store/useWeatherV2Store'
 import { VISIBILITY_PRESETS } from '../weatherPresets'
 import { formatVisibility, isRvrMode } from '../weatherUnits'
 import { fieldBox, fieldHeader, fieldLabel, fieldValue, slider } from './fieldStyles'
 import { PillGroup, PresetChip } from './fieldCommon'
+import OverridePill from './OverridePill'
 
 const UNIT_OPTIONS = [{ id: 'm', label: 'm' }, { id: 'SM', label: 'SM' }]
 
-export default function VisibilityField() {
-  const visibility_m = useWeatherV2Store(s => s.draft.global.visibility_m)
-  const updateDraft  = useWeatherV2Store(s => s.updateDraft)
+// Scalar field — accepts the authored value via props so it can be
+// reused in patch tab context. Override/inherit pill dormant on Global.
+export default function VisibilityField({
+  value,
+  onChange,
+  showOverrideToggle = false,
+  overrideEnabled   = true,
+  onToggleOverride  = () => {},
+}) {
   const [unit, setUnit] = useState('m')
+  const disabled = !overrideEnabled
 
-  const rvr = isRvrMode(visibility_m)
+  const rvr = isRvrMode(value)
 
   return (
-    <div style={fieldBox}>
+    <div style={{ ...fieldBox, opacity: disabled ? 0.4 : 1 }}>
       <div style={fieldHeader}>
         <span style={fieldLabel}>{rvr ? 'RVR' : 'Visibility'}</span>
-        <span style={fieldValue}>{formatVisibility(visibility_m, unit)}</span>
+        {showOverrideToggle && (
+          <OverridePill enabled={overrideEnabled} onToggle={onToggleOverride} />
+        )}
+        <span style={fieldValue}>{formatVisibility(value, unit)}</span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px', gap: 8, alignItems: 'center' }}>
         <input
           type="range"
           min={0} max={160000}
           step={rvr ? 25 : 100}
-          value={visibility_m}
-          onChange={(e) => updateDraft(['global', 'visibility_m'], Number(e.target.value))}
+          value={value}
+          disabled={disabled}
+          onChange={(e) => onChange(Number(e.target.value))}
           style={slider}
         />
         <PillGroup options={UNIT_OPTIONS} value={unit} onChange={setUnit} />
@@ -36,7 +47,7 @@ export default function VisibilityField() {
           <PresetChip
             key={p.id}
             label={p.label}
-            onClick={() => updateDraft(['global', 'visibility_m'], p.visibility_m)}
+            onClick={disabled ? undefined : () => onChange(p.visibility_m)}
           />
         ))}
       </div>

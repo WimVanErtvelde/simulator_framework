@@ -1,12 +1,13 @@
-import { useWeatherV2Store } from '../../../../store/useWeatherV2Store'
-import { useShallow } from 'zustand/react/shallow'
 import { fieldBox, fieldHeader, fieldLabel, fieldValue, neutralBtn,
          COLOR_ACCENT_TEAL, COLOR_BG_CARD, COLOR_BORDER, COLOR_TEXT_MUTED } from './fieldStyles'
+import OverridePill from './OverridePill'
 
 // Runway condition — 6-category × 3-severity model, mapped to the 0-15
-// runway_friction index on the wire. Same semantics as WX but state now
-// lives in useWeatherV2Store.draft.global.runway_friction — commits atomically
-// on Accept alongside atmospheric scalars and cloud layers (Slice 5a-iii.1).
+// runway_friction index on the wire. Same semantics as WX but decoupled
+// from the store: takes value + onChange as props.
+//
+// Commits atomically on Accept alongside atmospheric scalars and cloud
+// layers (Slice 5a-iii.1).
 
 const RUNWAY_CATEGORIES = [
   { id: 'DRY',   label: 'DRY',   color: '#22c55e', baseIndex:  0, noSeverity: true },
@@ -35,14 +36,19 @@ function runwayDescribe(index) {
   return { categoryId: cat.id, severity, label: `${cat.label} (${severity.toLowerCase()})` }
 }
 
-export default function RunwayField() {
-  const { runwayIndex, setRunwayFriction } = useWeatherV2Store(useShallow(s => ({
-    runwayIndex:       s.draft.global.runway_friction ?? 0,
-    setRunwayFriction: s.setRunwayFriction,
-  })))
-  const runwayActive = runwayDescribe(Number(runwayIndex) || 0)
+export default function RunwayField({
+  value,
+  onChange,
+  showOverrideToggle = false,
+  overrideEnabled    = true,
+  onToggleOverride   = () => {},
+}) {
+  const disabled     = !overrideEnabled
+  const runwayIndex  = Number(value) || 0
+  const runwayActive = runwayDescribe(runwayIndex)
 
   const selectRunwayCategory = (categoryId) => {
+    if (disabled) return
     const cat = RUNWAY_CATEGORIES.find(c => c.id === categoryId)
     if (!cat) return
     // DRY is a single bucket; non-DRY defaults to MEDIUM unless the user
@@ -52,18 +58,22 @@ export default function RunwayField() {
     if (!cat.noSeverity && runwayActive.categoryId === categoryId && runwayActive.severity) {
       severity = runwayActive.severity
     }
-    setRunwayFriction(runwayIndexFromCategorySeverity(categoryId, severity))
+    onChange(runwayIndexFromCategorySeverity(categoryId, severity))
   }
 
   const selectRunwaySeverity = (severity) => {
+    if (disabled) return
     if (runwayActive.categoryId === 'DRY') return
-    setRunwayFriction(runwayIndexFromCategorySeverity(runwayActive.categoryId, severity))
+    onChange(runwayIndexFromCategorySeverity(runwayActive.categoryId, severity))
   }
 
   return (
-    <div style={fieldBox}>
+    <div style={{ ...fieldBox, opacity: disabled ? 0.4 : 1 }}>
       <div style={fieldHeader}>
         <span style={fieldLabel}>Runway Condition</span>
+        {showOverrideToggle && (
+          <OverridePill enabled={overrideEnabled} onToggle={onToggleOverride} />
+        )}
         <span style={fieldValue}>{runwayActive.label}</span>
       </div>
 
@@ -74,6 +84,7 @@ export default function RunwayField() {
             <button
               key={cat.id}
               type="button"
+              disabled={disabled}
               onClick={() => selectRunwayCategory(cat.id)}
               onTouchEnd={(e) => { e.preventDefault(); selectRunwayCategory(cat.id) }}
               style={{
@@ -81,6 +92,7 @@ export default function RunwayField() {
                 background:  active ? `${cat.color}22` : COLOR_BG_CARD,
                 borderColor: active ? cat.color : COLOR_BORDER,
                 color:       active ? cat.color : COLOR_TEXT_MUTED,
+                cursor: disabled ? 'not-allowed' : 'pointer',
               }}
             >{cat.label}</button>
           )
@@ -95,20 +107,21 @@ export default function RunwayField() {
           const active = !dry && runwayActive.severity === sev
           const cat    = RUNWAY_CATEGORIES.find(c => c.id === runwayActive.categoryId)
           const color  = cat?.color ?? COLOR_ACCENT_TEAL
+          const rowDisabled = disabled || dry
           return (
             <button
               key={sev}
               type="button"
-              disabled={dry}
+              disabled={rowDisabled}
               onClick={() => selectRunwaySeverity(sev)}
-              onTouchEnd={(e) => { e.preventDefault(); if (!dry) selectRunwaySeverity(sev) }}
+              onTouchEnd={(e) => { e.preventDefault(); if (!rowDisabled) selectRunwaySeverity(sev) }}
               style={{
                 ...neutralBtn, height: 32, fontSize: 10,
                 background:  active ? `${color}22` : COLOR_BG_CARD,
                 borderColor: active ? color : COLOR_BORDER,
                 color:       active ? color : COLOR_TEXT_MUTED,
                 opacity: dry ? 0.35 : 1,
-                cursor: dry ? 'not-allowed' : 'pointer',
+                cursor: rowDisabled ? 'not-allowed' : 'pointer',
               }}
             >{sev}</button>
           )
