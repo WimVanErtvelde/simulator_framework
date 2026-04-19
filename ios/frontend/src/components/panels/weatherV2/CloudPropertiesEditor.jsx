@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import { useSimStore } from '../../../store/useSimStore'
 import { useShallow } from 'zustand/react/shallow'
 import { useWeatherV2Store } from '../../../store/useWeatherV2Store'
+import NumpadPopup from '../../ui/NumpadPopup'
 import { CLOUD_TYPES } from './weatherPresets'
 import NonLinearSlider from './graph/NonLinearSlider'
 import { MAX_FT, M_TO_FT, FT_TO_M } from './graph/mslScale'
@@ -8,11 +10,16 @@ import { MAX_FT, M_TO_FT, FT_TO_M } from './graph/mslScale'
 const MIN_THICK_FT = 100
 
 // Left-column editor for the selected cloud layer. All controls mutate
-// draft only — no WS until Accept. Base MSL and Top MSL each pair a
-// numeric input with a NonLinearSlider; combined with the graph drag
-// they are three-way-bound to the same draft field.
+// draft only — no WS until Accept. Base and Top each expose MSL + AGL
+// numeric entry (touch-friendly NumpadPopup) plus a sqrt-mapped slider.
+// Graph drag, slider, MSL input, and AGL input are all bound to the same
+// draft field — edit any one and the others reflow on re-render.
 export default function CloudPropertiesEditor({ index }) {
-  const stationElevM = useSimStore(s => s.activeWeather?.stationElevationM ?? 0)
+  const { stationElevM, altFtMsl, altFtAgl } = useSimStore(useShallow(s => ({
+    stationElevM: s.activeWeather?.stationElevationM ?? 0,
+    altFtMsl:     s.fdm?.altFtMsl ?? 0,
+    altFtAgl:     s.fdm?.altFtAgl ?? 0,
+  })))
 
   const { cl, updateCloud, removeCloud } = useWeatherV2Store(useShallow(s => ({
     cl:          s.draft.global.cloud_layers?.[index],
@@ -24,16 +31,34 @@ export default function CloudPropertiesEditor({ index }) {
 
   const type          = cl.cloud_type ?? 7
   const coverage      = Math.round(cl.coverage_pct ?? 0)
-  const baseAglFt     = cl.base_agl_ft ?? 0
-  const thicknessFt   = (cl.thickness_m ?? 0) * M_TO_FT
-  const stationElevFt = stationElevM * M_TO_FT
-  const baseMslFt     = Math.round(baseAglFt + stationElevFt)
-  const topMslFt      = Math.round(baseMslFt + thicknessFt)
 
-  // Mutators — translate MSL edits back into AGL+thickness storage.
+  // Wire stores base_agl_ft and thickness_m. The backend converts
+  // base_agl_ft → base_elevation_m using the weather station elevation.
+  // When no station is set, we fall back to the aircraft's current ground
+  // elevation (altFtMsl − altFtAgl) so the MSL/AGL inputs show sensible
+  // different values at airport elevation.
+  const stationElevFt = stationElevM * M_TO_FT
+  const groundElevFt  = stationElevM > 0
+    ? stationElevFt
+    : Math.max(0, altFtMsl - altFtAgl)
+
+  // Offset between wire AGL reference (station) and UI AGL reference
+  // (ground under aircraft). Zero when station is set; non-zero when
+  // falling back to aircraft terrain. Applied so UI AGL reads as
+  // "above the ground below me," not "above MSL 0."
+  const uiAglOffsetFt = groundElevFt - stationElevFt
+
+  const baseAglWireFt = cl.base_agl_ft ?? 0                       // on the wire
+  const thicknessFt   = (cl.thickness_m ?? 0) * M_TO_FT
+  const baseMslFt     = Math.round(baseAglWireFt + stationElevFt)
+  const topMslFt      = Math.round(baseMslFt + thicknessFt)
+  const baseAglUiFt   = Math.round(baseAglWireFt - uiAglOffsetFt) // displayed
+  const topAglUiFt    = Math.round(baseAglUiFt + thicknessFt)
+
+  // ── Mutators ───────────────────────────────────────────────────────────
+  // MSL edits — translate to wire AGL + thickness.
   const setBaseMsl = (newBaseMsl) => {
     const newBaseAgl = Math.max(0, newBaseMsl - stationElevFt)
-    // Preserve thickness, but shrink if new base would push top past MAX_FT.
     const maxThicknessFt = MAX_FT - (newBaseAgl + stationElevFt)
     const newThicknessFt = Math.max(MIN_THICK_FT, Math.min(thicknessFt, maxThicknessFt))
     updateCloud(index, {
@@ -45,6 +70,17 @@ export default function CloudPropertiesEditor({ index }) {
     const newThicknessFt = Math.max(MIN_THICK_FT, newTopMsl - baseMslFt)
     const capped = Math.min(newThicknessFt, MAX_FT - baseMslFt)
     updateCloud(index, { thickness_m: capped * FT_TO_M })
+  }
+
+  // AGL edits — UI AGL is relative to ground elevation. Translate to
+  // MSL first, then to wire AGL (which is relative to station).
+  const setBaseAgl = (newUiAgl) => {
+    const newMsl = Math.max(0, newUiAgl) + groundElevFt
+    setBaseMsl(newMsl)
+  }
+  const setTopAgl = (newUiAgl) => {
+    const newMsl = Math.max(0, newUiAgl) + groundElevFt
+    setTopMsl(newMsl)
   }
 
   return (
@@ -105,30 +141,29 @@ export default function CloudPropertiesEditor({ index }) {
         />
       </div>
 
-      {/* Base MSL — numeric input + sqrt-mapped slider */}
+      {/* Base — MSL + AGL inputs on one row, slider below */}
       <AltitudeField
         label="Base"
-        valueFt={baseMslFt}
-        minFt={Math.round(stationElevFt)}
-        maxFt={Math.max(Math.round(stationElevFt) + MIN_THICK_FT, topMslFt - MIN_THICK_FT)}
-        onChange={setBaseMsl}
+        mslFt={baseMslFt}
+        aglFt={baseAglUiFt}
+        minMslFt={Math.round(stationElevFt)}
+        maxMslFt={Math.max(Math.round(stationElevFt) + MIN_THICK_FT, topMslFt - MIN_THICK_FT)}
+        onSubmitMsl={setBaseMsl}
+        onSubmitAgl={setBaseAgl}
       />
 
-      {/* Top MSL — numeric input + sqrt-mapped slider */}
+      {/* Top — MSL + AGL inputs on one row, thickness shown inline for
+          reference, slider below */}
       <AltitudeField
         label="Top"
-        valueFt={topMslFt}
-        minFt={baseMslFt + MIN_THICK_FT}
-        maxFt={MAX_FT}
-        onChange={setTopMsl}
+        detail={`thickness: ${Math.round(thicknessFt).toLocaleString()} ft`}
+        mslFt={topMslFt}
+        aglFt={topAglUiFt}
+        minMslFt={baseMslFt + MIN_THICK_FT}
+        maxMslFt={MAX_FT}
+        onSubmitMsl={setTopMsl}
+        onSubmitAgl={setTopAgl}
       />
-
-      <div style={{
-        fontSize: 10, color: '#475569', fontFamily: 'monospace',
-        fontStyle: 'italic',
-      }}>
-        AGL base {Math.round(baseAglFt).toLocaleString()} ft · thickness {Math.round(thicknessFt).toLocaleString()} ft
-      </div>
 
       <button
         type="button"
@@ -149,44 +184,92 @@ export default function CloudPropertiesEditor({ index }) {
   )
 }
 
-// Numeric input + NonLinearSlider for one altitude value. Three-way-bound
-// to the same draft field: graph drag / slider / input all call onChange
-// with ft MSL; the parent writes it to draft; valueFt flows back in on
-// re-render.
-function AltitudeField({ label, valueFt, minFt, maxFt, onChange }) {
+// One altitude row: "BASE" / "TOP" label, MSL numpad field, AGL numpad
+// field, and a sqrt-mapped slider (MSL-driven). All four controls
+// reflow through the same draft field — edit any one and the others
+// update on re-render.
+function AltitudeField({ label, detail, mslFt, aglFt, minMslFt, maxMslFt,
+                        onSubmitMsl, onSubmitAgl }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between',
-                    alignItems: 'center',
-                    fontSize: 11, fontFamily: 'monospace' }}>
-        <span style={{ color: '#64748b', letterSpacing: 1, textTransform: 'uppercase' }}>
-          {label} (ft MSL)
-        </span>
-        <input
-          type="number"
-          value={valueFt}
-          min={minFt} max={maxFt} step={50}
-          onChange={(e) => {
-            const v = Number(e.target.value)
-            if (Number.isFinite(v)) onChange(Math.max(minFt, Math.min(maxFt, v)))
-          }}
-          style={{
-            width: 88, height: 22, padding: '0 6px',
-            background: '#1c2333',
-            border: '1px solid #1e293b',
-            borderRadius: 2,
-            color: '#e2e8f0',
-            fontFamily: 'monospace', fontSize: 12,
-            fontVariantNumeric: 'tabular-nums',
-            textAlign: 'right',
-          }}
+      <div style={{
+        display: 'flex', alignItems: 'center',
+        gap: 6, flexWrap: 'wrap',
+        fontSize: 11, fontFamily: 'monospace',
+      }}>
+        <span style={{
+          color: '#64748b', letterSpacing: 1, textTransform: 'uppercase',
+          flex: '0 0 auto', minWidth: 36,
+        }}>{label}</span>
+        <span style={{
+          color: '#94a3b8', fontSize: 11,
+          flex: '1 1 auto', minWidth: 0,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>{detail}</span>
+        <NumpadField
+          label={`${label} MSL`}
+          unit="MSL"
+          valueFt={mslFt}
+          onSubmit={onSubmitMsl}
+        />
+        <NumpadField
+          label={`${label} AGL`}
+          unit="AGL"
+          valueFt={aglFt}
+          onSubmit={onSubmitAgl}
         />
       </div>
       <NonLinearSlider
-        valueFt={valueFt}
-        minFt={minFt} maxFt={maxFt}
-        onChange={onChange}
+        valueFt={mslFt}
+        minFt={minMslFt} maxFt={maxMslFt}
+        onChange={onSubmitMsl}
       />
     </div>
+  )
+}
+
+// Click-to-open numpad input — value is an integer ft, rendered
+// right-aligned with a trailing unit badge. Opens NumpadPopup on click;
+// submits an integer back to onSubmit.
+function NumpadField({ label, unit, valueFt, onSubmit }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        onTouchEnd={(e) => { e.preventDefault(); setOpen(true) }}
+        style={{
+          height: 22, padding: '0 6px',
+          background: '#1c2333',
+          border: '1px solid #1e293b',
+          borderRadius: 2,
+          color: '#e2e8f0',
+          fontFamily: 'monospace', fontSize: 12,
+          fontVariantNumeric: 'tabular-nums',
+          display: 'flex', alignItems: 'center', gap: 4,
+          cursor: 'pointer', touchAction: 'manipulation',
+        }}
+      >
+        <span style={{ flex: '0 1 auto', textAlign: 'right', minWidth: 40 }}>
+          {Number(valueFt).toLocaleString()}
+        </span>
+        <span style={{ fontSize: 9, color: '#64748b', letterSpacing: 1 }}>{unit}</span>
+      </button>
+      {open && (
+        <NumpadPopup
+          label={label}
+          hint="ft"
+          value={String(Math.round(valueFt))}
+          allowDecimal={false}
+          onSubmit={(v) => {
+            const n = Number(v)
+            if (Number.isFinite(n)) onSubmit(n)
+            setOpen(false)
+          }}
+          onCancel={() => setOpen(false)}
+        />
+      )}
+    </>
   )
 }

@@ -381,6 +381,7 @@ class IosBackendNode(Node):
             'lat': round(float(msg.latitude_deg), 6),
             'lon': round(float(msg.longitude_deg), 6),
             'alt_ft_msl': round(float(msg.altitude_msl_m) * 3.28084, 1),
+            'alt_ft_agl': round(float(msg.altitude_agl_m) * 3.28084, 1),
             'ias_kt': round(float(msg.ias_ms) * 1.94384, 1),
             'gnd_speed_kt': round(float(msg.ground_speed_ms) * 1.94384, 1),
             'hdg_true_deg': round(float(msg.true_heading_rad) * 180.0 / _m.pi, 1),

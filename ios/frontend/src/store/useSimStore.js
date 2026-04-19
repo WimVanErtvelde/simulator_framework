@@ -45,7 +45,7 @@ export const useSimStore = create((set, get) => ({
   // FDM
   fdm: {
     lat: 51.5074, lon: -0.1278,
-    altFtMsl: 0, iasKt: 0, gndSpeedKt: 0,
+    altFtMsl: 0, altFtAgl: 0, iasKt: 0, gndSpeedKt: 0,
     hdgTrueDeg: 0, trackDeg: 0, vsFpm: 0,
     pitchDeg: 0, rollDeg: 0, isHelicopter: false,
     cgXIn: 0, cgYIn: 0, totalMassKg: 0,
@@ -437,6 +437,7 @@ export const useSimStore = create((set, get) => ({
               lat: msg.lat ?? s.fdm.lat,
               lon: msg.lon ?? s.fdm.lon,
               altFtMsl: msg.alt_ft_msl ?? (msg.altitude_m_msl ? msg.altitude_m_msl * 3.28084 : s.fdm.altFtMsl),
+              altFtAgl: msg.alt_ft_agl ?? s.fdm.altFtAgl,
               iasKt: msg.ias_kt ?? s.fdm.iasKt,
               gndSpeedKt: msg.gnd_speed_kt ?? s.fdm.gndSpeedKt,
               hdgTrueDeg: msg.hdg_true_deg ?? s.fdm.hdgTrueDeg,

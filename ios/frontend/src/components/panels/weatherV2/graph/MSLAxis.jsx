@@ -1,5 +1,5 @@
 import { useSimStore } from '../../../../store/useSimStore'
-import { axisTicks, ftToY, M_TO_FT } from './mslScale'
+import { axisTicks, ftToY } from './mslScale'
 
 // Fixed MSL axis width (label column).
 export const AXIS_WIDTH  = 60
@@ -9,8 +9,8 @@ const TICK_LENGTH = 6
 // Ownship altitude comes from useSimStore.fdm.altFtMsl (already in feet).
 // Station elevation (from activeWeather) drives the AGL secondary line.
 export default function MSLAxis({ height }) {
-  const altFtMsl     = useSimStore(s => s.fdm?.altFtMsl ?? 0)
-  const stationElevM = useSimStore(s => s.activeWeather?.stationElevationM ?? 0)
+  const altFtMsl = useSimStore(s => s.fdm?.altFtMsl ?? 0)
+  const altFtAgl = useSimStore(s => s.fdm?.altFtAgl ?? 0)
 
   const ticks = axisTicks()
   const ownY  = ftToY(altFtMsl, height)
@@ -20,9 +20,10 @@ export default function MSLAxis({ height }) {
     ? `FL${String(Math.round(altFtMsl / 100)).padStart(3, '0')}`
     : `${Math.round(altFtMsl).toLocaleString()} ft MSL`
 
-  // AGL only meaningful when a station elevation is set.
-  const aglFt   = altFtMsl - stationElevM * M_TO_FT
-  const showAgl = stationElevM > 0
+  // AGL is the FDM's own altitude-above-ground. Show whenever the terrain
+  // under the aircraft is above sea level (non-trivial altFtMsl−altFtAgl).
+  const aglFt   = altFtAgl
+  const showAgl = Math.abs(altFtMsl - altFtAgl) > 1
 
   return (
     <div style={{
