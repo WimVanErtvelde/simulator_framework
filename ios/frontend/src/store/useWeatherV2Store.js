@@ -100,4 +100,11 @@ export const useWeatherV2Store = create((set, get) => ({
   },
 
   discard: () => set((state) => ({ draft: structuredClone(state.serverState) })),
+
+  // ── Layer selection (drives LayerPropertiesColumn content) ─────────────
+  // null when nothing selected; empty-state shown.
+  selectedLayer: null,   // { kind: 'cloud' | 'wind', index: number } | null
+
+  selectLayer:   (kind, index) => set({ selectedLayer: { kind, index } }),
+  clearSelection: ()           => set({ selectedLayer: null }),
 }))

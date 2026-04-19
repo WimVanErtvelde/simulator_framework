@@ -22,5 +22,20 @@ export const PRECIP_TYPES = [
   { id: 3, label: 'Sleet' },
 ]
 
+// CIGI cloud types with V2 display labels + band colors.
+// Colors are chosen to hint the severity of the layer (pink/Cb stands out).
+export const CLOUD_TYPES = [
+  { id: 5,  label: 'Cirrus',        color: '#94a3b8' },
+  { id: 10, label: 'Stratus',       color: '#71717a' },
+  { id: 7,  label: 'Cumulus',       color: '#39d0d8' },
+  { id: 6,  label: 'Cumulonimbus',  color: '#bc4fcb' },
+  { id: 8,  label: 'Nimbostratus',  color: '#3b82f6' },
+  { id: 9,  label: 'Stratocumulus', color: '#64748b' },
+]
+
+export function cloudTypeInfo(id) {
+  return CLOUD_TYPES.find(t => t.id === id) ?? { id, label: 'Cloud', color: '#39d0d8' }
+}
+
 // Runway condition model is NOT here — V2 uses the WX panel's 6-category ×
 // 3-severity index (0-15) directly via set_runway_condition. See RunwayField.
