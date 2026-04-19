@@ -1,13 +1,12 @@
-import { useSimStore } from '../../../../store/useSimStore'
+import { useWeatherV2Store } from '../../../../store/useWeatherV2Store'
 import { useShallow } from 'zustand/react/shallow'
 import { fieldBox, fieldHeader, fieldLabel, fieldValue, neutralBtn,
          COLOR_ACCENT_TEAL, COLOR_BG_CARD, COLOR_BORDER, COLOR_TEXT_MUTED } from './fieldStyles'
 
 // Runway condition — 6-category × 3-severity model, mapped to the 0-15
-// runway_friction index on the wire. Ported directly from WeatherPanel.jsx
-// so V1 (WX) and V2 (WX2) share the same semantics and same backend handler.
-// State lives in useSimStore.activeWeather.runwayFriction — no draft/Accept;
-// each tap fires set_runway_condition immediately.
+// runway_friction index on the wire. Same semantics as WX but state now
+// lives in useWeatherV2Store.draft.global.runway_friction — commits atomically
+// on Accept alongside atmospheric scalars and cloud layers (Slice 5a-iii.1).
 
 const RUNWAY_CATEGORIES = [
   { id: 'DRY',   label: 'DRY',   color: '#22c55e', baseIndex:  0, noSeverity: true },
@@ -37,18 +36,11 @@ function runwayDescribe(index) {
 }
 
 export default function RunwayField() {
-  const { ws, wsConnected, runwayFriction } = useSimStore(useShallow(s => ({
-    ws: s.ws, wsConnected: s.wsConnected,
-    runwayFriction: s.activeWeather?.runwayFriction ?? 0,
+  const { runwayIndex, setRunwayFriction } = useWeatherV2Store(useShallow(s => ({
+    runwayIndex:       s.draft.global.runway_friction ?? 0,
+    setRunwayFriction: s.setRunwayFriction,
   })))
-
-  const runwayIndex  = Number(runwayFriction) || 0
-  const runwayActive = runwayDescribe(runwayIndex)
-
-  const sendRunwayIndex = (index) => {
-    if (!ws || !wsConnected) return
-    ws.send(JSON.stringify({ type: 'set_runway_condition', data: { index } }))
-  }
+  const runwayActive = runwayDescribe(Number(runwayIndex) || 0)
 
   const selectRunwayCategory = (categoryId) => {
     const cat = RUNWAY_CATEGORIES.find(c => c.id === categoryId)
@@ -60,12 +52,12 @@ export default function RunwayField() {
     if (!cat.noSeverity && runwayActive.categoryId === categoryId && runwayActive.severity) {
       severity = runwayActive.severity
     }
-    sendRunwayIndex(runwayIndexFromCategorySeverity(categoryId, severity))
+    setRunwayFriction(runwayIndexFromCategorySeverity(categoryId, severity))
   }
 
   const selectRunwaySeverity = (severity) => {
     if (runwayActive.categoryId === 'DRY') return
-    sendRunwayIndex(runwayIndexFromCategorySeverity(runwayActive.categoryId, severity))
+    setRunwayFriction(runwayIndexFromCategorySeverity(runwayActive.categoryId, severity))
   }
 
   return (

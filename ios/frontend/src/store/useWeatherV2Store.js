@@ -25,12 +25,16 @@ const initialDraft = {
     humidity_pct:         50,
     precipitation_rate:   0.0,
     precipitation_type:   0,
-    cloud_layers:         [],   // Slice 5a-iii
+    cloud_layers:         [],   // {cloud_type, base_agl_ft, thickness_m, coverage_pct}
     wind_layers:          [],   // Slice 5a-iv
+    runway_friction:      0,    // 0-15 EURAMEC index (0=DRY)
   },
   patches: [],
   microbursts: [],
 }
+
+const M_TO_FT_CONST = 3.28084
+const FT_TO_M_CONST = 0.3048
 
 function draftEquals(a, b) {
   return JSON.stringify(a) === JSON.stringify(b)
@@ -107,4 +111,76 @@ export const useWeatherV2Store = create((set, get) => ({
 
   selectLayer:   (kind, index) => set({ selectedLayer: { kind, index } }),
   clearSelection: ()           => set({ selectedLayer: null }),
+
+  // ── Cloud layer actions (draft only — committed on Accept) ─────────────
+  // All mutate draft.global.cloud_layers in-memory; no WS traffic until
+  // accept() fires. Cap at 3 (backend enforces same limit).
+  addCloud: () => set((state) => {
+    const cur = state.draft.global.cloud_layers ?? []
+    if (cur.length >= 3) return state
+    // Stack upward: new base = max existing top + 2000 ft, else 3000 AGL.
+    let new_base_agl_ft = 3000
+    if (cur.length > 0) {
+      const maxTop = Math.max(
+        ...cur.map(cl => (cl.base_agl_ft ?? 0) + (cl.thickness_m ?? 0) * M_TO_FT_CONST)
+      )
+      new_base_agl_ft = Math.min(45000, maxTop + 2000)
+    }
+    const newLayer = {
+      cloud_type:   7,                          // Cumulus
+      base_agl_ft:  new_base_agl_ft,
+      thickness_m:  2000 * FT_TO_M_CONST,
+      coverage_pct: 25,
+    }
+    return {
+      draft: {
+        ...state.draft,
+        global: {
+          ...state.draft.global,
+          cloud_layers: [...cur, newLayer],
+        },
+      },
+    }
+  }),
+
+  removeCloud: (index) => set((state) => {
+    const cur = state.draft.global.cloud_layers ?? []
+    const next = cur.filter((_, i) => i !== index)
+    // Clear selection if the removed layer was selected; shift index down
+    // if a higher-index layer was selected.
+    let nextSel = state.selectedLayer
+    if (nextSel?.kind === 'cloud') {
+      if (nextSel.index === index)      nextSel = null
+      else if (nextSel.index > index)   nextSel = { ...nextSel, index: nextSel.index - 1 }
+    }
+    return {
+      draft: {
+        ...state.draft,
+        global: { ...state.draft.global, cloud_layers: next },
+      },
+      selectedLayer: nextSel,
+    }
+  }),
+
+  updateCloud: (index, patch) => set((state) => {
+    const cur = state.draft.global.cloud_layers ?? []
+    if (index < 0 || index >= cur.length) return state
+    const next = cur.map((cl, i) => (i === index ? { ...cl, ...patch } : cl))
+    return {
+      draft: {
+        ...state.draft,
+        global: { ...state.draft.global, cloud_layers: next },
+      },
+    }
+  }),
+
+  setRunwayFriction: (idx) => set((state) => ({
+    draft: {
+      ...state.draft,
+      global: {
+        ...state.draft.global,
+        runway_friction: Math.max(0, Math.min(15, Number(idx) || 0)),
+      },
+    },
+  })),
 }))

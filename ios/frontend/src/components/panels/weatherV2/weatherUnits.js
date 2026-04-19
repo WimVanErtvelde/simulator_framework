@@ -16,9 +16,10 @@
 //   precipitation_rate  : 0-1 float (same)
 //   precipitation_type  : int (same)
 //
-// Runway condition is NOT part of V2's draft. It flows through the shared
-// store (useSimStore.activeWeather.runwayFriction) and fires via
-// set_runway_condition on each button press, matching the WX panel.
+// Runway condition and cloud layers are now part of V2's draft (Slice
+// 5a-iii.1). They are committed atomically with atmospheric scalars on
+// Accept — not fired per-click. WX's dedicated handlers still exist for
+// WX's own UI, which this store does not drive.
 
 export const K_OFFSET     = 273.15
 export const HPA_TO_PA    = 100.0
@@ -26,6 +27,8 @@ export const M_PER_SM     = 1609.344
 export const HPA_PER_INHG = 33.8638866
 
 // ── Store → Wire (set_weather payload) ────────────────────────────────────
+// cloud_layers is always included (possibly empty) so an Accept with all
+// clouds deleted can clear the backend's cloud list.
 export function globalDraftToWire(global) {
   return {
     temperature_sl_k:   global.temperature_c + K_OFFSET,
@@ -34,14 +37,27 @@ export function globalDraftToWire(global) {
     humidity_pct:       global.humidity_pct,
     precipitation_rate: global.precipitation_rate,
     precipitation_type: global.precipitation_type,
+    runway_friction:    global.runway_friction ?? 0,
+    cloud_layers: (global.cloud_layers ?? []).map(cl => ({
+      cloud_type:   cl.cloud_type,
+      base_agl_ft:  cl.base_agl_ft,
+      thickness_m:  cl.thickness_m,
+      coverage_pct: cl.coverage_pct,
+    })),
   }
 }
 
 // ── useSimStore.activeWeather (camelCase, post-broadcast-parse) → Store ──
-// Returns scalar fields only. cloud_layers / wind_layers are owned by later
-// slices; callers should spread this into the existing global to preserve
-// those arrays.
+// activeWeather.cloudLayers is a pass-through of the snake-case objects
+// the backend publishes: {cloud_type, base_agl_ft, thickness_m,
+// coverage_pct}. Re-shape defensively to drop any extra keys.
 export function activeWeatherToGlobalDraft(active) {
+  const cloud_layers = (active.cloudLayers ?? []).map(cl => ({
+    cloud_type:   cl.cloud_type,
+    base_agl_ft:  cl.base_agl_ft,
+    thickness_m:  cl.thickness_m,
+    coverage_pct: cl.coverage_pct,
+  }))
   return {
     temperature_c:      (active.temperatureSlK ?? 288.15) - K_OFFSET,
     pressure_hpa:       (active.pressureSlPa   ?? 101325) / HPA_TO_PA,
@@ -49,6 +65,8 @@ export function activeWeatherToGlobalDraft(active) {
     humidity_pct:        active.humidityPct        ?? 50,
     precipitation_rate:  active.precipitationRate  ?? 0.0,
     precipitation_type:  active.precipitationType  ?? 0,
+    runway_friction:     active.runwayFriction     ?? 0,
+    cloud_layers,
   }
 }
 

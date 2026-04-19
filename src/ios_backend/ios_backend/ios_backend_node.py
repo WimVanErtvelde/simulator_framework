@@ -916,10 +916,12 @@ class IosBackendNode(Node):
         """
         import math
         if data is not None:
-            # cloud_layers is owned by add/remove/clear handlers — never overwritten
-            # by partial weather updates coming from ACCEPT.
-            merge_data = {k: v for k, v in data.items() if k != 'cloud_layers'}
-            self._last_weather_data.update(merge_data)
+            # dict.update replaces keys present in `data` and leaves absent keys
+            # untouched. WX's ACCEPT never sends cloud_layers, so clouds are
+            # preserved. WeatherPanelV2's ACCEPT owns the full cloud list and
+            # sends it wholesale (possibly empty to clear all). Dedicated
+            # add/remove_cloud_layer handlers still serve WX.
+            self._last_weather_data.update(data)
         source = self._last_weather_data
         msg = WeatherState()
         msg.header.stamp = self.get_clock().now().to_msg()

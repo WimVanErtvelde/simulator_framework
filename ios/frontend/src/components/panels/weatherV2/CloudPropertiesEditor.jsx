@@ -2,56 +2,53 @@ import { useSimStore } from '../../../store/useSimStore'
 import { useShallow } from 'zustand/react/shallow'
 import { useWeatherV2Store } from '../../../store/useWeatherV2Store'
 import { CLOUD_TYPES } from './weatherPresets'
-import { M_TO_FT, FT_TO_M } from './graph/mslScale'
+import NonLinearSlider from './graph/NonLinearSlider'
+import { MAX_FT, M_TO_FT, FT_TO_M } from './graph/mslScale'
 
-// Left-column editor for the selected cloud layer. Type picker, coverage
-// slider, base/top MSL readouts, delete button. Base/top editing is via
-// the graph drag; numeric input lives in a future slice.
+const MIN_THICK_FT = 100
+
+// Left-column editor for the selected cloud layer. All controls mutate
+// draft only — no WS until Accept. Base MSL and Top MSL each pair a
+// numeric input with a NonLinearSlider; combined with the graph drag
+// they are three-way-bound to the same draft field.
 export default function CloudPropertiesEditor({ index }) {
-  const { cloudLayers, stationElevM, ws, wsConnected } = useSimStore(useShallow(s => ({
-    cloudLayers:  s.activeWeather?.cloudLayers ?? [],
-    stationElevM: s.activeWeather?.stationElevationM ?? 0,
-    ws:           s.ws,
-    wsConnected:  s.wsConnected,
-  })))
-  const clearSelection = useWeatherV2Store(s => s.clearSelection)
+  const stationElevM = useSimStore(s => s.activeWeather?.stationElevationM ?? 0)
 
-  const cl = cloudLayers[index]
+  const { cl, updateCloud, removeCloud } = useWeatherV2Store(useShallow(s => ({
+    cl:          s.draft.global.cloud_layers?.[index],
+    updateCloud: s.updateCloud,
+    removeCloud: s.removeCloud,
+  })))
+
   if (!cl) return null
 
-  const type      = cl.cloud_type ?? 7
-  const coverage  = Math.round(cl.coverage_pct ?? 0)
-  const baseAglFt = cl.base_agl_ft ?? 0
-  const thickFt   = (cl.thickness_m ?? 0) * M_TO_FT
-  const stationFt = stationElevM * M_TO_FT
-  const baseMslFt = Math.round(baseAglFt + stationFt)
-  const topMslFt  = Math.round(baseMslFt + thickFt)
+  const type          = cl.cloud_type ?? 7
+  const coverage      = Math.round(cl.coverage_pct ?? 0)
+  const baseAglFt     = cl.base_agl_ft ?? 0
+  const thicknessFt   = (cl.thickness_m ?? 0) * M_TO_FT
+  const stationElevFt = stationElevM * M_TO_FT
+  const baseMslFt     = Math.round(baseAglFt + stationElevFt)
+  const topMslFt      = Math.round(baseMslFt + thicknessFt)
 
-  const sendMsg = (t, data) => {
-    if (!ws || !wsConnected) return
-    ws.send(JSON.stringify({ type: t, data }))
-  }
-
-  const sendUpdate = (patch) => {
-    sendMsg('remove_cloud_layer', { index })
-    sendMsg('add_cloud_layer', {
-      cloud_type:         patch.cloud_type   ?? type,
-      coverage_pct:       patch.coverage_pct ?? coverage,
-      base_agl_ft:        patch.base_agl_ft  ?? baseAglFt,
-      thickness_m:        patch.thickness_m  ?? cl.thickness_m ?? 0,
-      transition_band_m:  200 * FT_TO_M,
-      scud_enable:        false,
-      scud_frequency_pct: 0,
+  // Mutators — translate MSL edits back into AGL+thickness storage.
+  const setBaseMsl = (newBaseMsl) => {
+    const newBaseAgl = Math.max(0, newBaseMsl - stationElevFt)
+    // Preserve thickness, but shrink if new base would push top past MAX_FT.
+    const maxThicknessFt = MAX_FT - (newBaseAgl + stationElevFt)
+    const newThicknessFt = Math.max(MIN_THICK_FT, Math.min(thicknessFt, maxThicknessFt))
+    updateCloud(index, {
+      base_agl_ft: newBaseAgl,
+      thickness_m: newThicknessFt * FT_TO_M,
     })
   }
-
-  const sendDelete = () => {
-    sendMsg('remove_cloud_layer', { index })
-    clearSelection()
+  const setTopMsl = (newTopMsl) => {
+    const newThicknessFt = Math.max(MIN_THICK_FT, newTopMsl - baseMslFt)
+    const capped = Math.min(newThicknessFt, MAX_FT - baseMslFt)
+    updateCloud(index, { thickness_m: capped * FT_TO_M })
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{
         fontSize: 11, fontWeight: 700, letterSpacing: 1,
         color: '#e2e8f0', textTransform: 'uppercase',
@@ -69,8 +66,8 @@ export default function CloudPropertiesEditor({ index }) {
               <button
                 key={t.id}
                 type="button"
-                onClick={() => sendUpdate({ cloud_type: t.id })}
-                onTouchEnd={(e) => { e.preventDefault(); sendUpdate({ cloud_type: t.id }) }}
+                onClick={() => updateCloud(index, { cloud_type: t.id })}
+                onTouchEnd={(e) => { e.preventDefault(); updateCloud(index, { cloud_type: t.id }) }}
                 style={{
                   height: 28,
                   background: active ? `${t.color}22` : '#111827',
@@ -100,7 +97,7 @@ export default function CloudPropertiesEditor({ index }) {
           type="range"
           min={0} max={100} step={5}
           value={coverage}
-          onChange={(e) => sendUpdate({ coverage_pct: Number(e.target.value) })}
+          onChange={(e) => updateCloud(index, { coverage_pct: Number(e.target.value) })}
           style={{
             width: '100%', accentColor: '#39d0d8',
             cursor: 'pointer', touchAction: 'manipulation',
@@ -108,31 +105,35 @@ export default function CloudPropertiesEditor({ index }) {
         />
       </div>
 
-      {/* Base / Top MSL readouts — drag in graph to edit */}
+      {/* Base MSL — numeric input + sqrt-mapped slider */}
+      <AltitudeField
+        label="Base"
+        valueFt={baseMslFt}
+        minFt={Math.round(stationElevFt)}
+        maxFt={Math.max(Math.round(stationElevFt) + MIN_THICK_FT, topMslFt - MIN_THICK_FT)}
+        onChange={setBaseMsl}
+      />
+
+      {/* Top MSL — numeric input + sqrt-mapped slider */}
+      <AltitudeField
+        label="Top"
+        valueFt={topMslFt}
+        minFt={baseMslFt + MIN_THICK_FT}
+        maxFt={MAX_FT}
+        onChange={setTopMsl}
+      />
+
       <div style={{
-        display: 'flex', flexDirection: 'column', gap: 2,
-        padding: '6px 8px', background: '#111827', border: '1px solid #1e293b',
-        borderRadius: 3,
-        fontSize: 11, fontFamily: 'monospace',
-        fontVariantNumeric: 'tabular-nums', color: '#94a3b8',
+        fontSize: 10, color: '#475569', fontFamily: 'monospace',
+        fontStyle: 'italic',
       }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span style={{ color: '#64748b' }}>Top</span>
-          <span>{topMslFt.toLocaleString()} ft MSL</span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span style={{ color: '#64748b' }}>Base</span>
-          <span>{baseMslFt.toLocaleString()} ft MSL</span>
-        </div>
-        <div style={{ fontSize: 10, color: '#475569', fontStyle: 'italic', marginTop: 2 }}>
-          Drag band in graph to reposition
-        </div>
+        AGL base {Math.round(baseAglFt).toLocaleString()} ft · thickness {Math.round(thicknessFt).toLocaleString()} ft
       </div>
 
       <button
         type="button"
-        onClick={sendDelete}
-        onTouchEnd={(e) => { e.preventDefault(); sendDelete() }}
+        onClick={() => removeCloud(index)}
+        onTouchEnd={(e) => { e.preventDefault(); removeCloud(index) }}
         style={{
           marginTop: 4, height: 32,
           background: 'rgba(239, 68, 68, 0.06)',
@@ -144,6 +145,48 @@ export default function CloudPropertiesEditor({ index }) {
           cursor: 'pointer', touchAction: 'manipulation',
         }}
       >Delete Layer</button>
+    </div>
+  )
+}
+
+// Numeric input + NonLinearSlider for one altitude value. Three-way-bound
+// to the same draft field: graph drag / slider / input all call onChange
+// with ft MSL; the parent writes it to draft; valueFt flows back in on
+// re-render.
+function AltitudeField({ label, valueFt, minFt, maxFt, onChange }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between',
+                    alignItems: 'center',
+                    fontSize: 11, fontFamily: 'monospace' }}>
+        <span style={{ color: '#64748b', letterSpacing: 1, textTransform: 'uppercase' }}>
+          {label} (ft MSL)
+        </span>
+        <input
+          type="number"
+          value={valueFt}
+          min={minFt} max={maxFt} step={50}
+          onChange={(e) => {
+            const v = Number(e.target.value)
+            if (Number.isFinite(v)) onChange(Math.max(minFt, Math.min(maxFt, v)))
+          }}
+          style={{
+            width: 88, height: 22, padding: '0 6px',
+            background: '#1c2333',
+            border: '1px solid #1e293b',
+            borderRadius: 2,
+            color: '#e2e8f0',
+            fontFamily: 'monospace', fontSize: 12,
+            fontVariantNumeric: 'tabular-nums',
+            textAlign: 'right',
+          }}
+        />
+      </div>
+      <NonLinearSlider
+        valueFt={valueFt}
+        minFt={minFt} maxFt={maxFt}
+        onChange={onChange}
+      />
     </div>
   )
 }

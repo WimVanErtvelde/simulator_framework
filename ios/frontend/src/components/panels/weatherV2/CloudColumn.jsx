@@ -5,67 +5,31 @@ import LayerBand from './graph/LayerBand'
 import { MAX_FT, MIN_FT, M_TO_FT, FT_TO_M } from './graph/mslScale'
 import { cloudTypeInfo } from './weatherPresets'
 
-const MAX_CLOUDS = 3          // backend-enforced cap (ios_backend_node.py:1184)
-const MIN_THICKNESS_FT = 100  // floor for drag-resize
+const MAX_CLOUDS       = 3
+const MIN_THICKNESS_FT = 100
 
-// Middle-column cloud graph. Reads cloud_layers + stationElevationM from the
-// shared useSimStore.activeWeather slice (same broadcast WX consumes) and
-// authors edits via the existing add_cloud_layer / remove_cloud_layer WS
-// handlers — no new backend plumbing. Drag updates are committed once at
-// pointer-up (LayerBand handles the preview locally).
+// Middle-column cloud graph. Reads cloud_layers from the V2 draft and
+// dispatches updates via store actions — nothing touches the backend
+// until Accept fires. Station elevation from activeWeather powers the
+// AGL↔MSL conversion (clouds are AGL-authored, graph is MSL-rendered).
 export default function CloudColumn({ height, width }) {
-  const { cloudLayers, stationElevM, ws, wsConnected } = useSimStore(useShallow(s => ({
-    cloudLayers:   s.activeWeather?.cloudLayers ?? [],
-    stationElevM:  s.activeWeather?.stationElevationM ?? 0,
-    ws:            s.ws,
-    wsConnected:   s.wsConnected,
-  })))
-  const { selectedLayer, selectLayer } = useWeatherV2Store(useShallow(s => ({
-    selectedLayer: s.selectedLayer,
-    selectLayer:   s.selectLayer,
-  })))
+  const stationElevM = useSimStore(s => s.activeWeather?.stationElevationM ?? 0)
+
+  const { cloudLayers, addCloud, updateCloud, selectedLayer, selectLayer } = useWeatherV2Store(
+    useShallow(s => ({
+      cloudLayers:   s.draft.global.cloud_layers ?? [],
+      addCloud:      s.addCloud,
+      updateCloud:   s.updateCloud,
+      selectedLayer: s.selectedLayer,
+      selectLayer:   s.selectLayer,
+    }))
+  )
 
   const canAdd = cloudLayers.length < MAX_CLOUDS
   const stationElevFt = stationElevM * M_TO_FT
 
-  const sendMsg = (type, data) => {
-    if (!ws || !wsConnected) return
-    ws.send(JSON.stringify({ type, data }))
-  }
-
-  const sendAdd = () => {
-    if (!canAdd) return
-    sendMsg('add_cloud_layer', {
-      cloud_type: 7,                     // Cumulus default
-      coverage_pct: 25,
-      base_agl_ft: 3000,
-      thickness_m: 2000 * FT_TO_M,
-      transition_band_m: 200 * FT_TO_M,
-      scud_enable: false,
-      scud_frequency_pct: 0,
-    })
-  }
-
-  // Update is remove-then-re-add — the legacy backend path has no update
-  // handler. One remove + one add per drag commit, so X-Plane sees at most
-  // one churn cycle per user interaction (Slice 5a-iii MVP limitation).
-  const sendUpdate = (index, patch) => {
-    const cur = cloudLayers[index]
-    if (!cur) return
-    sendMsg('remove_cloud_layer', { index })
-    sendMsg('add_cloud_layer', {
-      cloud_type:         patch.cloud_type        ?? cur.cloud_type,
-      coverage_pct:       patch.coverage_pct      ?? cur.coverage_pct,
-      base_agl_ft:        patch.base_agl_ft       ?? cur.base_agl_ft,
-      thickness_m:        patch.thickness_m       ?? cur.thickness_m,
-      transition_band_m:  200 * FT_TO_M,
-      scud_enable:        false,
-      scud_frequency_pct: 0,
-    })
-  }
-
   // Clamp a candidate base_agl_ft so the band stays within [MIN_FT, MAX_FT]
-  // on both top and bottom. Returns a clamped agl-ft value.
+  // MSL and preserves current thickness.
   const clampBaseAgl = (baseAglFt, thicknessFt) => {
     const minBaseAgl = MIN_FT - stationElevFt
     const maxBaseAgl = MAX_FT - stationElevFt - thicknessFt
@@ -85,8 +49,8 @@ export default function CloudColumn({ height, width }) {
       <button
         type="button"
         disabled={!canAdd}
-        onClick={sendAdd}
-        onTouchEnd={(e) => { e.preventDefault(); if (canAdd) sendAdd() }}
+        onClick={addCloud}
+        onTouchEnd={(e) => { e.preventDefault(); if (canAdd) addCloud() }}
         style={{
           position: 'absolute',
           top: -36, left: 0,
@@ -123,21 +87,28 @@ export default function CloudColumn({ height, width }) {
             label={label}
             color={info.color}
             onSelect={() => selectLayer('cloud', i)}
-            onCommitMove={(deltaFt) => {
+            onMoveAltitude={(newTopFt, newBottomFt) => {
+              // Preserve thickness; band moves as a whole. Clamp so top
+              // stays ≤ MAX_FT and bottom ≥ MIN_FT MSL.
               const newBaseAgl = clampBaseAgl(
-                (cl.base_agl_ft ?? 0) + deltaFt,
+                newBottomFt - stationElevFt,
                 thicknessFt,
               )
-              sendUpdate(i, { base_agl_ft: newBaseAgl })
+              updateCloud(i, { base_agl_ft: newBaseAgl })
             }}
-            onCommitResizeTop={(newTopFt) => {
+            onResizeTop={(newTopFt) => {
+              // Bottom stays fixed; only thickness changes.
               const newThicknessFt = Math.max(MIN_THICKNESS_FT, newTopFt - bottomFt)
-              sendUpdate(i, { thickness_m: newThicknessFt * FT_TO_M })
+              // Also clamp top ≤ MAX_FT
+              const capped = Math.min(newThicknessFt, MAX_FT - bottomFt)
+              updateCloud(i, { thickness_m: capped * FT_TO_M })
             }}
-            onCommitResizeBottom={(newBotFt) => {
-              const newThicknessFt = Math.max(MIN_THICKNESS_FT, topFt - newBotFt)
-              const newBaseAgl = newBotFt - stationElevFt
-              sendUpdate(i, {
+            onResizeBottom={(newBotFt) => {
+              // Top stays fixed; base_agl + thickness both change.
+              const clampedBotFt   = Math.max(MIN_FT, newBotFt)
+              const newThicknessFt = Math.max(MIN_THICKNESS_FT, topFt - clampedBotFt)
+              const newBaseAgl     = clampedBotFt - stationElevFt
+              updateCloud(i, {
                 base_agl_ft: newBaseAgl,
                 thickness_m: newThicknessFt * FT_TO_M,
               })
