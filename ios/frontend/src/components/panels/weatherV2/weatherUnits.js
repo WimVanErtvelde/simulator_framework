@@ -91,3 +91,37 @@ export function formatPressure(hpa, unit) {
   if (unit === 'inHg') return `${hpaToInHg(hpa).toFixed(2)} inHg`
   return `${hpa.toFixed(1)} hPa`
 }
+
+// ── ISA atmosphere helpers (tropospheric, 0-11 km) ────────────────────────
+// Matches the standard lapse X-Plane uses when interpolating SL values to
+// altitude. SI-in, SI-out. No store reads.
+
+const ISA_T0_K      = 288.15        // 15 °C
+const ISA_P0_PA     = 101325.0
+const ISA_LAPSE_K_M = 0.0065        // troposphere lapse (K/m)
+const ISA_G         = 9.80665
+const ISA_R         = 287.058
+const ISA_GEXP      = ISA_G / (ISA_LAPSE_K_M * ISA_R)  // ≈ 5.2561
+
+// Temperature (K) at altMslM meters, starting from slTempK at sea level.
+export function isaTemperatureAt(slTempK, altMslM) {
+  const h = Math.max(0, Math.min(11000, altMslM))
+  return slTempK - ISA_LAPSE_K_M * h
+}
+
+// ISA-reference temperature (K) at altMslM meters (for ISA deviation).
+export function isaReferenceAt(altMslM) {
+  return isaTemperatureAt(ISA_T0_K, altMslM)
+}
+
+// Static pressure (Pa) at altMslM meters, starting from slPressurePa at
+// sea level, under ISA. Close to (but not identical to) true QNH-based
+// altimeter setting; for training display the difference is <1 hPa.
+export function isaPressureAt(slPressurePa, altMslM) {
+  const h = Math.max(0, Math.min(11000, altMslM))
+  const ratio = 1 - (ISA_LAPSE_K_M * h) / ISA_T0_K
+  return slPressurePa * Math.pow(ratio, ISA_GEXP)
+}
+
+// Keep ISA_P0_PA referenced for future use (prevents unused-var lint).
+export const ISA_SEA_LEVEL_PRESSURE_PA = ISA_P0_PA
