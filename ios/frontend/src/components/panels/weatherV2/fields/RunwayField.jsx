@@ -72,9 +72,7 @@ export default function RunwayField() {
     <div style={fieldBox}>
       <div style={fieldHeader}>
         <span style={fieldLabel}>Runway Condition</span>
-        <span style={fieldValue}>
-          {runwayActive.label} <span style={{ color: '#475569' }}>— idx {runwayIndex}</span>
-        </span>
+        <span style={fieldValue}>{runwayActive.label}</span>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4 }}>

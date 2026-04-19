@@ -43,7 +43,7 @@ export function PresetChip({ label, onClick }) {
       onTouchEnd={(e) => { e.preventDefault(); onClick?.() }}
       style={{
         ...neutralBtn,
-        height: 28, padding: '0 8px', fontSize: 10,
+        height: 24, padding: '0 8px', fontSize: 10,
         background: COLOR_BG_CARD,
       }}
       onMouseEnter={(e) => {

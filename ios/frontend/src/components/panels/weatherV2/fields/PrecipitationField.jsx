@@ -17,17 +17,17 @@ export default function PrecipitationField() {
         <span style={fieldLabel}>Precipitation</span>
         <span style={fieldValue}>{pct} %</span>
       </div>
+      <PillGroup
+        options={PRECIP_TYPES}
+        value={precipitation_type}
+        onChange={(v) => updateDraft(['global', 'precipitation_type'], v)}
+      />
       <input
         type="range"
         min={0} max={100} step={1}
         value={pct}
         onChange={(e) => updateDraft(['global', 'precipitation_rate'], Number(e.target.value) / 100)}
         style={slider}
-      />
-      <PillGroup
-        options={PRECIP_TYPES}
-        value={precipitation_type}
-        onChange={(v) => updateDraft(['global', 'precipitation_type'], v)}
       />
     </div>
   )
