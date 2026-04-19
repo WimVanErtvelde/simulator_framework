@@ -39,6 +39,12 @@ void WeatherSolver::set_weather(const sim_msgs::msg::WeatherState & weather)
     dc.seed  = weather.deterministic_seed;
     dryden_.configure(dc);
 
+    // Gust modulator — same seed as Dryden for full determinism, but an
+    // independent mt19937 stream so gust timing doesn't couple to turbulence.
+    GustModulator::Config gc;
+    gc.seed = weather.deterministic_seed;
+    gust_.configure(gc);
+
     // Cache microburst parameters (lat/lon → NE conversion deferred to compute())
     mb_params_.clear();
     mb_params_.reserve(weather.microbursts.size());
@@ -61,6 +67,7 @@ void WeatherSolver::reset()
     weather_ = sim_msgs::msg::WeatherState();
     weather_received_ = false;
     dryden_.reset();
+    gust_.reset();
     mb_params_.clear();
 }
 
@@ -88,6 +95,7 @@ WeatherSolver::InterpolatedWind WeatherSolver::interpolate_wind(double altitude_
         result.speed_ms      = wl.wind_speed_ms;
         result.direction_deg = wl.wind_direction_deg;
         result.vertical_ms   = wl.vertical_wind_ms;
+        result.gust_speed_ms = wl.gust_speed_ms;
         result.turbulence    = wl.turbulence_severity;
         return result;
     }
@@ -98,6 +106,7 @@ WeatherSolver::InterpolatedWind WeatherSolver::interpolate_wind(double altitude_
         result.speed_ms      = wl.wind_speed_ms;
         result.direction_deg = wl.wind_direction_deg;
         result.vertical_ms   = wl.vertical_wind_ms;
+        result.gust_speed_ms = wl.gust_speed_ms;
         result.turbulence    = wl.turbulence_severity;
         return result;
     }
@@ -113,6 +122,7 @@ WeatherSolver::InterpolatedWind WeatherSolver::interpolate_wind(double altitude_
             result.speed_ms      = lo.wind_speed_ms + frac * (hi.wind_speed_ms - lo.wind_speed_ms);
             result.direction_deg = interp_angle(lo.wind_direction_deg, hi.wind_direction_deg, frac);
             result.vertical_ms   = lo.vertical_wind_ms + frac * (hi.vertical_wind_ms - lo.vertical_wind_ms);
+            result.gust_speed_ms = lo.gust_speed_ms + frac * (hi.gust_speed_ms - lo.gust_speed_ms);
             result.turbulence    = lo.turbulence_severity + frac * (hi.turbulence_severity - lo.turbulence_severity);
             return result;
         }
@@ -167,13 +177,27 @@ WeatherSolver::AtmoResult WeatherSolver::compute(
     // ── Wind interpolation ──────────────────────────────────────────────────
     InterpolatedWind iw = interpolate_wind(altitude_msl_m);
 
+    // ── Gust modulation ─────────────────────────────────────────────────────
+    // Gusts only apply when authored peak > sustained. The modulator always
+    // steps to keep its state machine temporally coherent; the applied delta
+    // is zero when gust_speed_ms <= speed_ms.
+    double gust_factor = gust_.step(dt_sec);   // 0-1
+    double gust_delta = 0.0;
+    if (iw.gust_speed_ms > iw.speed_ms) {
+        gust_delta = (iw.gust_speed_ms - iw.speed_ms) * gust_factor;
+    }
+    double effective_speed_ms = iw.speed_ms + gust_delta;
+
     // Convert polar → NED (FROM convention)
     double dir_rad = iw.direction_deg * M_PI / 180.0;
-    double ambient_north = -iw.speed_ms * std::cos(dir_rad);
-    double ambient_east  = -iw.speed_ms * std::sin(dir_rad);
+    double ambient_north = -effective_speed_ms * std::cos(dir_rad);
+    double ambient_east  = -effective_speed_ms * std::sin(dir_rad);
     double ambient_down  = -iw.vertical_ms;  // positive vertical_ms = updraft
 
     // ── Dryden turbulence ───────────────────────────────────────────────────
+    // Dryden uses tas_ms (aircraft airspeed, not the gust-modified ambient)
+    // — gusts are a separate phenomenon, not a shift in the statistical
+    // model's anchor. See Slice 5a-v design note.
     auto turb = dryden_.update(dt_sec, iw.turbulence, altitude_agl_m, tas_ms);
 
     // Rotate body-axis perturbation (u along wind, v lateral) to NED

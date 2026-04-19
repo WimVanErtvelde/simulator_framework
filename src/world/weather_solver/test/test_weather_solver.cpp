@@ -198,3 +198,92 @@ TEST(WeatherSolver, WindDirectionWrap)
     EXPECT_NEAR(r.wind_north_ms, -10.0, 0.5);
     EXPECT_NEAR(r.wind_east_ms, 0.0, 0.5);
 }
+
+// ── Gust modulation ────────────────────────────────────────────────────────
+
+// Helper to build a single-layer wind scenario for gust tests.
+static sim_msgs::msg::WeatherState make_gust_scenario(
+    float sustained_ms, float gust_ms, uint32_t seed)
+{
+    sim_msgs::msg::WeatherState w;
+    w.temperature_sl_k = 288.15;
+    w.pressure_sl_pa = 101325.0;
+    w.turbulence_model = 0;         // Dryden off for pure gust observation
+    w.deterministic_seed = seed;
+
+    sim_msgs::msg::WeatherWindLayer wl;
+    wl.altitude_msl_m = 0.0f;
+    wl.wind_speed_ms = sustained_ms;
+    wl.wind_direction_deg = 270.0f;  // FROM west → east component = +sustained
+    wl.gust_speed_ms = gust_ms;
+    wl.turbulence_severity = 0.0f;
+    w.wind_layers.push_back(wl);
+    return w;
+}
+
+TEST(WeatherSolver, GustNoModulationWhenPeakEqualsBase)
+{
+    WeatherSolver s;
+    s.configure({});
+    s.set_weather(make_gust_scenario(10.0f, 10.0f, 42));
+
+    // 60 s at 50 Hz: east should stay steady at ~10 m/s
+    double min_east = 100.0, max_east = -100.0;
+    for (int i = 0; i < 3000; ++i) {
+        auto r = s.compute(0.02, 0.0, 0.0, 60.0);
+        min_east = std::min(min_east, r.wind_east_ms);
+        max_east = std::max(max_east, r.wind_east_ms);
+    }
+    EXPECT_NEAR(min_east, 10.0, 0.1);
+    EXPECT_NEAR(max_east, 10.0, 0.1);
+}
+
+TEST(WeatherSolver, GustModulatesWhenPeakAboveBase)
+{
+    WeatherSolver s;
+    s.configure({});
+    s.set_weather(make_gust_scenario(10.0f, 25.0f, 42));
+
+    // Run 120 s at 50 Hz. Max idle is 45 s, cycle length ~4 s, so at least
+    // one full peak should land in-window.
+    double min_east = 100.0, max_east = -100.0;
+    for (int i = 0; i < 6000; ++i) {
+        auto r = s.compute(0.02, 0.0, 0.0, 60.0);
+        min_east = std::min(min_east, r.wind_east_ms);
+        max_east = std::max(max_east, r.wind_east_ms);
+    }
+    // Between gusts, east ≈ 10; at peak, east ≈ 25.
+    EXPECT_NEAR(min_east, 10.0, 0.1);
+    EXPECT_GT(max_east, 24.0);
+    EXPECT_LE(max_east, 25.5);
+}
+
+TEST(WeatherSolver, GustDeterministicSameSeedSamePattern)
+{
+    WeatherSolver s1, s2;
+    s1.configure({});
+    s2.configure({});
+    s1.set_weather(make_gust_scenario(10.0f, 25.0f, 12345));
+    s2.set_weather(make_gust_scenario(10.0f, 25.0f, 12345));
+
+    // Run 120 s, compare every 50th sample (once per sim-second).
+    for (int i = 0; i < 6000; ++i) {
+        auto r1 = s1.compute(0.02, 0.0, 0.0, 60.0);
+        auto r2 = s2.compute(0.02, 0.0, 0.0, 60.0);
+        if (i % 50 == 0) {
+            EXPECT_NEAR(r1.wind_east_ms, r2.wind_east_ms, 1e-6);
+        }
+    }
+}
+
+TEST(WeatherSolver, GustIdleAtStart)
+{
+    WeatherSolver s;
+    s.configure({});
+    s.set_weather(make_gust_scenario(10.0f, 25.0f, 42));
+
+    // Modulator starts in IDLE for a random 15–45 s window. First compute
+    // should therefore return the sustained wind with no gust delta.
+    auto r = s.compute(0.02, 0.0, 0.0, 60.0);
+    EXPECT_NEAR(r.wind_east_ms, 10.0, 0.01);
+}

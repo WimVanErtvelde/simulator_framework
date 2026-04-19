@@ -59,7 +59,10 @@ export default function WindColumn({ height, width }) {
         const altMslFt = (wl.altitude_msl_m ?? 0) * M_TO_FT
         const dirDeg   = Math.round(wl.wind_direction_deg ?? 0)
         const spdKt    = Math.round((wl.wind_speed_ms ?? 0) * MS_TO_KT)
-        const label    = `${String(dirDeg).padStart(3, '0')}° / ${spdKt} kt`
+        const gustKt   = Math.round((wl.gust_speed_ms ?? 0) * MS_TO_KT)
+        const label    = gustKt > spdKt
+          ? `${String(dirDeg).padStart(3, '0')}° / ${spdKt}G${gustKt} kt`
+          : `${String(dirDeg).padStart(3, '0')}° / ${spdKt} kt`
         const isSelected = selectedLayer?.kind === 'wind' && selectedLayer?.index === i
 
         return (

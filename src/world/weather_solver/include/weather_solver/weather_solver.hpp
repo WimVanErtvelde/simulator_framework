@@ -2,6 +2,7 @@
 #define WEATHER_SOLVER__WEATHER_SOLVER_HPP_
 
 #include "weather_solver/dryden_turbulence.hpp"
+#include "weather_solver/gust_modulator.hpp"
 #include "weather_solver/microburst_model.hpp"
 #include <sim_msgs/msg/weather_state.hpp>
 
@@ -69,6 +70,7 @@ private:
     double speed_ms      = 0.0;
     double direction_deg = 0.0;
     double vertical_ms   = 0.0;
+    double gust_speed_ms = 0.0;  // authored peak at this altitude
     double turbulence    = 0.0;  // 0-1
   };
 
@@ -76,6 +78,7 @@ private:
 
   sim_msgs::msg::WeatherState weather_;
   DrydenTurbulence dryden_;
+  GustModulator    gust_;
   std::vector<MicroburstModel::HazardParams> mb_params_;
   bool weather_received_ = false;
 };

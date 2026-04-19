@@ -938,10 +938,16 @@ class IosBackendNode(Node):
         msg.visibility_m = float(source.get('visibility_m', 9999.0))
         msg.humidity_pct = int(source.get('humidity_pct', 50))
 
+        # Legacy V1 (WX) flat-triple wind fields. Always read — even on the
+        # V2 path — because `turb_sev` feeds the turbulence_model default
+        # further down. Prior to this, V2 Accept NameError'd on turb_sev.
+        wind_dir = source.get('wind_direction_deg')
+        wind_spd = source.get('wind_speed_ms')
+        turb_sev = source.get('turbulence_severity')
+
         # Wind layers. V2 Accept path sends a `wind_layers` list with full
-        # per-layer fields. V1 (WX) Accept sends a flat
-        # wind_direction_deg / wind_speed_ms / turbulence_severity triple
-        # that represents a single surface wind — legacy fallback preserved.
+        # per-layer fields. V1 (WX) Accept uses the flat triple above to
+        # build a single surface wind layer.
         wind_list = source.get('wind_layers')
         if isinstance(wind_list, list):
             for wl_data in wind_list:
@@ -955,21 +961,17 @@ class IosBackendNode(Node):
                 wl.shear_speed_ms      = float(wl_data.get('shear_speed_ms', 0.0))
                 wl.turbulence_severity = float(wl_data.get('turbulence_severity', 0.0))
                 msg.wind_layers.append(wl)
-        else:
-            wind_dir = source.get('wind_direction_deg')
-            wind_spd = source.get('wind_speed_ms')
-            turb_sev = source.get('turbulence_severity')
-            if wind_dir is not None or wind_spd is not None or turb_sev is not None:
-                wl = WeatherWindLayer()
-                wl.altitude_msl_m      = 0.0  # surface
-                wl.wind_speed_ms       = float(wind_spd or 0.0)
-                wl.wind_direction_deg  = float(wind_dir or 0.0)
-                wl.vertical_wind_ms    = 0.0
-                wl.gust_speed_ms       = float(source.get('gust_speed_ms', 0.0))
-                wl.shear_direction_deg = 0.0
-                wl.shear_speed_ms      = 0.0
-                wl.turbulence_severity = float(turb_sev or 0.0)
-                msg.wind_layers.append(wl)
+        elif wind_dir is not None or wind_spd is not None or turb_sev is not None:
+            wl = WeatherWindLayer()
+            wl.altitude_msl_m      = 0.0  # surface
+            wl.wind_speed_ms       = float(wind_spd or 0.0)
+            wl.wind_direction_deg  = float(wind_dir or 0.0)
+            wl.vertical_wind_ms    = 0.0
+            wl.gust_speed_ms       = float(source.get('gust_speed_ms', 0.0))
+            wl.shear_direction_deg = 0.0
+            wl.shear_speed_ms      = 0.0
+            wl.turbulence_severity = float(turb_sev or 0.0)
+            msg.wind_layers.append(wl)
 
         # Cloud layers — base authored in ft AGL, convert to m MSL using station elevation
         station_elev_m = msg.station_elevation_m
@@ -996,13 +998,17 @@ class IosBackendNode(Node):
         msg.wave_direction_deg = 0.0
         msg.runway_friction = int(source.get('runway_friction', 0))
 
-        # FSTD control — deterministic defaults
-        msg.variability_pct = float(source.get('variability_pct', 0.0))
-        msg.evolution_mode = int(source.get('evolution_mode', 3))  # Static
+        # FSTD control — deterministic defaults.
+        # turbulence_model defaults to MIL-F-8785C (1) so Dryden is always
+        # enabled. Per-layer turbulence_severity still gates whether any
+        # turbulence is actually generated — with severity=0 the Dryden
+        # output is zero, so enabling the model unconditionally is safe.
+        # Previous logic defaulted to 0 when no flat-triple severity was
+        # set, which hid V2's per-layer turbulence authoring from the FDM.
+        msg.variability_pct    = float(source.get('variability_pct', 0.0))
+        msg.evolution_mode     = int(source.get('evolution_mode', 3))  # Static
         msg.deterministic_seed = int(source.get('deterministic_seed', 0))
-        # Default turbulence_model: MIL_F_8785C (1) if severity set, else None (0)
-        default_turb_model = 1 if turb_sev and float(turb_sev) > 0 else 0
-        msg.turbulence_model = int(source.get('turbulence_model', default_turb_model))
+        msg.turbulence_model   = int(source.get('turbulence_model', 1))
 
         # Append active microbursts
         for mb in self._active_microbursts:

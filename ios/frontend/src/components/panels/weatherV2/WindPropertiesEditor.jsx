@@ -33,6 +33,10 @@ export default function WindPropertiesEditor({ index }) {
   const trueDeg    = Math.round(wl.wind_direction_deg ?? 0)
   const magDeg     = (((trueDeg - magVarDeg) % 360) + 360) % 360
   const spdKt      = Math.round((wl.wind_speed_ms ?? 0) * MS_TO_KT)
+  // Display gust value clamped to >= sustained so the UI never shows a
+  // nonsensical "gust below sustained" state even if the stored value
+  // briefly lags (e.g. after a sustained bump, before setSpdKt pull-up).
+  const gustKt     = Math.max(spdKt, Math.round((wl.gust_speed_ms ?? 0) * MS_TO_KT))
   const verticalMs = wl.vertical_wind_ms ?? 0
   const turbPct    = Math.round((wl.turbulence_severity ?? 0) * 100)
 
@@ -51,7 +55,21 @@ export default function WindPropertiesEditor({ index }) {
     const clamped = Math.max(MIN_ALT_FT, Math.min(MAX_ALT_FT, ft))
     updateWind(index, { altitude_msl_m: clamped * FT_TO_M })
   }
-  const setSpdKt      = (kt) => updateWind(index, { wind_speed_ms: Math.max(0, kt) * KT_TO_MS })
+  const setSpdKt = (kt) => {
+    const newSustainedMs = Math.max(0, kt) * KT_TO_MS
+    const curGustMs = wl.gust_speed_ms ?? 0
+    const patch = { wind_speed_ms: newSustainedMs }
+    // If sustained now exceeds stored gust, pull gust up to match so the
+    // "gust >= sustained" invariant is always satisfied.
+    if (curGustMs < newSustainedMs) patch.gust_speed_ms = newSustainedMs
+    updateWind(index, patch)
+  }
+  const setGustKt = (kt) => {
+    // GUST slider min is bound to spdKt in the UI, but double-clamp here
+    // in case callers (e.g. sustained pull-up above) pass a lower value.
+    const clampedKt = Math.max(spdKt, kt)
+    updateWind(index, { gust_speed_ms: clampedKt * KT_TO_MS })
+  }
   const setVerticalMs = (ms) => updateWind(index, { vertical_wind_ms: ms })
   const setTurbPct    = (pct) => updateWind(index, {
     turbulence_severity: Math.max(0, Math.min(1, pct / 100)),
@@ -130,6 +148,14 @@ export default function WindPropertiesEditor({ index }) {
         value={spdKt} min={0} max={200} step={1}
         suffix=" kt"
         onChange={setSpdKt}
+      />
+
+      {/* Gust peak — constrained >= sustained */}
+      <ValueSliderField
+        label="Gust"
+        value={gustKt} min={spdKt} max={200} step={1}
+        suffix=" kt"
+        onChange={setGustKt}
       />
 
       {/* Vertical */}

@@ -23,11 +23,17 @@ target_include_directories(microburst_model PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
 
+add_library(gust_modulator STATIC src/gust_modulator.cpp)
+target_include_directories(gust_modulator PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+
 add_library(weather_solver_lib STATIC src/weather_solver.cpp)
 target_include_directories(weather_solver_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
-target_link_libraries(weather_solver_lib PUBLIC dryden_turbulence microburst_model)
+target_link_libraries(weather_solver_lib PUBLIC
+  dryden_turbulence microburst_model gust_modulator)
 ament_target_dependencies(weather_solver_lib PUBLIC sim_msgs)
 
 # ── ROS2 node executable ────────────────────────────────────────────────────
