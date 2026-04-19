@@ -185,6 +185,7 @@ export const useSimStore = create((set, get) => ({
     windLayers: [],
     precipitationRate: 0, precipitationType: 0,
     runwayFriction: 0,
+    patches: [],   // regional patches (Slice 5b-ii) — broadcast-updated list
   },
 
   // Node health
@@ -492,8 +493,9 @@ export const useSimStore = create((set, get) => ({
 
           case 'weather_state': {
             const d = msg.data ?? {}
-            set({
+            set(s => ({
               activeWeather: {
+                ...s.activeWeather,
                 stationIcao: d.station_icao ?? '',
                 stationElevationM: d.station_elevation_m ?? 0,
                 visibilityM: d.visibility_m ?? 9999,
@@ -506,9 +508,18 @@ export const useSimStore = create((set, get) => ({
                 precipitationType: d.precipitation_type ?? 0,
                 runwayFriction: d.runway_friction ?? 0,
               }
-            })
+            }))
             break
           }
+
+          case 'patches':
+            set(s => ({
+              activeWeather: {
+                ...s.activeWeather,
+                patches: msg.patches ?? [],
+              }
+            }))
+            break
 
           case 'fuel_state':
           case 'fuel': {

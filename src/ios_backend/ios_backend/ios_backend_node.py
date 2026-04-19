@@ -1303,6 +1303,7 @@ class IosBackendNode(Node):
         patch = {
             'patch_id':              self._next_patch_id,
             'patch_type':            ptype,
+            'role':                  data.get('role', 'custom'),
             'label':                 data.get('label', ''),
             'icao':                  data.get('icao', ''),
             'lat_deg':               float(data.get('lat_deg', 0.0)),
@@ -1389,6 +1390,7 @@ class IosBackendNode(Node):
                 {
                     'patch_id':              p['patch_id'],
                     'patch_type':            p['patch_type'],
+                    'role':                  p.get('role', 'custom'),
                     'label':                 p['label'],
                     'icao':                  p['icao'],
                     'lat_deg':               p['lat_deg'],

@@ -3,6 +3,9 @@ import { useSimStore } from './useSimStore'
 import {
   globalDraftToWire,
   activeWeatherToGlobalDraft,
+  patchDraftToAddWire,
+  patchDraftToUpdateWire,
+  patchesFromBroadcast,
 } from '../components/panels/weatherV2/weatherUnits'
 
 // Draft state for WeatherPanelV2.
@@ -35,9 +38,50 @@ const initialDraft = {
 
 const M_TO_FT_CONST = 3.28084
 const FT_TO_M_CONST = 0.3048
+const NM_TO_M_CONST = 1852
 
 function draftEquals(a, b) {
   return JSON.stringify(a) === JSON.stringify(b)
+}
+
+// ── Patch helpers (Slice 5b-ii) ────────────────────────────────────────────
+function roleToLabel(role) {
+  return {
+    departure:   'DEPARTURE',
+    destination: 'DESTINATION',
+    custom:      'CUSTOM',
+  }[role] || String(role || '').toUpperCase()
+}
+
+function roleToDefaultRadiusM(role) {
+  // Per DECISIONS.md: dep/dest 10 NM, custom 3 NM
+  return role === 'custom' ? 3 * NM_TO_M_CONST : 10 * NM_TO_M_CONST
+}
+
+// Normalize a patch to the subset of fields that travel over the wire.
+// Used to decide whether to emit update_patch. Draft-only deferred fields
+// (humidity/pressure/runway overrides) are intentionally excluded — the
+// msg doesn't carry them, so changes don't warrant an update round-trip.
+function normalizePatchForDiff(p) {
+  return JSON.stringify({
+    label: p.label, icao: p.icao,
+    lat_deg: p.lat_deg, lon_deg: p.lon_deg,
+    ground_elevation_m: p.ground_elevation_m, radius_m: p.radius_m,
+    role: p.role, patch_type: p.patch_type,
+    override_visibility:    !!p.override_visibility,
+    visibility_m:           p.visibility_m,
+    override_temperature:   !!p.override_temperature,
+    temperature_c:          p.temperature_c,
+    override_precipitation: !!p.override_precipitation,
+    precipitation_rate:     p.precipitation_rate,
+    precipitation_type:     p.precipitation_type,
+    cloud_layers: p.cloud_layers || [],
+    wind_layers:  p.wind_layers  || [],
+  })
+}
+
+function patchesDiffer(dp, sp) {
+  return normalizePatchForDiff(dp) !== normalizePatchForDiff(sp)
 }
 
 export const useWeatherV2Store = create((set, get) => ({
@@ -62,27 +106,34 @@ export const useWeatherV2Store = create((set, get) => ({
     return { draft: next }
   }),
 
-  // Called when useSimStore.activeWeather changes (a weather_state broadcast
-  // arrived). Merges scalar fields into serverState.global, and into draft
-  // only if draft was clean at the moment of sync — never clobbers in-flight
-  // user edits. cloud_layers / wind_layers are not touched here; their sync
-  // lands in Slices 5a-iii / 5a-iv.
+  // Called when useSimStore.activeWeather changes (a weather_state or
+  // patches broadcast arrived). Merges scalars into serverState.global
+  // and patches into serverState.patches. Draft receives the same merge
+  // only if it was clean at sync time — never clobbers in-flight edits.
   syncFromBroadcast: (activeWeather) => set((state) => {
-    const fresh = activeWeatherToGlobalDraft(activeWeather)
+    const freshGlobal  = activeWeatherToGlobalDraft(activeWeather)
+    const freshPatches = patchesFromBroadcast(activeWeather?.patches)
     const wasClean = draftEquals(state.draft, state.serverState)
     const nextServer = {
       ...state.serverState,
-      global: { ...state.serverState.global, ...fresh },
+      global:  { ...state.serverState.global, ...freshGlobal },
+      patches: freshPatches,
     }
     const nextDraft = wasClean
-      ? { ...state.draft, global: { ...state.draft.global, ...fresh } }
+      ? {
+          ...state.draft,
+          global:  { ...state.draft.global, ...freshGlobal },
+          patches: freshPatches,
+        }
       : state.draft
     return { serverState: nextServer, draft: nextDraft }
   }),
 
-  // Commits the draft to the backend via the existing set_weather handler.
-  // Runway condition is immediate-apply from RunwayField (not part of this
-  // batch).
+  // Commits the draft to the backend. Fires set_weather for global scalars
+  // and one add_patch / update_patch / remove_patch per patch-diff entry.
+  // Patch diff is computed against serverState.patches (the last-known
+  // backend state). Optimistic commit of serverState=draft at the end; the
+  // next broadcast will reconcile any backend clamp / new patch_id.
   accept: () => {
     const state = get()
     if (draftEquals(state.draft, state.serverState)) return
@@ -93,13 +144,55 @@ export const useWeatherV2Store = create((set, get) => ({
       return
     }
 
+    // 1. Global — fire every Accept for safety; publish_weather merges.
     ws.send(JSON.stringify({
       type: 'set_weather',
       data: globalDraftToWire(state.draft.global),
     }))
 
-    // Optimistic commit. A subsequent weather_state broadcast will correct
-    // serverState via syncFromBroadcast if the backend clamped any field.
+    // 2. Patches — diff draft vs serverState and emit per-delta messages.
+    const draftPatches  = state.draft.patches  ?? []
+    const serverPatches = state.serverState.patches ?? []
+    const serverById    = new Map(serverPatches.map(p => [p.patch_id, p]))
+    const draftIds      = new Set(
+      draftPatches.filter(p => p.patch_id != null).map(p => p.patch_id)
+    )
+
+    // New (patch_id == null) → add_patch
+    for (const dp of draftPatches) {
+      if (dp.patch_id == null) {
+        ws.send(JSON.stringify({
+          type: 'add_patch',
+          data: patchDraftToAddWire(dp),
+        }))
+      }
+    }
+
+    // Existing — send update_patch only if something changed
+    for (const dp of draftPatches) {
+      if (dp.patch_id == null) continue
+      const sp = serverById.get(dp.patch_id)
+      if (!sp) continue     // race: patch removed server-side
+      if (patchesDiffer(dp, sp)) {
+        ws.send(JSON.stringify({
+          type: 'update_patch',
+          data: patchDraftToUpdateWire(dp),
+        }))
+      }
+    }
+
+    // Removed — in server but not in draft → remove_patch
+    for (const sp of serverPatches) {
+      if (!draftIds.has(sp.patch_id)) {
+        ws.send(JSON.stringify({
+          type: 'remove_patch',
+          data: { patch_id: sp.patch_id },
+        }))
+      }
+    }
+
+    // Optimistic commit. The next weather_state / patches broadcast will
+    // correct serverState via syncFromBroadcast (including new patch_ids).
     set((s) => ({ serverState: structuredClone(s.draft) }))
   },
 
@@ -242,4 +335,73 @@ export const useWeatherV2Store = create((set, get) => ({
       },
     }
   }),
+
+  // ── Patch actions (Slice 5b-ii — draft only; Accept emits WS messages) ─
+  // All mutate draft.patches in-memory; no WS traffic until accept() fires.
+  // Per-field overrides (visibility/temperature/precipitation) are gated by
+  // explicit override_<field> booleans matching WeatherPatch.msg. Cloud /
+  // wind overrides use empty-array-as-inherit convention (no flag).
+  addPatch: (role, initial = {}) => set((state) => {
+    const patch_type = role === 'custom' ? 'custom' : 'airport'
+    const newPatch = {
+      client_id: `${role}-${Date.now()}`,
+      patch_id:  null,
+      role,
+      patch_type,
+      label:              initial.label || roleToLabel(role),
+      icao:               initial.icao || '',
+      lat_deg:            initial.lat_deg ?? 0,
+      lon_deg:            initial.lon_deg ?? 0,
+      ground_elevation_m: initial.ground_elevation_m ?? 0,
+      radius_m:           initial.radius_m ?? roleToDefaultRadiusM(role),
+
+      override_visibility:    false,
+      visibility_m:           state.draft.global.visibility_m,
+      override_temperature:   false,
+      temperature_c:          state.draft.global.temperature_c,
+      override_precipitation: false,
+      precipitation_rate:     state.draft.global.precipitation_rate,
+      precipitation_type:     state.draft.global.precipitation_type,
+
+      cloud_layers: [],
+      wind_layers:  [],
+
+      // Draft-only / deferred to 5b-iv (not serialized to wire yet)
+      override_humidity: false, humidity_pct:     state.draft.global.humidity_pct,
+      override_pressure: false, pressure_hpa:     state.draft.global.pressure_hpa,
+      override_runway:   false, runway_friction:  state.draft.global.runway_friction ?? 0,
+
+      ...initial,
+    }
+    return {
+      draft: { ...state.draft, patches: [...state.draft.patches, newPatch] },
+    }
+  }),
+
+  removePatch: (client_id) => set((state) => ({
+    draft: {
+      ...state.draft,
+      patches: state.draft.patches.filter(p => p.client_id !== client_id),
+    },
+  })),
+
+  updatePatch: (client_id, patch) => set((state) => ({
+    draft: {
+      ...state.draft,
+      patches: state.draft.patches.map(p =>
+        p.client_id === client_id ? { ...p, ...patch } : p
+      ),
+    },
+  })),
+
+  toggleOverride: (client_id, field, enabled) => set((state) => ({
+    draft: {
+      ...state.draft,
+      patches: state.draft.patches.map(p =>
+        p.client_id === client_id
+          ? { ...p, [`override_${field}`]: !!enabled }
+          : p
+      ),
+    },
+  })),
 }))

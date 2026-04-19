@@ -93,6 +93,111 @@ export function activeWeatherToGlobalDraft(active) {
   }
 }
 
+// ── Patch wire builders (Slice 5b-ii) ─────────────────────────────────────
+// Accept emits per-patch WS messages (add_patch / update_patch). Wire
+// shape mirrors WeatherPatch.msg's per-field override model:
+//   override_<field> boolean + <field> value, always present together.
+// cloud_layers / wind_layers use empty-array-as-inherit convention.
+//
+// DEFERRED to Slice 5b-iv: humidity, pressure, runway_friction overrides
+// — msg doesn't have fields for them yet. Draft carries them for forward
+// compat; wire drops them here.
+
+function applyOverridesToWire(p, data) {
+  data.override_visibility = !!p.override_visibility
+  data.visibility_m        = p.visibility_m
+
+  data.override_temperature = !!p.override_temperature
+  data.temperature_k        = p.temperature_c + K_OFFSET
+
+  data.override_precipitation = !!p.override_precipitation
+  data.precipitation_rate     = p.precipitation_rate
+  data.precipitation_type     = p.precipitation_type
+
+  data.cloud_layers = (p.cloud_layers || []).map(cl => ({
+    cloud_type:   cl.cloud_type,
+    base_agl_ft:  cl.base_agl_ft,
+    thickness_m:  cl.thickness_m,
+    coverage_pct: cl.coverage_pct,
+  }))
+  data.wind_layers = (p.wind_layers || []).map(wl => ({
+    altitude_msl_m:       wl.altitude_msl_m,
+    wind_direction_deg:   wl.wind_direction_deg,
+    wind_speed_ms:        wl.wind_speed_ms,
+    vertical_wind_ms:     wl.vertical_wind_ms     ?? 0,
+    gust_speed_ms:        wl.gust_speed_ms        ?? 0,
+    shear_direction_deg:  wl.shear_direction_deg  ?? 0,
+    shear_speed_ms:       wl.shear_speed_ms       ?? 0,
+    turbulence_severity:  wl.turbulence_severity  ?? 0,
+  }))
+}
+
+export function patchDraftToAddWire(p) {
+  const data = {
+    patch_type:         p.patch_type,
+    role:               p.role,
+    label:              p.label,
+    icao:               p.icao,
+    lat_deg:            p.lat_deg,
+    lon_deg:            p.lon_deg,
+    ground_elevation_m: p.ground_elevation_m,
+    radius_m:           p.radius_m,
+  }
+  applyOverridesToWire(p, data)
+  return data
+}
+
+export function patchDraftToUpdateWire(p) {
+  const data = {
+    patch_id:           p.patch_id,
+    patch_type:         p.patch_type,
+    role:               p.role,
+    label:              p.label,
+    icao:               p.icao,
+    lat_deg:            p.lat_deg,
+    lon_deg:            p.lon_deg,
+    ground_elevation_m: p.ground_elevation_m,
+    radius_m:           p.radius_m,
+  }
+  applyOverridesToWire(p, data)
+  return data
+}
+
+// Reconstruct draft patch shape from the 'patches' WS broadcast.
+// Role fallback: if backend hasn't sent role, infer from patch_type
+// (airport→departure, custom→custom). Instructor can rename in UI.
+export function patchesFromBroadcast(raw) {
+  const list = Array.isArray(raw) ? raw : []
+  return list.map(rp => ({
+    client_id:          `srv-${rp.patch_id}`,
+    patch_id:           rp.patch_id,
+    role:               rp.role || (rp.patch_type === 'airport' ? 'departure' : 'custom'),
+    patch_type:         rp.patch_type || 'custom',
+    label:              rp.label || '',
+    icao:               rp.icao  || '',
+    lat_deg:            rp.lat_deg ?? 0,
+    lon_deg:            rp.lon_deg ?? 0,
+    ground_elevation_m: rp.ground_elevation_m ?? 0,
+    radius_m:           rp.radius_m ?? 0,
+
+    override_visibility:    !!rp.override_visibility,
+    visibility_m:           rp.visibility_m ?? 9999,
+    override_temperature:   !!rp.override_temperature,
+    temperature_c:          (rp.temperature_k ?? 288.15) - K_OFFSET,
+    override_precipitation: !!rp.override_precipitation,
+    precipitation_rate:     rp.precipitation_rate ?? 0,
+    precipitation_type:     rp.precipitation_type ?? 0,
+
+    cloud_layers: rp.cloud_layers || [],
+    wind_layers:  rp.wind_layers  || [],
+
+    // Deferred (5b-iv) — broadcast doesn't carry these yet
+    override_humidity: false, humidity_pct: 50,
+    override_pressure: false, pressure_hpa: 1013.25,
+    override_runway:   false, runway_friction: 0,
+  }))
+}
+
 // ── Display-unit helpers (UI-only, no storage impact) ─────────────────────
 
 export function metersToSM(m)  { return m / M_PER_SM }
