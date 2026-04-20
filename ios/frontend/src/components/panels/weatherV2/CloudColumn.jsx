@@ -10,14 +10,20 @@ const MIN_THICKNESS_FT = 100
 
 // Middle-column cloud graph. Reads cloud_layers from the V2 draft and
 // dispatches updates via store actions — nothing touches the backend
-// until Accept fires. Station elevation from activeWeather powers the
-// AGL↔MSL conversion (clouds are AGL-authored, graph is MSL-rendered).
-export default function CloudColumn({ height, width }) {
-  const stationElevM = useSimStore(s => s.activeWeather?.stationElevationM ?? 0)
+// until Accept fires. Station elevation drives AGL↔MSL conversion:
+//   - Global tab:  weather station elevation from activeWeather
+//   - Patch tab:   patch.ground_elevation_m via patchContext prop
+export default function CloudColumn({ height, width, patchContext }) {
+  const globalStationElevM = useSimStore(s => s.activeWeather?.stationElevationM ?? 0)
+  const activeTab          = useWeatherV2Store(s => s.activeTab)
+  const patchCid           = patchContext?.client_id ?? null
+  const stationElevM       = patchContext ? patchContext.stationElevM : globalStationElevM
 
   const { cloudLayers, addCloud, updateCloud, selectedLayer, selectLayer } = useWeatherV2Store(
     useShallow(s => ({
-      cloudLayers:   s.draft.global.cloud_layers ?? [],
+      cloudLayers: patchCid
+        ? (s.draft.patches.find(p => p.client_id === patchCid)?.cloud_layers ?? [])
+        : (s.draft.global.cloud_layers ?? []),
       addCloud:      s.addCloud,
       updateCloud:   s.updateCloud,
       selectedLayer: s.selectedLayer,
@@ -49,8 +55,8 @@ export default function CloudColumn({ height, width }) {
       <button
         type="button"
         disabled={!canAdd}
-        onClick={addCloud}
-        onTouchEnd={(e) => { e.preventDefault(); if (canAdd) addCloud() }}
+        onClick={() => addCloud(patchCid)}
+        onTouchEnd={(e) => { e.preventDefault(); if (canAdd) addCloud(patchCid) }}
         style={{
           position: 'absolute',
           top: -36, left: 0,
@@ -73,7 +79,9 @@ export default function CloudColumn({ height, width }) {
         const info        = cloudTypeInfo(cl.cloud_type ?? 7)
         const cov         = Math.round(cl.coverage_pct ?? 0)
         const label       = `${info.label} ${cov}%`
-        const isSelected  = selectedLayer?.kind === 'cloud' && selectedLayer?.index === i
+        const isSelected  = selectedLayer?.tabId === activeTab
+                         && selectedLayer?.kind === 'cloud'
+                         && selectedLayer?.index === i
 
         return (
           <LayerBand
@@ -94,14 +102,13 @@ export default function CloudColumn({ height, width }) {
                 newBottomFt - stationElevFt,
                 thicknessFt,
               )
-              updateCloud(i, { base_agl_ft: newBaseAgl })
+              updateCloud(i, { base_agl_ft: newBaseAgl }, patchCid)
             }}
             onResizeTop={(newTopFt) => {
               // Bottom stays fixed; only thickness changes.
               const newThicknessFt = Math.max(MIN_THICKNESS_FT, newTopFt - bottomFt)
-              // Also clamp top ≤ MAX_FT
               const capped = Math.min(newThicknessFt, MAX_FT - bottomFt)
-              updateCloud(i, { thickness_m: capped * FT_TO_M })
+              updateCloud(i, { thickness_m: capped * FT_TO_M }, patchCid)
             }}
             onResizeBottom={(newBotFt) => {
               // Top stays fixed; base_agl + thickness both change.
@@ -111,7 +118,7 @@ export default function CloudColumn({ height, width }) {
               updateCloud(i, {
                 base_agl_ft: newBaseAgl,
                 thickness_m: newThicknessFt * FT_TO_M,
-              })
+              }, patchCid)
             }}
           />
         )

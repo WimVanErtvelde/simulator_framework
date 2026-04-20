@@ -84,6 +84,61 @@ function patchesDiffer(dp, sp) {
   return normalizePatchForDiff(dp) !== normalizePatchForDiff(sp)
 }
 
+// Stable identity match for broadcast sync: preserve draft's client_id
+// when the same logical patch re-appears from the server. Prevents the
+// activeTab/selectedLayer from losing its target after add-accept-
+// broadcast roundtrip (where the draft patch's patch_id goes null → N).
+// - airport patches: match by (role, icao)
+// - custom patches:  match by (role, lat, lon) with 0.0001° tolerance
+//   (~10 m at equator — tight enough that two distinct custom patches
+//   won't collide, loose enough to tolerate float roundtrip through JSON
+//   serialization and ROS2 float32 quantization).
+function matchDraftPatch(serverPatch, draftPatches) {
+  if (serverPatch.patch_type === 'airport') {
+    return draftPatches.find(d =>
+      d.role === serverPatch.role && d.icao === serverPatch.icao
+    )
+  }
+  const COORD_TOL_DEG = 0.0001
+  return draftPatches.find(d =>
+    d.role === serverPatch.role &&
+    Math.abs((d.lat_deg ?? 0) - (serverPatch.lat_deg ?? 0)) < COORD_TOL_DEG &&
+    Math.abs((d.lon_deg ?? 0) - (serverPatch.lon_deg ?? 0)) < COORD_TOL_DEG
+  )
+}
+
+// Helpers for cloud/wind actions that target either draft.global or a
+// patch indexed by client_id. Shared by addCloud/removeCloud/updateCloud
+// and their wind twins — keeps the per-target branching compact.
+function readLayers(state, client_id, key) {
+  if (client_id == null) return state.draft.global[key] ?? []
+  const p = state.draft.patches.find(pp => pp.client_id === client_id)
+  return p?.[key] ?? []
+}
+
+function applyLayers(state, client_id, key, nextLayers) {
+  if (client_id == null) {
+    return {
+      draft: {
+        ...state.draft,
+        global: { ...state.draft.global, [key]: nextLayers },
+      },
+    }
+  }
+  return {
+    draft: {
+      ...state.draft,
+      patches: state.draft.patches.map(p =>
+        p.client_id === client_id ? { ...p, [key]: nextLayers } : p
+      ),
+    },
+  }
+}
+
+function tabIdFor(client_id) {
+  return client_id == null ? 'global' : client_id
+}
+
 export const useWeatherV2Store = create((set, get) => ({
   draft:       structuredClone(initialDraft),
   serverState: structuredClone(initialDraft),
@@ -94,7 +149,9 @@ export const useWeatherV2Store = create((set, get) => ({
   // that introduce those fields.
   activeTab: 'global',
 
-  setActiveTab: (tab) => set({ activeTab: tab }),
+  // Clearing selection on tab change avoids the LayerPropertiesColumn
+  // rendering a layer from a different tab (indices don't map across).
+  setActiveTab: (tab) => set({ activeTab: tab, selectedLayer: null }),
 
   // Generic draft mutator. Tabs call with a path into the draft:
   //   updateDraft(['global', 'temperature_c'], 20)
@@ -110,9 +167,19 @@ export const useWeatherV2Store = create((set, get) => ({
   // patches broadcast arrived). Merges scalars into serverState.global
   // and patches into serverState.patches. Draft receives the same merge
   // only if it was clean at sync time — never clobbers in-flight edits.
+  //
+  // Patch client_id preservation: when a broadcast patch matches a draft
+  // patch by (role, icao) for airports or (role, lat/lon) for custom, the
+  // draft's client_id is carried into the merged patch. This keeps the
+  // activeTab / selectedLayer.tabId reference valid across the add →
+  // broadcast roundtrip where the server assigns a real patch_id.
   syncFromBroadcast: (activeWeather) => set((state) => {
     const freshGlobal  = activeWeatherToGlobalDraft(activeWeather)
-    const freshPatches = patchesFromBroadcast(activeWeather?.patches)
+    const rawPatches   = patchesFromBroadcast(activeWeather?.patches)
+    const freshPatches = rawPatches.map(sp => {
+      const matched = matchDraftPatch(sp, state.draft.patches)
+      return matched ? { ...sp, client_id: matched.client_id } : sp
+    })
     const wasClean = draftEquals(state.draft, state.serverState)
     const nextServer = {
       ...state.serverState,
@@ -199,17 +266,22 @@ export const useWeatherV2Store = create((set, get) => ({
   discard: () => set((state) => ({ draft: structuredClone(state.serverState) })),
 
   // ── Layer selection (drives LayerPropertiesColumn content) ─────────────
-  // null when nothing selected; empty-state shown.
-  selectedLayer: null,   // { kind: 'cloud' | 'wind', index: number } | null
+  // null when nothing selected; empty-state shown. tabId is captured at
+  // selection time so switching tabs can scope index math correctly
+  // (a cloud[2] in DEP and cloud[2] in GLOBAL index into different lists).
+  selectedLayer: null,   // { tabId, kind, index } | null
 
-  selectLayer:   (kind, index) => set({ selectedLayer: { kind, index } }),
-  clearSelection: ()           => set({ selectedLayer: null }),
+  selectLayer: (kind, index) => set(state => ({
+    selectedLayer: { tabId: state.activeTab, kind, index },
+  })),
+  clearSelection: () => set({ selectedLayer: null }),
 
   // ── Cloud layer actions (draft only — committed on Accept) ─────────────
-  // All mutate draft.global.cloud_layers in-memory; no WS traffic until
-  // accept() fires. Cap at 3 (backend enforces same limit).
-  addCloud: () => set((state) => {
-    const cur = state.draft.global.cloud_layers ?? []
+  // All take an optional client_id — null/undefined targets draft.global,
+  // a patch's client_id targets draft.patches[i].cloud_layers. Cap at 3
+  // per target (backend enforces same limit).
+  addCloud: (client_id = null) => set((state) => {
+    const cur = readLayers(state, client_id, 'cloud_layers')
     if (cur.length >= 3) return state
     // Stack upward: new base = max existing top + 2000 ft, else 3000 AGL.
     let new_base_agl_ft = 3000
@@ -225,46 +297,29 @@ export const useWeatherV2Store = create((set, get) => ({
       thickness_m:  2000 * FT_TO_M_CONST,
       coverage_pct: 25,
     }
-    return {
-      draft: {
-        ...state.draft,
-        global: {
-          ...state.draft.global,
-          cloud_layers: [...cur, newLayer],
-        },
-      },
-    }
+    return applyLayers(state, client_id, 'cloud_layers', [...cur, newLayer])
   }),
 
-  removeCloud: (index) => set((state) => {
-    const cur = state.draft.global.cloud_layers ?? []
+  removeCloud: (index, client_id = null) => set((state) => {
+    const cur = readLayers(state, client_id, 'cloud_layers')
     const next = cur.filter((_, i) => i !== index)
-    // Clear selection if the removed layer was selected; shift index down
-    // if a higher-index layer was selected.
+    // Clear selection if the removed layer was selected in THIS tab; shift
+    // index down if a higher-index layer in THIS tab was selected. Layers
+    // in other tabs are untouched — their indices are independent.
+    const targetTab = tabIdFor(client_id)
     let nextSel = state.selectedLayer
-    if (nextSel?.kind === 'cloud') {
+    if (nextSel?.tabId === targetTab && nextSel?.kind === 'cloud') {
       if (nextSel.index === index)      nextSel = null
       else if (nextSel.index > index)   nextSel = { ...nextSel, index: nextSel.index - 1 }
     }
-    return {
-      draft: {
-        ...state.draft,
-        global: { ...state.draft.global, cloud_layers: next },
-      },
-      selectedLayer: nextSel,
-    }
+    return { ...applyLayers(state, client_id, 'cloud_layers', next), selectedLayer: nextSel }
   }),
 
-  updateCloud: (index, patch) => set((state) => {
-    const cur = state.draft.global.cloud_layers ?? []
+  updateCloud: (index, patch, client_id = null) => set((state) => {
+    const cur = readLayers(state, client_id, 'cloud_layers')
     if (index < 0 || index >= cur.length) return state
     const next = cur.map((cl, i) => (i === index ? { ...cl, ...patch } : cl))
-    return {
-      draft: {
-        ...state.draft,
-        global: { ...state.draft.global, cloud_layers: next },
-      },
-    }
+    return applyLayers(state, client_id, 'cloud_layers', next)
   }),
 
   setRunwayFriction: (idx) => set((state) => ({
@@ -278,10 +333,11 @@ export const useWeatherV2Store = create((set, get) => ({
   })),
 
   // ── Wind layer actions (draft only — committed on Accept) ──────────────
-  // All mutate draft.global.wind_layers in-memory; no WS traffic until
-  // accept() fires. Cap at 13 (X-Plane WeatherState max).
-  addWind: () => set((state) => {
-    const cur = state.draft.global.wind_layers ?? []
+  // All take an optional client_id — null/undefined targets draft.global,
+  // a patch's client_id targets draft.patches[i].wind_layers. Cap at 13
+  // per target (X-Plane WeatherState max).
+  addWind: (client_id = null) => set((state) => {
+    const cur = readLayers(state, client_id, 'wind_layers')
     if (cur.length >= 13) return state
     // Stack upward: new altitude = max existing + 2000 ft, else 5000 ft MSL.
     let new_alt_m = 5000 * FT_TO_M_CONST
@@ -299,41 +355,26 @@ export const useWeatherV2Store = create((set, get) => ({
       shear_speed_ms:       0.0,
       turbulence_severity:  0.0,
     }
-    return {
-      draft: {
-        ...state.draft,
-        global: { ...state.draft.global, wind_layers: [...cur, newLayer] },
-      },
-    }
+    return applyLayers(state, client_id, 'wind_layers', [...cur, newLayer])
   }),
 
-  removeWind: (index) => set((state) => {
-    const cur = state.draft.global.wind_layers ?? []
+  removeWind: (index, client_id = null) => set((state) => {
+    const cur = readLayers(state, client_id, 'wind_layers')
     const next = cur.filter((_, i) => i !== index)
+    const targetTab = tabIdFor(client_id)
     let nextSel = state.selectedLayer
-    if (nextSel?.kind === 'wind') {
+    if (nextSel?.tabId === targetTab && nextSel?.kind === 'wind') {
       if (nextSel.index === index)    nextSel = null
       else if (nextSel.index > index) nextSel = { ...nextSel, index: nextSel.index - 1 }
     }
-    return {
-      draft: {
-        ...state.draft,
-        global: { ...state.draft.global, wind_layers: next },
-      },
-      selectedLayer: nextSel,
-    }
+    return { ...applyLayers(state, client_id, 'wind_layers', next), selectedLayer: nextSel }
   }),
 
-  updateWind: (index, patch) => set((state) => {
-    const cur = state.draft.global.wind_layers ?? []
+  updateWind: (index, patch, client_id = null) => set((state) => {
+    const cur = readLayers(state, client_id, 'wind_layers')
     if (index < 0 || index >= cur.length) return state
     const next = cur.map((wl, i) => (i === index ? { ...wl, ...patch } : wl))
-    return {
-      draft: {
-        ...state.draft,
-        global: { ...state.draft.global, wind_layers: next },
-      },
-    }
+    return applyLayers(state, client_id, 'wind_layers', next)
   }),
 
   // ── Patch actions (Slice 5b-ii — draft only; Accept emits WS messages) ─

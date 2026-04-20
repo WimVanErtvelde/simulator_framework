@@ -4,11 +4,18 @@ import WindPropertiesEditor from './WindPropertiesEditor'
 
 // Left column of WeatherPanelV2 Global tab. Dispatches on the current
 // selection: empty-state message, cloud editor, or wind editor.
-export default function LayerPropertiesColumn() {
+export default function LayerPropertiesColumn({ patchContext }) {
   const selectedLayer = useWeatherV2Store(s => s.selectedLayer)
+  const activeTab     = useWeatherV2Store(s => s.activeTab)
+
+  // Only honor a selection if it belongs to the active tab — otherwise
+  // the index refers to a different patch's layer list. setActiveTab
+  // already clears selection on switch, but a stale selection during a
+  // race is safer handled here too.
+  const showSel = selectedLayer?.tabId === activeTab
 
   let content
-  if (!selectedLayer) {
+  if (!showSel) {
     content = (
       <div style={{
         color: '#64748b', fontFamily: 'monospace', fontSize: 12,
@@ -16,9 +23,9 @@ export default function LayerPropertiesColumn() {
       }}>Add or select a layer to edit.</div>
     )
   } else if (selectedLayer.kind === 'cloud') {
-    content = <CloudPropertiesEditor index={selectedLayer.index} />
+    content = <CloudPropertiesEditor index={selectedLayer.index} patchContext={patchContext} />
   } else if (selectedLayer.kind === 'wind') {
-    content = <WindPropertiesEditor index={selectedLayer.index} />
+    content = <WindPropertiesEditor index={selectedLayer.index} patchContext={patchContext} />
   }
 
   return (

@@ -14,20 +14,29 @@ const MIN_THICK_FT = 100
 // numeric entry (touch-friendly NumpadPopup) plus a sqrt-mapped slider.
 // Graph drag, slider, MSL input, and AGL input are all bound to the same
 // draft field — edit any one and the others reflow on re-render.
-export default function CloudPropertiesEditor({ index }) {
-  const { stationElevM, altFtMsl, altFtAgl } = useSimStore(useShallow(s => ({
-    stationElevM: s.activeWeather?.stationElevationM ?? 0,
-    altFtMsl:     s.fdm?.altFtMsl ?? 0,
-    altFtAgl:     s.fdm?.altFtAgl ?? 0,
+export default function CloudPropertiesEditor({ index, patchContext }) {
+  const patchCid = patchContext?.client_id ?? null
+
+  const { globalStationElevM, altFtMsl, altFtAgl } = useSimStore(useShallow(s => ({
+    globalStationElevM: s.activeWeather?.stationElevationM ?? 0,
+    altFtMsl:           s.fdm?.altFtMsl ?? 0,
+    altFtAgl:           s.fdm?.altFtAgl ?? 0,
   })))
 
   const { cl, updateCloud, removeCloud } = useWeatherV2Store(useShallow(s => ({
-    cl:          s.draft.global.cloud_layers?.[index],
+    cl: patchCid
+      ? s.draft.patches.find(p => p.client_id === patchCid)?.cloud_layers?.[index]
+      : s.draft.global.cloud_layers?.[index],
     updateCloud: s.updateCloud,
     removeCloud: s.removeCloud,
   })))
 
   if (!cl) return null
+
+  // In patch context, station elevation is the patch's ground elevation
+  // (AGL refs are patch-relative). In global context, fall back to the
+  // weather station elevation from activeWeather.
+  const stationElevM = patchContext ? patchContext.stationElevM : globalStationElevM
 
   const type          = cl.cloud_type ?? 7
   const coverage      = Math.round(cl.coverage_pct ?? 0)
@@ -64,12 +73,12 @@ export default function CloudPropertiesEditor({ index }) {
     updateCloud(index, {
       base_agl_ft: newBaseAgl,
       thickness_m: newThicknessFt * FT_TO_M,
-    })
+    }, patchCid)
   }
   const setTopMsl = (newTopMsl) => {
     const newThicknessFt = Math.max(MIN_THICK_FT, newTopMsl - baseMslFt)
     const capped = Math.min(newThicknessFt, MAX_FT - baseMslFt)
-    updateCloud(index, { thickness_m: capped * FT_TO_M })
+    updateCloud(index, { thickness_m: capped * FT_TO_M }, patchCid)
   }
 
   // AGL edits — UI AGL is relative to ground elevation. Translate to
@@ -102,8 +111,8 @@ export default function CloudPropertiesEditor({ index }) {
               <button
                 key={t.id}
                 type="button"
-                onClick={() => updateCloud(index, { cloud_type: t.id })}
-                onTouchEnd={(e) => { e.preventDefault(); updateCloud(index, { cloud_type: t.id }) }}
+                onClick={() => updateCloud(index, { cloud_type: t.id }, patchCid)}
+                onTouchEnd={(e) => { e.preventDefault(); updateCloud(index, { cloud_type: t.id }, patchCid) }}
                 style={{
                   height: 28,
                   background: active ? `${t.color}22` : '#111827',
@@ -133,7 +142,7 @@ export default function CloudPropertiesEditor({ index }) {
           type="range"
           min={0} max={100} step={5}
           value={coverage}
-          onChange={(e) => updateCloud(index, { coverage_pct: Number(e.target.value) })}
+          onChange={(e) => updateCloud(index, { coverage_pct: Number(e.target.value) }, patchCid)}
           style={{
             width: '100%', accentColor: '#39d0d8',
             cursor: 'pointer', touchAction: 'manipulation',
@@ -167,8 +176,8 @@ export default function CloudPropertiesEditor({ index }) {
 
       <button
         type="button"
-        onClick={() => removeCloud(index)}
-        onTouchEnd={(e) => { e.preventDefault(); removeCloud(index) }}
+        onClick={() => removeCloud(index, patchCid)}
+        onTouchEnd={(e) => { e.preventDefault(); removeCloud(index, patchCid) }}
         style={{
           marginTop: 4, height: 32,
           background: 'rgba(239, 68, 68, 0.06)',

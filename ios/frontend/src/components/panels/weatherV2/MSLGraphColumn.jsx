@@ -12,7 +12,7 @@ const MIN_COL_WIDTH      = 120
 // the cloud + wind layer columns side-by-side. Each column owns its
 // own `+ …` button (anchored top: -36 inside its root), so they sit
 // inside their respective column roots and don't collide horizontally.
-export default function MSLGraphColumn() {
+export default function MSLGraphColumn({ patchContext }) {
   const hostRef = useRef(null)
   const [size, setSize] = useState({ w: 600, h: 520 })
 
@@ -58,8 +58,8 @@ export default function MSLGraphColumn() {
         gap: 0,
       }}>
         <MSLAxis height={graphH} />
-        <CloudColumn height={graphH} width={colW} />
-        <WindColumn  height={graphH} width={colW} />
+        <CloudColumn height={graphH} width={colW} patchContext={patchContext} />
+        <WindColumn  height={graphH} width={colW} patchContext={patchContext} />
       </div>
     </div>
   )

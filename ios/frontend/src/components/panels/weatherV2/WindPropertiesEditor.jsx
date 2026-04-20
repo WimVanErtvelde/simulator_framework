@@ -17,11 +17,14 @@ const MAX_ALT_FT = MAX_FT
 // slider; direction combines CompassDial + two side-by-side NumpadField
 // inputs (TRUE and MAGNETIC) that are bidirectionally bound via
 // magVarDeg. Storage is always true — only authoring surface varies.
-export default function WindPropertiesEditor({ index }) {
+export default function WindPropertiesEditor({ index, patchContext }) {
+  const patchCid = patchContext?.client_id ?? null
   const magVarDeg = useSimStore(s => s.nav?.magVariationDeg ?? 0)
 
   const { wl, updateWind, removeWind } = useWeatherV2Store(useShallow(s => ({
-    wl:         s.draft.global.wind_layers?.[index],
+    wl: patchCid
+      ? s.draft.patches.find(p => p.client_id === patchCid)?.wind_layers?.[index]
+      : s.draft.global.wind_layers?.[index],
     updateWind: s.updateWind,
     removeWind: s.removeWind,
   })))
@@ -41,13 +44,13 @@ export default function WindPropertiesEditor({ index }) {
 
   const setTrueDeg = (newTrue) => {
     const wrapped = ((Number(newTrue) % 360) + 360) % 360
-    updateWind(index, { wind_direction_deg: wrapped })
+    updateWind(index, { wind_direction_deg: wrapped }, patchCid)
   }
   // Typing in M input: convert to true via variation, then wrap.
   const setFromMag = (newMag) => setTrueDeg(Number(newMag) + magVarDeg)
   const setAltMslFt = (ft) => {
     const clamped = Math.max(MIN_ALT_FT, Math.min(MAX_ALT_FT, ft))
-    updateWind(index, { altitude_msl_m: clamped * FT_TO_M })
+    updateWind(index, { altitude_msl_m: clamped * FT_TO_M }, patchCid)
   }
   const setSpdKt = (kt) => {
     const newSustainedMs = Math.max(0, kt) * KT_TO_MS
@@ -56,18 +59,18 @@ export default function WindPropertiesEditor({ index }) {
     // If sustained now exceeds stored gust, pull gust up to match so the
     // "gust >= sustained" invariant is always satisfied.
     if (curGustMs < newSustainedMs) patch.gust_speed_ms = newSustainedMs
-    updateWind(index, patch)
+    updateWind(index, patch, patchCid)
   }
   const setGustKt = (kt) => {
     // GUST slider min is bound to spdKt in the UI, but double-clamp here
     // in case callers (e.g. sustained pull-up above) pass a lower value.
     const clampedKt = Math.max(spdKt, kt)
-    updateWind(index, { gust_speed_ms: clampedKt * KT_TO_MS })
+    updateWind(index, { gust_speed_ms: clampedKt * KT_TO_MS }, patchCid)
   }
-  const setVerticalMs = (ms) => updateWind(index, { vertical_wind_ms: ms })
+  const setVerticalMs = (ms) => updateWind(index, { vertical_wind_ms: ms }, patchCid)
   const setTurbPct    = (pct) => updateWind(index, {
     turbulence_severity: Math.max(0, Math.min(1, pct / 100)),
-  })
+  }, patchCid)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -169,8 +172,8 @@ export default function WindPropertiesEditor({ index }) {
 
       <button
         type="button"
-        onClick={() => removeWind(index)}
-        onTouchEnd={(e) => { e.preventDefault(); removeWind(index) }}
+        onClick={() => removeWind(index, patchCid)}
+        onTouchEnd={(e) => { e.preventDefault(); removeWind(index, patchCid) }}
         style={{
           marginTop: 4, height: 32,
           background: 'rgba(239, 68, 68, 0.06)',

@@ -15,12 +15,16 @@ const MS_TO_KT     = 1 / KT_TO_MS
 // for kind='wind', so there's no top/bottom resize; body-drag moves the
 // altitude. Parallel to CloudColumn; reads draft wind_layers and
 // dispatches store actions only — no WS until Accept.
-export default function WindColumn({ height, width }) {
+export default function WindColumn({ height, width, patchContext }) {
   const magVarDeg = useSimStore(s => s.nav?.magVariationDeg ?? 0)
+  const activeTab = useWeatherV2Store(s => s.activeTab)
+  const patchCid  = patchContext?.client_id ?? null
 
   const { windLayers, addWind, updateWind, selectedLayer, selectLayer } =
     useWeatherV2Store(useShallow(s => ({
-      windLayers:    s.draft.global.wind_layers ?? [],
+      windLayers: patchCid
+        ? (s.draft.patches.find(p => p.client_id === patchCid)?.wind_layers ?? [])
+        : (s.draft.global.wind_layers ?? []),
       addWind:       s.addWind,
       updateWind:    s.updateWind,
       selectedLayer: s.selectedLayer,
@@ -41,8 +45,8 @@ export default function WindColumn({ height, width }) {
       <button
         type="button"
         disabled={!canAdd}
-        onClick={addWind}
-        onTouchEnd={(e) => { e.preventDefault(); if (canAdd) addWind() }}
+        onClick={() => addWind(patchCid)}
+        onTouchEnd={(e) => { e.preventDefault(); if (canAdd) addWind(patchCid) }}
         style={{
           position: 'absolute',
           top: -36, left: 0,
@@ -74,7 +78,9 @@ export default function WindColumn({ height, width }) {
           ? `${spdKt}G${gustKt} kt`
           : `${spdKt} kt`
         const label    = `${dirStr} / ${speedStr}`
-        const isSelected = selectedLayer?.kind === 'wind' && selectedLayer?.index === i
+        const isSelected = selectedLayer?.tabId === activeTab
+                        && selectedLayer?.kind === 'wind'
+                        && selectedLayer?.index === i
 
         return (
           <LayerBand
@@ -92,7 +98,7 @@ export default function WindColumn({ height, width }) {
               // Point-altitude: midpoint of the band is the new altitude.
               const midFt = (newTopFt + newBottomFt) / 2
               const clamped = Math.max(MIN_FT, Math.min(MAX_FT, midFt))
-              updateWind(i, { altitude_msl_m: clamped * FT_TO_M })
+              updateWind(i, { altitude_msl_m: clamped * FT_TO_M }, patchCid)
             }}
             /* Wind bands have no top/bottom resize — detectEdge already
                returns 'body' for kind='wind', so onResizeTop/Bottom are
