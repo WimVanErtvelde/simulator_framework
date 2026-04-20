@@ -68,15 +68,19 @@ export default function RunwayField({
   }
 
   return (
-    <div style={{ ...fieldBox, opacity: disabled ? 0.4 : 1 }}>
+    <div style={fieldBox}>
       <div style={fieldHeader}>
-        <span style={fieldLabel}>Runway Condition</span>
-        {showOverrideToggle && (
-          <OverridePill enabled={overrideEnabled} onToggle={onToggleOverride} />
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={fieldLabel}>Runway Condition</span>
+          {showOverrideToggle && (
+            <OverridePill enabled={overrideEnabled} onToggle={onToggleOverride} />
+          )}
+        </div>
         <span style={fieldValue}>{runwayActive.label}</span>
       </div>
 
+      <div style={{ opacity: disabled ? 0.4 : 1,
+                    display: 'flex', flexDirection: 'column', gap: 4 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4 }}>
         {RUNWAY_CATEGORIES.map(cat => {
           const active = runwayActive.categoryId === cat.id
@@ -126,6 +130,7 @@ export default function RunwayField({
             >{sev}</button>
           )
         })}
+      </div>
       </div>
     </div>
   )

@@ -39,22 +39,26 @@ export default function TemperatureField({
     : null
 
   return (
-    <div style={{ ...fieldBox, opacity: disabled ? 0.4 : 1 }}>
+    <div style={fieldBox}>
       <div style={fieldHeader}>
-        <span style={fieldLabel}>Sea Level Temp</span>
-        {showOverrideToggle && (
-          <OverridePill enabled={overrideEnabled} onToggle={onToggleOverride} />
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={fieldLabel}>Sea Level Temp</span>
+          {showOverrideToggle && (
+            <OverridePill enabled={overrideEnabled} onToggle={onToggleOverride} />
+          )}
+        </div>
         <span style={fieldValue}>{value.toFixed(0)} °C</span>
       </div>
-      <input
-        type="range"
-        min={-100} max={60} step={1}
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(Number(e.target.value))}
-        style={slider}
-      />
+      <div style={{ opacity: disabled ? 0.4 : 1 }}>
+        <input
+          type="range"
+          min={-100} max={60} step={1}
+          value={value}
+          disabled={disabled}
+          onChange={(e) => onChange(Number(e.target.value))}
+          style={slider}
+        />
+      </div>
 
       {Number.isFinite(oatAtAircraftC) && (
         <div style={{

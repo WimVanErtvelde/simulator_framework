@@ -11,22 +11,26 @@ export default function HumidityField({
   const disabled = !overrideEnabled
 
   return (
-    <div style={{ ...fieldBox, opacity: disabled ? 0.4 : 1 }}>
+    <div style={fieldBox}>
       <div style={fieldHeader}>
-        <span style={fieldLabel}>Humidity</span>
-        {showOverrideToggle && (
-          <OverridePill enabled={overrideEnabled} onToggle={onToggleOverride} />
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={fieldLabel}>Humidity</span>
+          {showOverrideToggle && (
+            <OverridePill enabled={overrideEnabled} onToggle={onToggleOverride} />
+          )}
+        </div>
         <span style={fieldValue}>{Math.round(value)} %</span>
       </div>
-      <input
-        type="range"
-        min={0} max={100} step={1}
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(Number(e.target.value))}
-        style={slider}
-      />
+      <div style={{ opacity: disabled ? 0.4 : 1 }}>
+        <input
+          type="range"
+          min={0} max={100} step={1}
+          value={value}
+          disabled={disabled}
+          onChange={(e) => onChange(Number(e.target.value))}
+          style={slider}
+        />
+      </div>
     </div>
   )
 }

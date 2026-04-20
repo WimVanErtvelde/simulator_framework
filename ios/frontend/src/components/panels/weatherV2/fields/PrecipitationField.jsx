@@ -18,27 +18,32 @@ export default function PrecipitationField({
   const pct = Math.round(rate * 100)
 
   return (
-    <div style={{ ...fieldBox, opacity: disabled ? 0.4 : 1 }}>
+    <div style={fieldBox}>
       <div style={fieldHeader}>
-        <span style={fieldLabel}>Precipitation</span>
-        {showOverrideToggle && (
-          <OverridePill enabled={overrideEnabled} onToggle={onToggleOverride} />
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={fieldLabel}>Precipitation</span>
+          {showOverrideToggle && (
+            <OverridePill enabled={overrideEnabled} onToggle={onToggleOverride} />
+          )}
+        </div>
         <span style={fieldValue}>{pct} %</span>
       </div>
-      <PillGroup
-        options={PRECIP_TYPES}
-        value={type}
-        onChange={disabled ? () => {} : onChangeType}
-      />
-      <input
-        type="range"
-        min={0} max={100} step={1}
-        value={pct}
-        disabled={disabled}
-        onChange={(e) => onChangeRate(Number(e.target.value) / 100)}
-        style={slider}
-      />
+      <div style={{ opacity: disabled ? 0.4 : 1,
+                    display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <PillGroup
+          options={PRECIP_TYPES}
+          value={type}
+          onChange={disabled ? () => {} : onChangeType}
+        />
+        <input
+          type="range"
+          min={0} max={100} step={1}
+          value={pct}
+          disabled={disabled}
+          onChange={(e) => onChangeRate(Number(e.target.value) / 100)}
+          style={slider}
+        />
+      </div>
     </div>
   )
 }

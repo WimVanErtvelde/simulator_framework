@@ -39,15 +39,19 @@ export default function PressureField({
     : null
 
   return (
-    <div style={{ ...fieldBox, opacity: disabled ? 0.4 : 1 }}>
+    <div style={fieldBox}>
       <div style={fieldHeader}>
-        <span style={fieldLabel}>Sea Level Press</span>
-        {showOverrideToggle && (
-          <OverridePill enabled={overrideEnabled} onToggle={onToggleOverride} />
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={fieldLabel}>Sea Level Press</span>
+          {showOverrideToggle && (
+            <OverridePill enabled={overrideEnabled} onToggle={onToggleOverride} />
+          )}
+        </div>
         <span style={fieldValue}>{formatPressure(value, unit)}</span>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 110px', gap: 8, alignItems: 'center' }}>
+      <div style={{ opacity: disabled ? 0.4 : 1,
+                    display: 'grid', gridTemplateColumns: '1fr 110px',
+                    gap: 8, alignItems: 'center' }}>
         <input
           type="range"
           min={880} max={1075} step={0.1}
