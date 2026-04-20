@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace weather_solver
 {
@@ -19,6 +20,43 @@ static double interp_angle(double a_deg, double b_deg, double frac)
     while (result < 0.0)   result += 360.0;
     while (result >= 360.0) result -= 360.0;
     return result;
+}
+
+double WeatherSolver::haversine_distance_m(
+    double lat1_deg, double lon1_deg,
+    double lat2_deg, double lon2_deg)
+{
+    constexpr double EARTH_RADIUS_M = 6371000.0;
+    constexpr double DEG_TO_RAD = M_PI / 180.0;
+
+    double lat1 = lat1_deg * DEG_TO_RAD;
+    double lat2 = lat2_deg * DEG_TO_RAD;
+    double dlat = (lat2_deg - lat1_deg) * DEG_TO_RAD;
+    double dlon = (lon2_deg - lon1_deg) * DEG_TO_RAD;
+
+    double a = std::sin(dlat / 2.0) * std::sin(dlat / 2.0)
+             + std::cos(lat1) * std::cos(lat2)
+               * std::sin(dlon / 2.0) * std::sin(dlon / 2.0);
+    double c = 2.0 * std::atan2(std::sqrt(a), std::sqrt(1.0 - a));
+    return EARTH_RADIUS_M * c;
+}
+
+const sim_msgs::msg::WeatherPatch * WeatherSolver::find_active_patch(
+    double aircraft_lat_deg, double aircraft_lon_deg) const
+{
+    const sim_msgs::msg::WeatherPatch * best = nullptr;
+    float best_radius_m = std::numeric_limits<float>::max();
+
+    for (const auto & p : weather_.patches) {
+        double dist = haversine_distance_m(
+            aircraft_lat_deg, aircraft_lon_deg,
+            p.lat_deg, p.lon_deg);
+        if (dist <= static_cast<double>(p.radius_m) && p.radius_m < best_radius_m) {
+            best = &p;
+            best_radius_m = p.radius_m;
+        }
+    }
+    return best;
 }
 
 // ─── Public ─────────────────────────────────────────────────────────────────
@@ -71,10 +109,12 @@ void WeatherSolver::reset()
     mb_params_.clear();
 }
 
-WeatherSolver::InterpolatedWind WeatherSolver::interpolate_wind(double altitude_m) const
+WeatherSolver::InterpolatedWind WeatherSolver::interpolate_wind_from(
+    double altitude_m,
+    const std::vector<sim_msgs::msg::WeatherWindLayer> & layers) const
 {
     InterpolatedWind result{};
-    if (weather_.wind_layers.empty()) return result;
+    if (layers.empty()) return result;
 
     // Build sorted index by altitude
     struct Entry {
@@ -82,16 +122,16 @@ WeatherSolver::InterpolatedWind WeatherSolver::interpolate_wind(double altitude_
         size_t idx;
     };
     std::vector<Entry> sorted;
-    sorted.reserve(weather_.wind_layers.size());
-    for (size_t i = 0; i < weather_.wind_layers.size(); ++i) {
-        sorted.push_back({static_cast<double>(weather_.wind_layers[i].altitude_msl_m), i});
+    sorted.reserve(layers.size());
+    for (size_t i = 0; i < layers.size(); ++i) {
+        sorted.push_back({static_cast<double>(layers[i].altitude_msl_m), i});
     }
     std::sort(sorted.begin(), sorted.end(),
               [](const Entry & a, const Entry & b) { return a.alt < b.alt; });
 
     // Below lowest layer
     if (altitude_m <= sorted.front().alt) {
-        const auto & wl = weather_.wind_layers[sorted.front().idx];
+        const auto & wl = layers[sorted.front().idx];
         result.speed_ms      = wl.wind_speed_ms;
         result.direction_deg = wl.wind_direction_deg;
         result.vertical_ms   = wl.vertical_wind_ms;
@@ -102,7 +142,7 @@ WeatherSolver::InterpolatedWind WeatherSolver::interpolate_wind(double altitude_
 
     // Above highest layer
     if (altitude_m >= sorted.back().alt) {
-        const auto & wl = weather_.wind_layers[sorted.back().idx];
+        const auto & wl = layers[sorted.back().idx];
         result.speed_ms      = wl.wind_speed_ms;
         result.direction_deg = wl.wind_direction_deg;
         result.vertical_ms   = wl.vertical_wind_ms;
@@ -114,8 +154,8 @@ WeatherSolver::InterpolatedWind WeatherSolver::interpolate_wind(double altitude_
     // Find bracketing layers
     for (size_t i = 0; i + 1 < sorted.size(); ++i) {
         if (altitude_m >= sorted[i].alt && altitude_m <= sorted[i + 1].alt) {
-            const auto & lo = weather_.wind_layers[sorted[i].idx];
-            const auto & hi = weather_.wind_layers[sorted[i + 1].idx];
+            const auto & lo = layers[sorted[i].idx];
+            const auto & hi = layers[sorted[i + 1].idx];
             double span = sorted[i + 1].alt - sorted[i].alt;
             double frac = (span > 0.0) ? (altitude_m - sorted[i].alt) / span : 0.0;
 
@@ -139,6 +179,11 @@ WeatherSolver::AtmoResult WeatherSolver::compute(
 
     double alt = std::clamp(altitude_msl_m, -610.0, 20000.0);
 
+    // ── Patch lookup ────────────────────────────────────────────────────────
+    // Smallest-radius containing patch wins when the aircraft is inside
+    // multiple overlapping patches. Pointer is only valid for this call.
+    const auto * active_patch = find_active_patch(lat_deg, lon_deg);
+
     // ── ISA computation ─────────────────────────────────────────────────────
     double T_isa, P_isa;
     if (alt <= ISA_TROPO_ALT) {
@@ -150,11 +195,18 @@ WeatherSolver::AtmoResult WeatherSolver::compute(
     }
 
     // ── Apply weather deviations ────────────────────────────────────────────
+    // Temperature override comes from the active patch when its
+    // override_temperature flag is set; otherwise global SL temp applies.
+    // Pressure override is NOT in WeatherPatch.msg yet (Slice 5b-iv).
     double oat_deviation_k = 0.0;
     double qnh_pa = ISA_P0;
 
     if (weather_received_) {
-        oat_deviation_k = weather_.temperature_sl_k - ISA_T0;
+        double temperature_sl_k = weather_.temperature_sl_k;
+        if (active_patch && active_patch->override_temperature) {
+            temperature_sl_k = active_patch->temperature_k;
+        }
+        oat_deviation_k = temperature_sl_k - ISA_T0;
         qnh_pa = weather_.pressure_sl_pa;
     }
 
@@ -175,7 +227,14 @@ WeatherSolver::AtmoResult WeatherSolver::compute(
     r.pressure_altitude_m = pressure_altitude;
 
     // ── Wind interpolation ──────────────────────────────────────────────────
-    InterpolatedWind iw = interpolate_wind(altitude_msl_m);
+    // Patch wind override: non-empty patch.wind_layers REPLACES global
+    // (not merge) — matches "empty array = inherit" convention in
+    // WeatherPatch.msg documentation.
+    const auto & wind_source =
+        (active_patch && !active_patch->wind_layers.empty())
+            ? active_patch->wind_layers
+            : weather_.wind_layers;
+    InterpolatedWind iw = interpolate_wind_from(altitude_msl_m, wind_source);
 
     // ── Gust modulation ─────────────────────────────────────────────────────
     // Gusts only apply when authored peak > sustained. The modulator always

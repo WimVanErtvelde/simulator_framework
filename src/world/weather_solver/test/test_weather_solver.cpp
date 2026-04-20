@@ -2,6 +2,7 @@
 #include "weather_solver/weather_solver.hpp"
 
 #include <cmath>
+#include <sim_msgs/msg/weather_patch.hpp>
 
 using weather_solver::WeatherSolver;
 
@@ -286,4 +287,135 @@ TEST(WeatherSolver, GustIdleAtStart)
     // should therefore return the sustained wind with no gust delta.
     auto r = s.compute(0.02, 0.0, 0.0, 60.0);
     EXPECT_NEAR(r.wind_east_ms, 10.0, 0.01);
+}
+
+// ── Patch overrides (Slice 5b-iv-a) ────────────────────────────────────────
+
+TEST(WeatherSolver, PatchTemperatureOverrideWhenInside)
+{
+    WeatherSolver s;
+    s.configure({});
+
+    sim_msgs::msg::WeatherState w;
+    w.temperature_sl_k = 288.15f;   // Global 15 °C at SL
+    w.pressure_sl_pa   = 101325.0f;
+    w.turbulence_model = 0;
+
+    sim_msgs::msg::WeatherPatch p;
+    p.patch_id = 1;
+    p.lat_deg  = 50.9014;
+    p.lon_deg  = 4.4844;
+    p.radius_m = 10000.0f;          // 10 km
+    p.override_temperature = true;
+    p.temperature_k = 313.15f;      // 40 °C SL
+    w.patches.push_back(p);
+
+    s.set_weather(w);
+
+    // Aircraft at patch center, sea level
+    auto r_inside = s.compute(0.02, 0.0, 0.0, 60.0, 50.9014, 4.4844, 0.0);
+    EXPECT_NEAR(r_inside.oat_k, 313.15, 0.5);
+
+    // Aircraft ~55 km away, outside the 10 km patch
+    auto r_outside = s.compute(0.02, 0.0, 0.0, 60.0, 51.4, 4.4844, 0.0);
+    EXPECT_NEAR(r_outside.oat_k, 288.15, 0.5);
+}
+
+TEST(WeatherSolver, PatchWindOverrideReplacesLayers)
+{
+    WeatherSolver s;
+    s.configure({});
+
+    sim_msgs::msg::WeatherState w;
+    w.temperature_sl_k = 288.15f;
+    w.pressure_sl_pa   = 101325.0f;
+    w.turbulence_model = 0;
+
+    // Global wind: FROM 270° at 10 m/s → blows east, +wind_east_ms
+    sim_msgs::msg::WeatherWindLayer gl;
+    gl.altitude_msl_m     = 0.0f;
+    gl.wind_direction_deg = 270.0f;
+    gl.wind_speed_ms      = 10.0f;
+    w.wind_layers.push_back(gl);
+
+    // Patch wind: FROM 090° at 20 m/s → blows west, -wind_east_ms
+    sim_msgs::msg::WeatherPatch p;
+    p.patch_id = 1;
+    p.lat_deg  = 50.9014;
+    p.lon_deg  = 4.4844;
+    p.radius_m = 10000.0f;
+    sim_msgs::msg::WeatherWindLayer pl;
+    pl.altitude_msl_m     = 0.0f;
+    pl.wind_direction_deg = 90.0f;
+    pl.wind_speed_ms      = 20.0f;
+    p.wind_layers.push_back(pl);
+    w.patches.push_back(p);
+
+    s.set_weather(w);
+
+    // Inside — patch wind applies, ~ -20 m/s east
+    auto r_inside = s.compute(0.02, 0.0, 0.0, 60.0, 50.9014, 4.4844, 0.0);
+    EXPECT_NEAR(r_inside.wind_east_ms, -20.0, 0.5);
+
+    // Outside — global wind applies, ~ +10 m/s east
+    auto r_outside = s.compute(0.02, 0.0, 0.0, 60.0, 51.4, 4.4844, 0.0);
+    EXPECT_NEAR(r_outside.wind_east_ms, 10.0, 0.5);
+}
+
+TEST(WeatherSolver, SmallestPatchWinsWhenOverlapping)
+{
+    WeatherSolver s;
+    s.configure({});
+
+    sim_msgs::msg::WeatherState w;
+    w.temperature_sl_k = 288.15f;
+    w.pressure_sl_pa   = 101325.0f;
+    w.turbulence_model = 0;
+
+    sim_msgs::msg::WeatherPatch big;
+    big.patch_id = 1;
+    big.lat_deg  = 50.9;
+    big.lon_deg  = 4.5;
+    big.radius_m = 20000.0f;
+    big.override_temperature = true;
+    big.temperature_k = 293.15f;    // 20 °C
+    w.patches.push_back(big);
+
+    sim_msgs::msg::WeatherPatch small;
+    small.patch_id = 2;
+    small.lat_deg  = 50.9;
+    small.lon_deg  = 4.5;
+    small.radius_m = 5000.0f;
+    small.override_temperature = true;
+    small.temperature_k = 303.15f;  // 30 °C — smallest-radius winner
+    w.patches.push_back(small);
+
+    s.set_weather(w);
+
+    auto r = s.compute(0.02, 0.0, 0.0, 60.0, 50.9, 4.5, 0.0);
+    EXPECT_NEAR(r.oat_k, 303.15, 0.5);
+}
+
+TEST(WeatherSolver, PatchOverrideFlagOffDoesNotApply)
+{
+    WeatherSolver s;
+    s.configure({});
+
+    sim_msgs::msg::WeatherState w;
+    w.temperature_sl_k = 288.15f;
+    w.pressure_sl_pa   = 101325.0f;
+
+    sim_msgs::msg::WeatherPatch p;
+    p.patch_id = 1;
+    p.lat_deg  = 50.9;
+    p.lon_deg  = 4.5;
+    p.radius_m = 10000.0f;
+    p.override_temperature = false;  // flag OFF
+    p.temperature_k = 313.15f;       // value populated but ignored
+    w.patches.push_back(p);
+
+    s.set_weather(w);
+
+    auto r = s.compute(0.02, 0.0, 0.0, 60.0, 50.9, 4.5, 0.0);
+    EXPECT_NEAR(r.oat_k, 288.15, 0.5);  // global wins
 }

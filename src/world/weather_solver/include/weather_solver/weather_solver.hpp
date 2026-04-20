@@ -5,6 +5,8 @@
 #include "weather_solver/gust_modulator.hpp"
 #include "weather_solver/microburst_model.hpp"
 #include <sim_msgs/msg/weather_state.hpp>
+#include <sim_msgs/msg/weather_patch.hpp>
+#include <sim_msgs/msg/weather_wind_layer.hpp>
 
 #include <vector>
 #include <cstdint>
@@ -74,7 +76,26 @@ private:
     double turbulence    = 0.0;  // 0-1
   };
 
-  InterpolatedWind interpolate_wind(double altitude_m) const;
+  /// Wind interpolation takes the source layer vector explicitly so the
+  /// same math can sample either the global weather_.wind_layers or a
+  /// patch's wind_layers override (Slice 5b-iv-a).
+  InterpolatedWind interpolate_wind_from(
+      double altitude_m,
+      const std::vector<sim_msgs::msg::WeatherWindLayer> & layers) const;
+
+  /// Great-circle distance between two lat/lon points in meters.
+  /// Haversine formula — accurate at training scale (< 500 NM error
+  /// is well under a meter).
+  static double haversine_distance_m(
+      double lat1_deg, double lon1_deg,
+      double lat2_deg, double lon2_deg);
+
+  /// Smallest-radius patch containing the aircraft, or nullptr if the
+  /// aircraft is outside all patches. Pointer is only valid for the
+  /// current compute() call — weather_.patches may be replaced by the
+  /// next set_weather().
+  const sim_msgs::msg::WeatherPatch * find_active_patch(
+      double aircraft_lat_deg, double aircraft_lon_deg) const;
 
   sim_msgs::msg::WeatherState weather_;
   DrydenTurbulence dryden_;
