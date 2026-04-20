@@ -3161,3 +3161,14 @@ Note: the xplanecigi plugin currently lives under `x-plane_plugins/xplanecigi/` 
 Slice 4: ios_backend patch lifecycle. WebSocket handlers for add/update/remove/clear_patches, patch_id allocator, ground_elevation_m populate from airport DB / SRTM service.
 
 Slice 5: IOS frontend WeatherPanelV2 with live AGL/MSL display. X-Plane 12 pattern, draggable MSL layer columns with computed AGL alongside.
+
+## 2026-04-20 — Claude Code (WeatherPatch visual rendering — XP SDK limitation, parked)
+
+- FOUND: `XPLMSetWeatherAtLocation` regional weather samples do NOT produce visible weather effects (visibility, clouds) at realistic training radii (10–50 NM). Plugin correctly emits Region Control (0x0B) + Weather Control Scope=Regional (0x0C) packets; xplanecigi correctly decodes them and calls `XPLMSetWeatherAtLocation` with a fully populated `XPLMWeatherInfo_t`; the SDK call returns success but X-Plane's visual rendering shows no discernible localized change.
+- HYPOTHESIS: X-Plane 12's weather engine blends samples over distances ≫ 10 NM, so a single sample inside a 10–50 NM circle gets smoothed into the global field. Also per SDK docs, the call is "not intended to be used per-frame; should be called only during the pre-flight loop callback" — we call it from a 1 Hz flight loop, which may violate intended timing. Third-party XP12 weather plugins (Active Sky, VisualXP) do not use this API for localized fog/vis either — they manipulate global datarefs directly.
+- STATE: CIGI patch pipeline and plugin SDK-call code are all correct per specification. No framework bug. Authoring UI (Slice 5b-iii) works; wire format (Slice 5b-ii) works; plugin decode + SDK call (Slice 3a/3b) work. The **visual** output stage is the limiter.
+- DECIDED: Accept as X-Plane SDK limitation. Patches remain functional for FDM once Slice 5b-iv-a implements `weather_solver` awareness of `msg.patches`. FDM-path overrides (temperature, wind) are the certification-critical ones anyway. Visual patches revisit only if:
+    (a) a customer explicitly requires localized visual weather, OR
+    (b) Laminar publishes an alternative SDK path, OR
+    (c) we find a global-dataref-manipulation workaround (matching Active Sky / VisualXP's approach).
+- AFFECTS: bugs.md (known-limitation entry added); no code changes. Slice 5b-iv-a (solver patch-awareness) is the remaining work to make patches useful for FDM / QTG.

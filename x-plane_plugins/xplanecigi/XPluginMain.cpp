@@ -515,26 +515,6 @@ static void process_packet(const uint8_t * pkt, int len)
             double lx, ly, lz;
             XPLMWorldToLocal(lat, lon, alt, &lx, &ly, &lz);
 
-            // Diagnostic: log Entity Control position vs X-Plane readback (1/sec)
-            {
-                static double s_last_log_t = 0.0;
-                double now_t = XPLMGetElapsedTime();
-                if (now_t - s_last_log_t >= 1.0) {
-                    s_last_log_t = now_t;
-                    // Read current X-Plane position BEFORE we overwrite
-                    double cur_lx = XPLMGetDatad(g_local_x);
-                    double cur_ly = XPLMGetDatad(g_local_y);
-                    double cur_lz = XPLMGetDatad(g_local_z);
-                    double cur_lat, cur_lon, cur_alt;
-                    XPLMLocalToWorld(cur_lx, cur_ly, cur_lz, &cur_lat, &cur_lon, &cur_alt);
-                    char dbg[512];
-                    snprintf(dbg, sizeof(dbg),
-                        "xplanecigi: ENTITY lat=%.6f lon=%.6f alt=%.1f | XPLANE lat=%.6f lon=%.6f alt=%.1f | dlat=%.6f\n",
-                        lat, lon, alt, cur_lat, cur_lon, cur_alt, lat - cur_lat);
-                    XPLMDebugString(dbg);
-                }
-            }
-
             XPLMSetDatad(g_local_x, lx);
             XPLMSetDatad(g_local_y, ly);
             XPLMSetDatad(g_local_z, lz);

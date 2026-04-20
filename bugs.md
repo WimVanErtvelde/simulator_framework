@@ -191,6 +191,14 @@
   surface_type). Confirmed in DataRefTool.
 - FIX: primary and fallback lookups updated to use surface_texture_type.
 
+## Known Limitations
+
+### Limitation #1: XPLMSetWeatherAtLocation produces no visible effect at training-relevant radii in X-Plane 12
+- Regional weather patches (10–50 NM) emit correct CIGI Region Control + Weather Control Scope=Regional packets end-to-end; xplanecigi plugin correctly invokes `XPLMSetWeatherAtLocation` with a fully populated `XPLMWeatherInfo_t`. SDK call returns success but X-Plane's visual rendering shows no discernible localized change (visibility, clouds blended into the global field).
+- Confirmed: pipeline end-to-end correct, SDK call fires with right values, no visual rendering change observed.
+- Likely causes: X-Plane 12 weather engine blends samples over distances ≫ 10 NM; SDK docs also say the call is "not intended to be used per-frame" but from pre-flight loop only (we call 1 Hz from flight loop). Third-party XP12 weather plugins avoid this API for localized visual effects.
+- No framework code fix. Revisit if SDK changes or customer requires localized visual weather (see DECISIONS.md 2026-04-20 entry).
+
 ## Open
 
 (none)
