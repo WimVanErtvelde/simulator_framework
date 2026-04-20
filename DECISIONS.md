@@ -3172,3 +3172,36 @@ Slice 5: IOS frontend WeatherPanelV2 with live AGL/MSL display. X-Plane 12 patte
     (b) Laminar publishes an alternative SDK path, OR
     (c) we find a global-dataref-manipulation workaround (matching Active Sky / VisualXP's approach).
 - AFFECTS: bugs.md (known-limitation entry added); no code changes. Slice 5b-iv-a (solver patch-awareness) is the remaining work to make patches useful for FDM / QTG.
+
+## 2026-04-20 — Claude Chat (Weather Step 11 — XPLMSetWeatherAtLocation visual limitation)
+
+Diagnostic finding recorded after end-to-end testing during Slice 5b rollout. Confirms that the CIGI regional weather pipeline and xplanecigi plugin SDK call are correct per documentation, but X-Plane 12's visual rendering does not produce a discernible localized weather effect at training-scale radii. Expands the earlier 2026-04-20 entry with a full pipeline trace, richer hypotheses, and explicit revisit conditions so a future investigator doesn't re-walk the diagnostic.
+
+- FOUND: XPLMSetWeatherAtLocation produces no visible weather change at 10–50 NM radii in X-Plane 12. Tested with visibility contrast (global 40 km vs patch 300 m, 10 NM radius at EBBR) and cloud-layer contrast (global clear vs patch overcast cumulus, 10 NM radius). Aircraft positioned at patch center on runway; no visual difference observed compared to global-only weather.
+
+- VERIFIED HEALTHY: end-to-end wire path:
+  - IOS frontend authoring (Slice 5b-iii) — OVERRIDE pills functional
+  - ios_backend WeatherState.patches[] emission — confirmed by `ros2 topic echo /world/weather` showing correct patch fields
+  - cigi_bridge Region Control + Weather Control Scope=Regional packet emission — confirmed by plugin log:
+        `xplanecigi: Region N state=1 lat=X lon=Y radius=Z`
+        `xplanecigi: Region N scalar override layer 20 vis=W temp=T en=1`
+  - xplanecigi plugin decode and XPLMWeatherInfo_t construction including scalar-override overlay (Option B overlay per Slice 3b)
+  - XPLMSetWeatherAtLocation SDK call — confirmed by plugin log:
+        `xplanecigi: applied region N at X,Y ground=Gm radius=Rnm`
+  - XPLMBeginWeatherUpdate / XPLMEndWeatherUpdate(1, 1) wrapping — confirmed in code
+
+- HYPOTHESES (not independently verified, documented for future investigators):
+  - X-Plane 12's weather engine blends samples over distances significantly larger than 10–50 NM. A small regional sample may be smoothed out by surrounding global weather.
+  - Per SDK docs: "This call is not intended to be used per-frame. It should be called only during the pre-flight loop callback." We call from a 1 Hz flight loop, which is not per-frame but also not pre-flight. May violate intended timing.
+  - Community pattern: third-party XP12 weather plugins (Active Sky, VisualXP) do not use this API for localized fog/visibility. They manipulate global `sim/weather/region/*` datarefs dynamically. This is circumstantial evidence that XPLMSetWeatherAtLocation is not practical for the use case.
+  - Combining per-region SDK calls with global dataref writes in the same plugin may create a state-machine conflict in X-Plane's internal weather blending.
+
+- DECISION: Accept as X-Plane SDK limitation. FDM patch path (Slice 5b-iv-a) delivers the training-critical behavior (OAT shift, wind shift) that certification and QTG reproducibility require. Visual localized weather is cosmetic for instructor immersion — important but not blocking.
+
+- REVISIT CONDITIONS:
+  - Customer explicitly requires localized visual weather in a specific deliverable
+  - Laminar publishes alternative SDK path or XP 12 visual blending changes
+  - We build a standalone test plugin (outside simulator_framework) that exercises XPLMSetWeatherAtLocation in isolation, to disambiguate SDK limitation from combine-with-datarefs conflict
+  - We implement a workaround path: on aircraft entering a patch radius, manipulate global datarefs dynamically. This is an architectural alternative to regional samples but would require significant plugin refactoring.
+
+- AFFECTS: No code changes. Documentation only. CIGI patch pipeline and xplanecigi plugin remain as built — correct per spec, waiting on X-Plane to render what we send.

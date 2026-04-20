@@ -199,6 +199,25 @@
 - Likely causes: X-Plane 12 weather engine blends samples over distances ≫ 10 NM; SDK docs also say the call is "not intended to be used per-frame" but from pre-flight loop only (we call 1 Hz from flight loop). Third-party XP12 weather plugins avoid this API for localized visual effects.
 - No framework code fix. Revisit if SDK changes or customer requires localized visual weather (see DECISIONS.md 2026-04-20 entry).
 
+### KL-1: XPLMSetWeatherAtLocation produces no visible effect at training radii
+
+**Scope**: X-Plane 12 visual rendering
+**Slice observed**: 5b (WeatherPanelV2 patches)
+**Status**: Accepted as SDK limitation. No framework fix.
+**Documented in**: DECISIONS.md entry 2026-04-20 (Weather Step 11)
+
+**Symptom**: Patch authored in WX2 with visibility or cloud override, aircraft positioned inside the patch radius (tested at 10 NM and 30+ NM), no visible difference from global weather.
+
+**Verified healthy path**: Authoring UI → store → WS → ios_backend → WeatherState.patches[] → cigi_bridge Region Control + Weather Control emission → xplanecigi plugin decode → XPLMSetWeatherAtLocation SDK call with correct XPLMWeatherInfo_t. Plugin log confirms each step.
+
+**Suspected cause**: X-Plane 12 sample blending appears to smooth small regional samples against global weather. Third-party XP12 weather plugins (Active Sky, VisualXP) do not use this API for localized visibility/fog.
+
+**Workaround if needed**: FDM path works (Slice 5b-iv-a). Aircraft physical behavior — OAT, wind — responds to patches correctly. Only the visual is affected.
+
+**Revisit if**: Customer requirement, SDK change, or standalone test plugin confirms/denies the SDK-limitation hypothesis.
+
+(Supersedes Limitation #1 above with richer structure; Limitation #1 retained for append-only log continuity.)
+
 ## Open
 
 (none)
