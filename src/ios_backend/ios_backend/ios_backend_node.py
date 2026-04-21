@@ -34,6 +34,24 @@ class _RosEncoder(json.JSONEncoder):
 def _dumps(obj):
     return json.dumps(obj, cls=_RosEncoder)
 
+
+# asyncio.create_task() returns a Task that must be strongly referenced, or
+# Python's GC may cancel it mid-flight. This is documented in the stdlib
+# (python.org asyncio-task Task docs). Fire-and-forget spawns that await
+# other coroutines (e.g. ROS2 service calls) are especially vulnerable —
+# observable symptom: patch add_patch / update_patch silently dropped when
+# the backend is busy.
+_bg_tasks: set = set()
+
+
+def _spawn(coro):
+    """Fire-and-forget task spawn that holds a reference until completion."""
+    t = asyncio.create_task(coro)
+    _bg_tasks.add(t)
+    t.add_done_callback(_bg_tasks.discard)
+    return t
+
+
 import yaml
 
 import rclpy
@@ -2432,13 +2450,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     ros_node.publish_virtual_panel(msg.get('data', {}))
 
                 elif msg.get('type') == 'search_airports' and ros_node:
-                    asyncio.create_task(
-                        _handle_search_airports(websocket, msg.get('query', ''),
-                                                msg.get('max_results', 8)))
+                    _spawn(_handle_search_airports(websocket, msg.get('query', ''),
+                                                   msg.get('max_results', 8)))
 
                 elif msg.get('type') == 'get_runways' and ros_node:
-                    asyncio.create_task(
-                        _handle_get_runways(websocket, msg.get('icao', '')))
+                    _spawn(_handle_get_runways(websocket, msg.get('icao', '')))
 
                 elif msg.get('type') == 'freeze_position' and ros_node:
                     cmd_msg = SimCommand()
@@ -2511,12 +2527,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     ros_node.clear_all_microbursts()
 
                 elif msg.get('type') == 'add_patch' and ros_node:
-                    asyncio.create_task(
-                        _handle_add_patch(websocket, msg.get('data', {})))
+                    _spawn(_handle_add_patch(websocket, msg.get('data', {})))
 
                 elif msg.get('type') == 'update_patch' and ros_node:
-                    asyncio.create_task(
-                        _handle_update_patch(websocket, msg.get('data', {})))
+                    _spawn(_handle_update_patch(websocket, msg.get('data', {})))
 
                 elif msg.get('type') == 'remove_patch' and ros_node:
                     pid = int(msg.get('data', {}).get('patch_id', 0))
