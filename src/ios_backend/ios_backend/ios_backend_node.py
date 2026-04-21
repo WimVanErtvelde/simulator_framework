@@ -150,10 +150,9 @@ def _validate_in_range(field_name: str, value, bounds_key: str):
 
 
 # ── Patch lifecycle validators (Slice 5c-refactor-I) ────────────────────────
-# Split from _validate_patch to support reserve_patch / update_patch_identity
-# / update_patch_overrides, where identity and overrides arrive on separate
-# WS messages. _validate_patch is retained for the V1 add_patch / update_patch
-# handlers (removed in Commit D).
+# Called by reserve_patch / update_patch_identity / update_patch_overrides.
+# Identity and overrides arrive on separate WS messages and validate
+# independently.
 
 def _validate_identity(data: dict, require_all: bool = True) -> dict:
     """Validate the identity subset of a patch payload.
@@ -206,83 +205,6 @@ def _validate_overrides(data: dict) -> dict:
     """Validate the override + layers subset of a patch payload. All fields
     optional — only present fields are range-checked.
     """
-    for i, cl in enumerate(data.get('cloud_layers', [])):
-        _validate_in_range(f"cloud[{i}].cloud_type",   cl.get('cloud_type'),   'cloud_type')
-        _validate_in_range(f"cloud[{i}].coverage_pct", cl.get('coverage_pct'), 'cloud_coverage_pct')
-        base_m = cl.get('base_elevation_m')
-        if base_m is not None:
-            _validate_in_range(f"cloud[{i}].base_ft", base_m * 3.28084, 'cloud_base_ft')
-        thick_m = cl.get('thickness_m')
-        if base_m is not None and thick_m is not None:
-            _validate_in_range(f"cloud[{i}].top_ft", (base_m + thick_m) * 3.28084, 'cloud_top_ft')
-        _validate_in_range(f"cloud[{i}].scud_freq", cl.get('scud_frequency_pct'), 'scud_frequency_pct')
-
-    for i, wl in enumerate(data.get('wind_layers', [])):
-        alt_m = wl.get('altitude_msl_m')
-        if alt_m is not None:
-            _validate_in_range(f"wind[{i}].alt_ft", alt_m * 3.28084, 'wind_altitude_ft')
-        spd_ms = wl.get('wind_speed_ms')
-        if spd_ms is not None:
-            _validate_in_range(f"wind[{i}].speed_kt", spd_ms / 0.51444, 'wind_speed_kt')
-        _validate_in_range(f"wind[{i}].direction", wl.get('wind_direction_deg'), 'wind_direction_deg')
-        _validate_in_range(f"wind[{i}].vertical", wl.get('vertical_wind_ms'), 'wind_vertical_ms')
-
-    if data.get('override_visibility'):
-        _validate_in_range('visibility_m', data.get('visibility_m'), 'visibility_m')
-    if data.get('override_temperature'):
-        temp_k = data.get('temperature_k')
-        if temp_k is not None:
-            _validate_in_range('temperature_c', float(temp_k) - 273.15, 'temperature_c')
-    if data.get('override_precipitation'):
-        _validate_in_range('precip_rate', data.get('precipitation_rate'), 'precipitation_rate')
-        _validate_in_range('precip_type', data.get('precipitation_type'), 'precipitation_type')
-    if data.get('override_humidity'):
-        _validate_in_range('humidity_pct', data.get('humidity_pct'), 'humidity_pct')
-    if data.get('override_pressure'):
-        _validate_in_range('pressure_sl_pa', data.get('pressure_sl_pa'), 'pressure_sl_pa')
-    if data.get('override_runway'):
-        rf = data.get('runway_friction')
-        if rf is None or not (0 <= int(rf) <= 15):
-            raise ValueError(f"runway_friction out of range [0, 15]: {rf}")
-
-    return data
-
-
-def _validate_patch(data: dict) -> dict:
-    """Validate a WeatherPatch payload dict. Raises ValueError on any violation.
-    Returns the (possibly normalized) dict on success.
-
-    Enforces:
-      - patch_type in {"airport", "custom"}
-      - icao required for airport, empty string otherwise
-      - lat/lon required for custom, within [-90, 90] / [-180, 180]
-      - radius_m within bounds (converted to nm for check)
-      - all cloud/wind/override fields within bounds
-    """
-    patch_type = data.get('patch_type', '')
-    if patch_type not in ('airport', 'custom'):
-        raise ValueError(f"patch_type must be 'airport' or 'custom', got {patch_type!r}")
-
-    if patch_type == 'airport':
-        icao = (data.get('icao') or '').strip().upper()
-        if not icao or len(icao) > 4 or not icao.isalnum():
-            raise ValueError(f"airport patch requires valid ICAO (up to 4 chars), got {icao!r}")
-        data['icao'] = icao
-    else:  # custom
-        lat = data.get('lat_deg')
-        lon = data.get('lon_deg')
-        if lat is None or lon is None:
-            raise ValueError("custom patch requires lat_deg and lon_deg")
-        if not (-90.0 <= float(lat) <= 90.0):
-            raise ValueError(f"lat_deg out of range: {lat}")
-        if not (-180.0 <= float(lon) <= 180.0):
-            raise ValueError(f"lon_deg out of range: {lon}")
-
-    radius_m = data.get('radius_m')
-    if radius_m is not None:
-        radius_nm = float(radius_m) / 1852.0
-        _validate_in_range('radius_m->nm', radius_nm, 'radius_nm')
-
     for i, cl in enumerate(data.get('cloud_layers', [])):
         _validate_in_range(f"cloud[{i}].cloud_type",   cl.get('cloud_type'),   'cloud_type')
         _validate_in_range(f"cloud[{i}].coverage_pct", cl.get('coverage_pct'), 'cloud_coverage_pct')
@@ -1472,99 +1394,14 @@ class IosBackendNode(Node):
         with self._lock:
             self._latest['weather_state'] = data
 
-    # ── WeatherPatch lifecycle (Slice 4) ─────────────────────────────────────
-    # Sync methods: receive pre-resolved ground_elevation_m from async WS
-    # handlers that look up airport ARP or SRTM terrain. These methods only
-    # mutate state + publish + broadcast; they do NOT spin rclpy or call
-    # services themselves. Validation is done by the caller via
-    # _validate_patch() before either method is invoked.
-
-    def add_patch(self, data: dict, ground_elevation_m: float) -> dict:
-        """Create a WeatherPatch with pre-resolved ground_elevation_m.
-
-        Allocates the next patch_id, appends to _active_patches, publishes
-        WeatherState, and broadcasts to WS clients. Caller is responsible
-        for validation. Raises ValueError if the 10-patch session cap is hit.
-        """
-        if len(self._active_patches) >= 10:
-            raise ValueError('max 10 patches per session')
-
-        ptype = data['patch_type']
-        patch = {
-            'patch_id':              self._next_patch_id,
-            'client_id':             str(data.get('client_id', '')),
-            'patch_type':            ptype,
-            'role':                  data.get('role', 'custom'),
-            'label':                 data.get('label', ''),
-            'icao':                  data.get('icao', ''),
-            'lat_deg':               float(data.get('lat_deg', 0.0)),
-            'lon_deg':               float(data.get('lon_deg', 0.0)),
-            'radius_m':              float(data.get('radius_m',
-                                          18520.0 if ptype == 'airport' else 5556.0)),
-            'ground_elevation_m':    float(ground_elevation_m),
-            'cloud_layers':          data.get('cloud_layers', []),
-            'wind_layers':           data.get('wind_layers', []),
-            'override_visibility':   bool(data.get('override_visibility', False)),
-            'visibility_m':          float(data.get('visibility_m', 10000.0)),
-            'override_temperature':  bool(data.get('override_temperature', False)),
-            'temperature_k':         float(data.get('temperature_k', 288.15)),
-            'override_precipitation':bool(data.get('override_precipitation', False)),
-            'precipitation_rate':    float(data.get('precipitation_rate', 0.0)),
-            'precipitation_type':    int(data.get('precipitation_type', 0)),
-            'override_humidity':     bool(data.get('override_humidity', False)),
-            'humidity_pct':          int(data.get('humidity_pct', 50)),
-            'override_pressure':     bool(data.get('override_pressure', False)),
-            'pressure_sl_pa':        float(data.get('pressure_sl_pa', 101325.0)),
-            'override_runway':       bool(data.get('override_runway', False)),
-            'runway_friction':       int(data.get('runway_friction', 0)),
-        }
-        self._next_patch_id += 1
-        self._active_patches.append(patch)
-        self.get_logger().info(
-            f'[patch] added id={patch["patch_id"]} type={patch["patch_type"]} '
-            f'label={patch["label"]!r} ground_m={patch["ground_elevation_m"]:.1f}'
-        )
-        self.publish_weather()
-        self._broadcast_patches()
-        return patch
-
-    def update_patch(self, data: dict, new_ground_elevation_m: float = None) -> dict:
-        """Update an existing patch by patch_id. Only provided fields are
-        modified. If new_ground_elevation_m is not None, the caller decided
-        coords/ICAO changed and re-resolved; overwrite. Otherwise preserve
-        existing ground_elevation_m. Raises ValueError if patch not found.
-        """
-        patch_id = data.get('patch_id')
-        if patch_id is None:
-            raise ValueError('update_patch requires patch_id')
-
-        idx = None
-        for i, p in enumerate(self._active_patches):
-            if p['patch_id'] == patch_id:
-                idx = i
-                break
-        if idx is None:
-            raise ValueError(f'patch_id={patch_id} not found')
-
-        patch = self._active_patches[idx]
-        for k, v in data.items():
-            if k in ('patch_id', 'ground_elevation_m'):
-                continue
-            patch[k] = v
-        if new_ground_elevation_m is not None:
-            patch['ground_elevation_m'] = float(new_ground_elevation_m)
-
-        self.get_logger().info(f'[patch] updated id={patch_id}')
-        self.publish_weather()
-        self._broadcast_patches()
-        return patch
-
-    # ── Lifecycle handlers (Slice 5c-refactor-I) ──────────────────────────
-    # Replaces add_patch / update_patch monolith. Separates identity commits
-    # (airport/coords/radius/ground) from override commits (per-field flags
-    # + layers). Enables reserve-on-creation UX (patch_id assigned before
-    # the user authors anything) and eliminates the two-Accept flow for
-    # new-patch-with-microburst.
+    # ── WeatherPatch lifecycle (Slice 5c-refactor-I) ─────────────────────
+    # Separates identity commits (airport/coords/radius/ground) from
+    # override commits (per-field flags + layers). patch_id is assigned
+    # synchronously on reserve so the user doesn't wait on SRTM/airport
+    # DB before the tab is interactive; ground_elevation_m converges in
+    # the background via a follow-up update_patch_identity. Async
+    # wrappers in the WS handler section drive SearchAirports / SRTM
+    # service calls.
 
     def reserve_patch(self, data: dict) -> dict:
         """Sync: allocate patch_id, append patch with identity + disabled
@@ -2560,116 +2397,6 @@ async def _handle_update_patch_identity(websocket, data: dict):
         _spawn(_resolve_and_followup_identity(patch['patch_id'], dict(patch)))
 
 
-async def _handle_add_patch(websocket, data: dict):
-    """Async WS handler: validate, resolve ground elevation (SearchAirports
-    for airport patches / SRTM probe for custom), then commit via sync
-    ros_node.add_patch(). The async/sync split keeps service calls out of
-    the ros_node thread.
-    """
-    if ros_node is None:
-        return
-    try:
-        data = _validate_patch(dict(data))
-    except ValueError as e:
-        await websocket.send_text(json.dumps({
-            'type': 'patch_error', 'operation': 'add', 'error': str(e),
-        }))
-        return
-
-    ground_m, lat_override, lon_override = await _resolve_ground_elevation_async(data)
-    if lat_override is not None:
-        data['lat_deg'] = lat_override
-    if lon_override is not None:
-        data['lon_deg'] = lon_override
-
-    try:
-        patch = ros_node.add_patch(data, ground_m)
-        await websocket.send_text(json.dumps({
-            'type': 'patch_added',
-            'data': {
-                'patch_id': patch['patch_id'],
-                'ground_elevation_m': patch['ground_elevation_m'],
-            },
-        }))
-    except ValueError as e:
-        await websocket.send_text(json.dumps({
-            'type': 'patch_error', 'operation': 'add', 'error': str(e),
-        }))
-
-
-async def _handle_update_patch(websocket, data: dict):
-    """Async WS handler: validate the merged shape, re-resolve ground
-    elevation only if coords or ICAO changed, then commit via sync
-    ros_node.update_patch().
-    """
-    if ros_node is None:
-        return
-
-    patch_id = data.get('patch_id')
-    if patch_id is None:
-        await websocket.send_text(json.dumps({
-            'type': 'patch_error', 'operation': 'update',
-            'error': 'update_patch requires patch_id',
-        }))
-        return
-
-    existing = None
-    for p in ros_node._active_patches:
-        if p['patch_id'] == patch_id:
-            existing = p
-            break
-    if existing is None:
-        await websocket.send_text(json.dumps({
-            'type': 'patch_error', 'operation': 'update',
-            'error': f'patch_id={patch_id} not found',
-        }))
-        return
-
-    merged = dict(existing)
-    for k, v in data.items():
-        if k == 'patch_id':
-            continue
-        merged[k] = v
-
-    try:
-        _validate_patch(merged)
-    except ValueError as e:
-        await websocket.send_text(json.dumps({
-            'type': 'patch_error', 'operation': 'update', 'error': str(e),
-        }))
-        return
-
-    # Decide if ground elevation needs re-resolving
-    coords_changed = (
-        (existing['lat_deg'] != merged['lat_deg']) or
-        (existing['lon_deg'] != merged['lon_deg'])
-    )
-    icao_changed = existing.get('icao', '') != merged.get('icao', '')
-
-    new_ground_m = None
-    if (merged['patch_type'] == 'airport' and icao_changed) or \
-       (merged['patch_type'] == 'custom'  and coords_changed):
-        new_ground_m, lat_ov, lon_ov = await _resolve_ground_elevation_async(merged)
-        if lat_ov is not None:
-            merged['lat_deg'] = lat_ov
-        if lon_ov is not None:
-            merged['lon_deg'] = lon_ov
-
-    # Preserve patch_id for the sync call
-    merged['patch_id'] = patch_id
-
-    try:
-        patch = ros_node.update_patch(merged, new_ground_m)
-        await websocket.send_text(json.dumps({
-            'type': 'patch_updated',
-            'data': {'patch_id': patch['patch_id']},
-        }))
-    except ValueError as e:
-        await websocket.send_text(json.dumps({
-            'type': 'patch_error', 'operation': 'update', 'error': str(e),
-        }))
-
-
 async def _handle_get_runways(ws, icao):
     """Call GetRunways service and send results to client."""
     if not ros_node or not icao:
@@ -2977,12 +2704,6 @@ async def websocket_endpoint(websocket: WebSocket):
                             'type': 'patch_error', 'operation': 'update_overrides',
                             'error': str(e),
                         }))
-
-                elif msg.get('type') == 'add_patch' and ros_node:
-                    _spawn(_handle_add_patch(websocket, msg.get('data', {})))
-
-                elif msg.get('type') == 'update_patch' and ros_node:
-                    _spawn(_handle_update_patch(websocket, msg.get('data', {})))
 
                 elif msg.get('type') == 'remove_patch' and ros_node:
                     pid = int(msg.get('data', {}).get('patch_id', 0))

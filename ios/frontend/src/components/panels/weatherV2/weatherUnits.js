@@ -156,38 +156,7 @@ function applyOverridesToWire(p, data) {
   }))
 }
 
-export function patchDraftToAddWire(p) {
-  const data = {
-    patch_type:         p.patch_type,
-    role:               p.role,
-    label:              p.label,
-    icao:               p.icao,
-    lat_deg:            p.lat_deg,
-    lon_deg:            p.lon_deg,
-    ground_elevation_m: p.ground_elevation_m,
-    radius_m:           p.radius_m,
-  }
-  applyOverridesToWire(p, data)
-  return data
-}
-
-export function patchDraftToUpdateWire(p) {
-  const data = {
-    patch_id:           p.patch_id,
-    patch_type:         p.patch_type,
-    role:               p.role,
-    label:              p.label,
-    icao:               p.icao,
-    lat_deg:            p.lat_deg,
-    lon_deg:            p.lon_deg,
-    ground_elevation_m: p.ground_elevation_m,
-    radius_m:           p.radius_m,
-  }
-  applyOverridesToWire(p, data)
-  return data
-}
-
-// ── Slice 5c-refactor-I: identity + override split payloads ───────────────
+// ── Patch wire payloads (Slice 5c-refactor-I) ─────────────────────────────
 // reserve_patch and update_patch_identity carry only identity fields.
 // update_patch_overrides carries only override flags/values + layers.
 
