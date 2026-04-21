@@ -182,7 +182,8 @@ export const useSimStore = create((set, get) => ({
     windLayers: [],
     precipitationRate: 0, precipitationType: 0,
     runwayFriction: 0,
-    patches: [],   // regional patches (Slice 5b-ii) — broadcast-updated list
+    patches: [],        // regional patches (Slice 5b-ii) — broadcast-updated list
+    microbursts: [],    // active microbursts (Slice 5c) — broadcast-updated list
   },
 
   // Node health
@@ -468,7 +469,13 @@ export const useSimStore = create((set, get) => ({
             break
 
           case 'microbursts':
-            set({ microbursts: msg.hazards ?? [] })
+            set(s => ({
+              microbursts: msg.hazards ?? [],
+              activeWeather: {
+                ...s.activeWeather,
+                microbursts: msg.hazards ?? [],
+              },
+            }))
             break
 
           case 'weather_state': {

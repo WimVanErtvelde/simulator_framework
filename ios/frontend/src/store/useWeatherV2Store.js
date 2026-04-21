@@ -33,7 +33,10 @@ const initialDraft = {
     runway_friction:      0,    // 0-15 EURAMEC index (0=DRY)
   },
   patches: [],
-  microbursts: [],
+  // Slice 5c: standalone microburst lives here; per-patch microbursts
+  // live on each patch as patch.microburst (null | {lat, lon, radius,
+  // intensity, shaft_alt}). At most one of each.
+  microbursts: { standalone: null },
 }
 
 const M_TO_FT_CONST = 3.28084
@@ -101,6 +104,25 @@ function normalizePatchForDiff(p) {
 
 function patchesDiffer(dp, sp) {
   return normalizePatchForDiff(dp) !== normalizePatchForDiff(sp)
+}
+
+// Microburst diff — authored fields only (hazard_id / activation_time are
+// server-assigned and excluded). Note: normalizePatchForDiff intentionally
+// does NOT include microburst — microbursts flow over their own wire
+// messages and shouldn't force a redundant update_patch.
+function normalizeMicroburstForDiff(mb) {
+  if (!mb) return 'null'
+  return JSON.stringify({
+    latitude_deg:     mb.latitude_deg,
+    longitude_deg:    mb.longitude_deg,
+    core_radius_m:    mb.core_radius_m,
+    intensity:        mb.intensity,
+    shaft_altitude_m: mb.shaft_altitude_m,
+  })
+}
+
+function microburstsDiffer(a, b) {
+  return normalizeMicroburstForDiff(a) !== normalizeMicroburstForDiff(b)
 }
 
 // Stable identity match for broadcast sync: preserve draft's client_id
@@ -196,9 +218,42 @@ export const useWeatherV2Store = create((set, get) => ({
     const groundM      = aircraftGroundM()
     const freshGlobal  = activeWeatherToGlobalDraft(activeWeather, groundM)
     const rawPatches   = patchesFromBroadcast(activeWeather?.patches)
+
+    // Microburst reconciliation (Slice 5c). Split broadcast hazards by
+    // source_patch_id: 0 = standalone, nonzero = per-patch.
+    const mbList       = activeWeather?.microbursts ?? []
+    const mbByPatchId  = new Map()
+    let   standaloneMb = null
+    for (const raw of mbList) {
+      const pid = raw.source_patch_id ?? 0
+      const normalized = {
+        latitude_deg:     raw.latitude_deg,
+        longitude_deg:    raw.longitude_deg,
+        core_radius_m:    raw.core_radius_m,
+        intensity:        raw.intensity,
+        shaft_altitude_m: raw.shaft_altitude_m,
+      }
+      if (pid === 0) standaloneMb = normalized
+      else           mbByPatchId.set(pid, normalized)
+    }
+
     const freshPatches = rawPatches.map(sp => {
       const matched = matchDraftPatch(sp, state.draft.patches)
-      return matched ? { ...sp, client_id: matched.client_id } : sp
+      const mbFromBroadcast = (sp.patch_id != null)
+        ? (mbByPatchId.get(sp.patch_id) ?? null)
+        : null
+      // Race-protect: a matched draft patch that was mid-add (patch_id=null)
+      // with a user-authored microburst. The first add_patch broadcast
+      // echoes the patch but set_patch_microburst hasn't fired yet (next
+      // Accept will pick it up per accept()'s skip-null-patch_id rule).
+      // Without this guard, wasClean=true clean path would wipe the
+      // authored microburst.
+      const mb = (matched?.microburst && !mbFromBroadcast && matched.patch_id == null)
+        ? matched.microburst
+        : mbFromBroadcast
+      return matched
+        ? { ...sp, client_id: matched.client_id, microburst: mb }
+        : { ...sp, microburst: mbFromBroadcast }
     })
     // Pending-add: draft patches with patch_id=null that the broadcast
     // doesn't yet echo back. Two common causes:
@@ -224,12 +279,14 @@ export const useWeatherV2Store = create((set, get) => ({
       // is preserved — otherwise the next accept() would re-emit add_patch
       // and also mis-compute the `remove_patch` loop.
       patches: [...freshPatches, ...pendingAdds],
+      microbursts: { standalone: standaloneMb },
     }
     const nextDraft = wasClean
       ? {
           ...state.draft,
           global:  { ...state.draft.global, ...freshGlobal },
           patches: [...freshPatches, ...pendingAdds],
+          microbursts: { standalone: standaloneMb },
         }
       : {
           ...state.draft,
@@ -240,6 +297,9 @@ export const useWeatherV2Store = create((set, get) => ({
               ? { ...dp, patch_id: match.patch_id, ground_elevation_m: match.ground_elevation_m }
               : dp
           }),
+          // Dirty path: leave draft.microbursts untouched. User may be
+          // authoring a microburst; overwriting from server would lose
+          // in-flight edits. Same tradeoff as draft.global in this branch.
         }
     return { serverState: nextServer, draft: nextDraft }
   }),
@@ -297,6 +357,8 @@ export const useWeatherV2Store = create((set, get) => ({
     }
 
     // Removed — in server but not in draft → remove_patch
+    // Backend cascade-deletes any attached microburst, so we don't need
+    // a separate clear_patch_microburst for removed patches.
     for (const sp of serverPatches) {
       if (!draftIds.has(sp.patch_id)) {
         ws.send(JSON.stringify({
@@ -306,8 +368,47 @@ export const useWeatherV2Store = create((set, get) => ({
       }
     }
 
-    // Optimistic commit. The next weather_state / patches broadcast will
-    // correct serverState via syncFromBroadcast (including new patch_ids).
+    // 3. Microbursts — per-patch diff. Skip patches with patch_id==null
+    //    (just-added, no backend id yet); next Accept picks them up after
+    //    the add_patch broadcast backfills patch_id via syncFromBroadcast.
+    for (const dp of draftPatches) {
+      if (dp.patch_id == null) continue
+      const sp = serverById.get(dp.patch_id)
+      if (!sp) continue
+      if (!microburstsDiffer(dp.microburst, sp.microburst)) continue
+      if (dp.microburst) {
+        ws.send(JSON.stringify({
+          type: 'set_patch_microburst',
+          data: { patch_id: dp.patch_id, ...dp.microburst },
+        }))
+      } else {
+        ws.send(JSON.stringify({
+          type: 'clear_patch_microburst',
+          data: { patch_id: dp.patch_id },
+        }))
+      }
+    }
+
+    // 4. Standalone microburst diff.
+    const dStandalone = state.draft.microbursts?.standalone ?? null
+    const sStandalone = state.serverState.microbursts?.standalone ?? null
+    if (microburstsDiffer(dStandalone, sStandalone)) {
+      if (dStandalone) {
+        ws.send(JSON.stringify({
+          type: 'set_standalone_microburst',
+          data: { ...dStandalone },
+        }))
+      } else {
+        ws.send(JSON.stringify({
+          type: 'clear_standalone_microburst',
+          data: {},
+        }))
+      }
+    }
+
+    // Optimistic commit. The next weather_state / patches / microbursts
+    // broadcast will correct serverState via syncFromBroadcast (including
+    // new patch_ids and server-assigned hazard_ids).
     set((s) => ({ serverState: structuredClone(s.draft) }))
   },
 
@@ -459,6 +560,11 @@ export const useWeatherV2Store = create((set, get) => ({
       override_pressure: false, pressure_hpa:     state.draft.global.pressure_hpa,
       override_runway:   false, runway_friction:  state.draft.global.runway_friction ?? 0,
 
+      // Slice 5c: per-patch microburst (null | hazard fields). Authoring
+      // UI gates on patch_id != null so the backend has a real id to
+      // attach the set_patch_microburst to.
+      microburst: null,
+
       ...initial,
     }
     return {
@@ -490,6 +596,44 @@ export const useWeatherV2Store = create((set, get) => ({
           ? { ...p, [`override_${field}`]: !!enabled }
           : p
       ),
+    },
+  })),
+
+  // ── Microburst actions (Slice 5c — draft only; Accept emits WS messages) ─
+  // Per-patch: lives on patch.microburst. Standalone: draft.microbursts.standalone.
+  // `mb` shape: { latitude_deg, longitude_deg, core_radius_m, intensity,
+  //              shaft_altitude_m }. Lat/lon resolved client-side from
+  // runway threshold + heading + distance (airport/standalone) or
+  // patch center + bearing + distance (custom patch).
+  setPatchMicroburst: (client_id, mb) => set((state) => ({
+    draft: {
+      ...state.draft,
+      patches: state.draft.patches.map(p =>
+        p.client_id === client_id ? { ...p, microburst: mb } : p
+      ),
+    },
+  })),
+
+  clearPatchMicroburst: (client_id) => set((state) => ({
+    draft: {
+      ...state.draft,
+      patches: state.draft.patches.map(p =>
+        p.client_id === client_id ? { ...p, microburst: null } : p
+      ),
+    },
+  })),
+
+  setStandaloneMicroburst: (mb) => set((state) => ({
+    draft: {
+      ...state.draft,
+      microbursts: { ...state.draft.microbursts, standalone: mb },
+    },
+  })),
+
+  clearStandaloneMicroburst: () => set((state) => ({
+    draft: {
+      ...state.draft,
+      microbursts: { ...state.draft.microbursts, standalone: null },
     },
   })),
 }))
