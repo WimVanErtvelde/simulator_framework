@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useWeatherV2Store } from '../../../store/useWeatherV2Store'
 import AirportSearch from '../../ui/AirportSearch'
 import { M_TO_FT } from './graph/mslScale'
@@ -10,21 +11,30 @@ const RADIUS_MAX_NM = 50
 // picker, ground elevation readout, radius slider, (custom-only) label
 // input, and a delete button.
 //
-// Identity fields (icao, radius, label) commit on user-release events,
-// not on every change. updatePatch is local-only (for smooth drag/type
-// feedback); updatePatchIdentity fires update_patch_identity to the
-// backend:
-//   - AirportSearch onSelect       (discrete event; fires immediately)
+// Identity fields (icao, radius, label) commit on user-release events.
+// During a drag or typing burst, the in-flight value lives in LOCAL
+// component state only — draft and serverState are never touched until
+// the user releases. This keeps the global Accept button from flickering
+// active/inactive on every slider tick. On commit, updatePatchIdentity
+// fires update_patch_identity and mirrors to both draft and serverState
+// in one step, so creation never registers as a dirty edit.
+//   - AirportSearch onSelect             (discrete event; fires immediately)
 //   - Radius slider onMouseUp/onTouchEnd (fires on drag release)
-//   - Label input onBlur           (fires on focus loss / Enter)
-// removePatch fires remove_patch immediately; the tab disappears from
-// the draft/serverState on the same set call.
+//   - Label input onBlur / Enter         (fires on focus loss)
+// removePatch fires remove_patch immediately.
 export default function PatchHeader({ patch }) {
-  const updatePatch         = useWeatherV2Store(s => s.updatePatch)
   const updatePatchIdentity = useWeatherV2Store(s => s.updatePatchIdentity)
   const removePatch         = useWeatherV2Store(s => s.removePatch)
 
-  const radiusNm = Math.round(((patch.radius_m || 0) / NM_TO_M) * 10) / 10
+  // Transient local state for in-flight edits. `null` means "follow store
+  // value"; a non-null value means the user is actively editing and the
+  // display should reflect their in-flight value (draft stays clean).
+  const [pendingRadiusNm, setPendingRadiusNm] = useState(null)
+  const [pendingLabel,    setPendingLabel]    = useState(null)
+
+  const storeRadiusNm = Math.round(((patch.radius_m || 0) / NM_TO_M) * 10) / 10
+  const displayRadiusNm = pendingRadiusNm ?? storeRadiusNm
+  const displayLabel    = pendingLabel    ?? patch.label
   const groundFt = Math.round((patch.ground_elevation_m || 0) * M_TO_FT)
 
   const onSelectAirport = (apt) => {
@@ -39,14 +49,23 @@ export default function PatchHeader({ patch }) {
 
   const onDelete = () => removePatch(patch.client_id)
 
-  // Commit current draft radius to the wire. Called on slider release.
+  // Commit the in-flight radius on drag release. If the user didn't move
+  // the slider at all (pendingRadiusNm still null), skip — no change to
+  // commit and no redundant WS message.
   const commitRadius = () => {
-    updatePatchIdentity(patch.client_id, { radius_m: patch.radius_m })
+    if (pendingRadiusNm == null) return
+    updatePatchIdentity(patch.client_id, { radius_m: pendingRadiusNm * NM_TO_M })
+    setPendingRadiusNm(null)
   }
 
-  // Commit current draft label. Called on input blur.
+  // Commit the in-flight label on blur / Enter. No-op if unchanged.
   const commitLabel = () => {
-    updatePatchIdentity(patch.client_id, { label: patch.label })
+    if (pendingLabel == null || pendingLabel === patch.label) {
+      setPendingLabel(null)
+      return
+    }
+    updatePatchIdentity(patch.client_id, { label: pendingLabel })
+    setPendingLabel(null)
   }
 
   return (
@@ -66,14 +85,15 @@ export default function PatchHeader({ patch }) {
         />
       </div>
 
-      {/* Label (editable for custom only). Local on keystroke, commit on blur. */}
+      {/* Label (editable for custom only). In-flight value lives in local
+          state; committed via updatePatchIdentity on blur / Enter. */}
       {patch.role === 'custom' && (
         <div style={{ flex: '0 1 180px', minWidth: 140 }}>
           <div style={fieldTagStyle}>LABEL</div>
           <input
             type="text"
-            value={patch.label}
-            onChange={e => updatePatch(patch.client_id, { label: e.target.value })}
+            value={displayLabel}
+            onChange={e => setPendingLabel(e.target.value)}
             onBlur={commitLabel}
             onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
             style={labelInputStyle}
@@ -101,10 +121,8 @@ export default function PatchHeader({ patch }) {
         }}>
           <input type="range"
             min={RADIUS_MIN_NM} max={RADIUS_MAX_NM} step={0.5}
-            value={radiusNm}
-            onChange={e => updatePatch(patch.client_id, {
-              radius_m: Number(e.target.value) * NM_TO_M,
-            })}
+            value={displayRadiusNm}
+            onChange={e => setPendingRadiusNm(Number(e.target.value))}
             onMouseUp={commitRadius}
             onTouchEnd={commitRadius}
             onKeyUp={commitRadius}
@@ -115,7 +133,7 @@ export default function PatchHeader({ patch }) {
             fontSize: 12, fontVariantNumeric: 'tabular-nums',
             minWidth: 56, textAlign: 'right',
           }}>
-            {radiusNm.toFixed(1)} NM
+            {displayRadiusNm.toFixed(1)} NM
           </span>
         </div>
       </div>
