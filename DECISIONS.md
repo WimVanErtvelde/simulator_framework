@@ -3205,3 +3205,43 @@ Diagnostic finding recorded after end-to-end testing during Slice 5b rollout. Co
   - We implement a workaround path: on aircraft entering a patch radius, manipulate global datarefs dynamically. This is an architectural alternative to regional samples but would require significant plugin refactoring.
 
 - AFFECTS: No code changes. Documentation only. CIGI patch pipeline and xplanecigi plugin remain as built — correct per spec, waiting on X-Plane to render what we send.
+
+## 2026-04-21 — Claude Code
+
+Slice 5b-iv — per-patch weather overrides complete coverage.
+
+- DECIDED: Extended `WeatherPatch.msg` with 6 fields — `override_humidity`+`humidity_pct`, `override_pressure`+`pressure_sl_pa`, `override_runway`+`runway_friction`. Completes per-patch override coverage; previously these were authored in the V2 UI (since 5b-iii) but dropped at the wire.
+- REASON: Close the last 5b-era wire gap so every global WeatherState field has a per-patch override. Enables field-QNH training (patch pressure = altimeter shift, NOT density shift) and localized runway surface conditions (EBBR dry / EBAW snow). Humidity is wire-only, reserved for future cockpit hygrometer and CIGI regional moisture.
+- AFFECTS: `sim_msgs/msg/WeatherPatch.msg`, `weather_solver/` (applies pressure override; emits effective_runway_friction), `ios_backend_node.py` (patch field plumbing), `ios/frontend/src/components/panels/weatherV2/weatherUnits.js` (wire serialization).
+
+- DECIDED: Route patch-aware runway friction through `AtmosphereState.effective_runway_friction` (new field) — Approach B over Approach A (which would duplicate haversine + find_active_patch in flight_model_adapter).
+- REASON: Centralizes all patch-resolution logic in weather_solver. Flight_model_adapter reads the effective value from `/world/atmosphere` without needing patch awareness. Pattern reusable for future scalars that need patch overrides and have non-weather_solver consumers.
+- AFFECTS: `sim_msgs/msg/AtmosphereState.msg` (new `uint8 effective_runway_friction`), `weather_solver::AtmoResult` + `compute()`, `flight_model_adapter_node.cpp` (drops `/world/weather` subscription; reads runway from atmosphere instead). "On-ground" gate stays in `JSBSimSurfaceWriteback` via FDM state.
+
+- DECIDED: Pressure override is altimeter-only (shifts `qnh_pa` output); does NOT propagate to `P_isa` or density.
+- REASON: Matches FTD training reality — field QNH vs. standard 1013 is an altimeter-setting exercise, not a density-physics exercise. Current weather_solver behavior preserved for global pressure; patch override just substitutes the `qnh_pa` value when inside the radius.
+- AFFECTS: `weather_solver.cpp::compute()` pressure override block.
+
+- DECIDED: atmosphere_node is dead code (not launched; only weather_solver_node is in sim_full.launch.py). Kept in tree, orphaned. Not removed in this slice.
+- REASON: Verified during Slice 5b-iv audit. Both atmosphere_node and weather_solver_node have AtmosphereState publishers but only weather_solver_node is wired into the launch file. No need to risk a removal touching other call sites today; flagged for a later cleanup slice.
+- AFFECTS: `src/core/atmosphere_node/` still compiles but doesn't run in production. New `effective_runway_friction` field has zero-default so the dead publisher is msg-ABI compatible.
+
+Frontend state-machine bugs discovered during end-to-end validation of 5b-iv — fixed as part of making the slice actually work.
+
+- FOUND: Five interacting bugs in `useWeatherV2Store` + `weatherUnits.js` that together produced flaky override propagation and "tab switch forgets settings":
+  1. `normalizePatchForDiff` omitted humidity/pressure/runway — `patchesDiffer` returned false for those changes, so `update_patch` was never emitted.
+  2. `patchesFromBroadcast` had a stale "DEFERRED" block at the end that overwrote the correctly-parsed wire values with hardcoded defaults (later-keys-win in JS object literals). Every broadcast silently reset the 3 new overrides to false locally.
+  3. Dirty-path `syncFromBroadcast` didn't reconcile `patch_id` from server broadcasts — caused duplicate `add_patch` if user kept editing before the ack returned.
+  4. Clean-path `syncFromBroadcast` wiped pending-add (`patch_id: null`) patches when a broadcast arrived that didn't include them yet — the "`set_weather` → broadcast, then `add_patch` → broadcast" ordering from backend meant the first broadcast reached the frontend before the new patch was indexed.
+  5. Wire builders (`globalDraftToWire`, `applyOverridesToWire`) had inconsistent `??` fallback coverage. Null draft values crashed backend `int(data.get(k, default))` since `.get` with default only kicks in for missing keys, not explicit null.
+
+- DECISION: Fix in place rather than redesigning the draft/accept machinery. All five fixes are additive — no API changes. Together they close the full set of reproducible propagation failures seen during authoring.
+- AFFECTS: `useWeatherV2Store.js::normalizePatchForDiff` + `syncFromBroadcast`, `weatherUnits.js::applyOverridesToWire` + `patchesFromBroadcast` + `globalDraftToWire`.
+
+- FOUND: Custom patch coord-based matching (`matchDraftPatch` uses role+lat+lon with 0.0001° tolerance) fails if user moves a patch before its add_patch broadcast ack returns. Broadcast echoes OLD coords with new patch_id; draft already at NEW coords → no match → duplicate on next Accept.
+- DECISION: Defer to a future slice. Fix design: frontend-generated UUID + new `client_uuid` field on WeatherPatch.msg; matchDraftPatch matches by UUID first. Airport patches don't hit this bug since ICAO is stable across moves.
+- AFFECTS: documented in `backlog.md` ("Stable frontend identity for patches").
+
+- FOUND: SRTM probe failures in `_resolve_ground_elevation_async` return `float('nan')` as ground_elevation_m; patch is added with NaN. `??` in frontend doesn't coalesce NaN (only null/undefined), so NaN propagates into cloud `base_elevation_m = base_agl_ft * FT_TO_M + NaN = NaN` on the wire → weather_solver consumes NaN.
+- DECISION: Added `Number.isFinite()` guards in both `applyOverridesToWire` and `patchesFromBroadcast` so NaN is coalesced to 0 at the wire boundaries. Backend-side rejection of failed SRTM probes deferred — out of scope for this session.
+- AFFECTS: `weatherUnits.js` (patchGroundM guard + finiteOr helper in broadcast parser).
