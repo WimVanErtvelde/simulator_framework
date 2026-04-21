@@ -10,14 +10,20 @@ const MIN_THICKNESS_FT = 100
 
 // Middle-column cloud graph. Reads cloud_layers from the V2 draft and
 // dispatches updates via store actions — nothing touches the backend
-// until Accept fires. Station elevation drives AGL↔MSL conversion:
-//   - Global tab:  weather station elevation from activeWeather
+// until Accept fires. Ground elevation drives AGL↔MSL conversion:
+//   - Global tab:  aircraft ground (altFtMsl − altFtAgl from FDM)
 //   - Patch tab:   patch.ground_elevation_m via patchContext prop
+// Slice 5d: weather_station picker removed; Global uses aircraft
+// position as the natural ground reference.
 export default function CloudColumn({ height, width, patchContext }) {
-  const globalStationElevM = useSimStore(s => s.activeWeather?.stationElevationM ?? 0)
-  const activeTab          = useWeatherV2Store(s => s.activeTab)
-  const patchCid           = patchContext?.client_id ?? null
-  const stationElevM       = patchContext ? patchContext.stationElevM : globalStationElevM
+  const aircraftGroundM = useSimStore(s => {
+    const msl = s.fdm?.altFtMsl ?? 0
+    const agl = s.fdm?.altFtAgl ?? 0
+    return Math.max(0, (msl - agl) * 0.3048)
+  })
+  const activeTab    = useWeatherV2Store(s => s.activeTab)
+  const patchCid     = patchContext?.client_id ?? null
+  const stationElevM = patchContext ? patchContext.stationElevM : aircraftGroundM
 
   const { cloudLayers, addCloud, updateCloud, selectedLayer, selectLayer } = useWeatherV2Store(
     useShallow(s => ({

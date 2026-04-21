@@ -17,10 +17,9 @@ const MIN_THICK_FT = 100
 export default function CloudPropertiesEditor({ index, patchContext }) {
   const patchCid = patchContext?.client_id ?? null
 
-  const { globalStationElevM, altFtMsl, altFtAgl } = useSimStore(useShallow(s => ({
-    globalStationElevM: s.activeWeather?.stationElevationM ?? 0,
-    altFtMsl:           s.fdm?.altFtMsl ?? 0,
-    altFtAgl:           s.fdm?.altFtAgl ?? 0,
+  const { altFtMsl, altFtAgl } = useSimStore(useShallow(s => ({
+    altFtMsl: s.fdm?.altFtMsl ?? 0,
+    altFtAgl: s.fdm?.altFtAgl ?? 0,
   })))
 
   const { cl, updateCloud, removeCloud } = useWeatherV2Store(useShallow(s => ({
@@ -33,29 +32,25 @@ export default function CloudPropertiesEditor({ index, patchContext }) {
 
   if (!cl) return null
 
-  // In patch context, station elevation is the patch's ground elevation
-  // (AGL refs are patch-relative). In global context, fall back to the
-  // weather station elevation from activeWeather.
-  const stationElevM = patchContext ? patchContext.stationElevM : globalStationElevM
+  // Ground reference: patch context uses the patch's own elevation;
+  // Global context uses aircraft ground (altFtMsl − altFtAgl). Slice 5d
+  // retired the weather_station picker — aircraft position is the
+  // natural reference for Global cloud AGL math.
+  const aircraftGroundFt = Math.max(0, altFtMsl - altFtAgl)
+  const stationElevM = patchContext
+    ? patchContext.stationElevM
+    : aircraftGroundFt * FT_TO_M
 
   const type          = cl.cloud_type ?? 7
   const coverage      = Math.round(cl.coverage_pct ?? 0)
 
-  // Wire stores base_agl_ft and thickness_m. The backend converts
-  // base_agl_ft → base_elevation_m using the weather station elevation.
-  // When no station is set, we fall back to the aircraft's current ground
-  // elevation (altFtMsl − altFtAgl) so the MSL/AGL inputs show sensible
-  // different values at airport elevation.
+  // Wire (Slice 5d) carries base_elevation_m. Draft still stores
+  // base_agl_ft — relative to stationElevM above (aircraft ground on
+  // Global, patch elevation on patch tabs). stationElevFt is the single
+  // ground reference this editor uses for all AGL↔MSL conversions.
   const stationElevFt = stationElevM * M_TO_FT
-  const groundElevFt  = stationElevM > 0
-    ? stationElevFt
-    : Math.max(0, altFtMsl - altFtAgl)
-
-  // Offset between wire AGL reference (station) and UI AGL reference
-  // (ground under aircraft). Zero when station is set; non-zero when
-  // falling back to aircraft terrain. Applied so UI AGL reads as
-  // "above the ground below me," not "above MSL 0."
-  const uiAglOffsetFt = groundElevFt - stationElevFt
+  const groundElevFt  = stationElevFt
+  const uiAglOffsetFt = 0
 
   const baseAglWireFt = cl.base_agl_ft ?? 0                       // on the wire
   const thicknessFt   = (cl.thickness_m ?? 0) * M_TO_FT

@@ -44,6 +44,18 @@ function draftEquals(a, b) {
   return JSON.stringify(a) === JSON.stringify(b)
 }
 
+// Aircraft ground elevation (meters MSL) — used as the AGL reference
+// for Global tab cloud layers. Derived from the FDM state's altFtMsl
+// minus altFtAgl (what the aircraft reports as "above-ground-level" at
+// its current position). Returns 0 if FDM hasn't published yet — safe
+// default that degrades to "AGL = MSL" rather than crashing.
+function aircraftGroundM() {
+  const fdm = useSimStore.getState().fdm ?? {}
+  const msl = fdm.altFtMsl ?? 0
+  const agl = fdm.altFtAgl ?? 0
+  return Math.max(0, (msl - agl) * FT_TO_M_CONST)
+}
+
 // ── Patch helpers (Slice 5b-ii) ────────────────────────────────────────────
 function roleToLabel(role) {
   return {
@@ -174,7 +186,8 @@ export const useWeatherV2Store = create((set, get) => ({
   // activeTab / selectedLayer.tabId reference valid across the add →
   // broadcast roundtrip where the server assigns a real patch_id.
   syncFromBroadcast: (activeWeather) => set((state) => {
-    const freshGlobal  = activeWeatherToGlobalDraft(activeWeather)
+    const groundM      = aircraftGroundM()
+    const freshGlobal  = activeWeatherToGlobalDraft(activeWeather, groundM)
     const rawPatches   = patchesFromBroadcast(activeWeather?.patches)
     const freshPatches = rawPatches.map(sp => {
       const matched = matchDraftPatch(sp, state.draft.patches)
@@ -214,7 +227,7 @@ export const useWeatherV2Store = create((set, get) => ({
     // 1. Global — fire every Accept for safety; publish_weather merges.
     ws.send(JSON.stringify({
       type: 'set_weather',
-      data: globalDraftToWire(state.draft.global),
+      data: globalDraftToWire(state.draft.global, aircraftGroundM()),
     }))
 
     // 2. Patches — diff draft vs serverState and emit per-delta messages.

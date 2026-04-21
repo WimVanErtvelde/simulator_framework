@@ -973,16 +973,24 @@ class IosBackendNode(Node):
             wl.turbulence_severity = float(turb_sev or 0.0)
             msg.wind_layers.append(wl)
 
-        # Cloud layers — base authored in ft AGL, convert to m MSL using station elevation
-        station_elev_m = msg.station_elevation_m
+        # Cloud layers — wire carries base_elevation_m directly (MSL).
+        # Slice 5d: frontend resolves AGL→MSL at Accept time using aircraft
+        # ground elevation (Global) or patch.ground_elevation_m (patches),
+        # so the backend is stateless for this and no longer needs a
+        # weather_station reference. Legacy base_agl_ft support kept as a
+        # transitional fallback while V1 clients may still exist — can be
+        # dropped in a follow-up once no legacy senders remain.
         for cl_data in source.get('cloud_layers', []):
             cl = WeatherCloudLayer()
             cl.cloud_type = int(cl_data.get('cloud_type', 0))
             cl.coverage_pct = float(cl_data.get('coverage_pct', 0.0))
-            if 'base_agl_ft' in cl_data:
-                cl.base_elevation_m = (float(cl_data['base_agl_ft']) * 0.3048) + station_elev_m
+            if 'base_elevation_m' in cl_data:
+                cl.base_elevation_m = float(cl_data['base_elevation_m'])
+            elif 'base_agl_ft' in cl_data:
+                # Legacy V1 path: treat AGL as MSL (station picker retired)
+                cl.base_elevation_m = float(cl_data['base_agl_ft']) * 0.3048
             else:
-                cl.base_elevation_m = float(cl_data.get('base_elevation_m', 0.0))
+                cl.base_elevation_m = 0.0
             cl.thickness_m = float(cl_data.get('thickness_m', 300.0))
             cl.transition_band_m = float(cl_data.get('transition_band_m', 50.0))
             cl.scud_enable = bool(cl_data.get('scud_enable', False))
@@ -1157,17 +1165,25 @@ class IosBackendNode(Node):
     def _broadcast_weather_state(self):
         """Send full cached weather state (IOS-friendly units) to all WS clients."""
         source = self._last_weather_data or {}
-        station_elev_m = float(self._weather_station.get('elevation_m', 0.0))
 
-        # Cloud layers — pass base_agl_ft through if present, else back-compute from MSL
+        # Cloud layers — Slice 5d: broadcast MSL directly. Frontend resolves
+        # MSL→AGL for display using current aircraft ground (Global tab) or
+        # the patch's own ground_elevation_m (patch tabs). Symmetric with
+        # the Accept path; backend is stateless for the AGL↔MSL conversion.
         cloud_layers = []
         for cl in source.get('cloud_layers', []):
-            base_agl_ft = cl.get('base_agl_ft')
-            if base_agl_ft is None and 'base_elevation_m' in cl:
-                base_agl_ft = (float(cl['base_elevation_m']) - station_elev_m) / 0.3048
+            # Prefer explicit base_elevation_m; fall back to base_agl_ft
+            # only for legacy V1 cache entries (treated as MSL since the
+            # station picker is gone).
+            if 'base_elevation_m' in cl:
+                base_m = float(cl['base_elevation_m'])
+            elif 'base_agl_ft' in cl:
+                base_m = float(cl['base_agl_ft']) * 0.3048
+            else:
+                base_m = 0.0
             cloud_layers.append({
                 'cloud_type': int(cl.get('cloud_type', 0)),
-                'base_agl_ft': float(base_agl_ft or 0),
+                'base_elevation_m': base_m,
                 'thickness_m': float(cl.get('thickness_m', 0)),
                 'coverage_pct': float(cl.get('coverage_pct', 0)),
             })
@@ -1209,7 +1225,7 @@ class IosBackendNode(Node):
             'type': 'weather_state',
             'data': {
                 'station_icao': self._weather_station.get('icao', ''),
-                'station_elevation_m': station_elev_m,
+                'station_elevation_m': float(self._weather_station.get('elevation_m', 0.0)),
                 'visibility_m': float(source.get('visibility_m', 9999.0)),
                 'temperature_sl_k': float(source.get('temperature_sl_k', 288.15)),
                 'pressure_sl_pa': float(source.get('pressure_sl_pa', 101325.0)),

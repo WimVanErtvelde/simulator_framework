@@ -26,10 +26,19 @@ export const HPA_TO_PA    = 100.0
 export const M_PER_SM     = 1609.344
 export const HPA_PER_INHG = 33.8638866
 
+const FT_TO_M = 0.3048
+const M_TO_FT = 1 / FT_TO_M
+
 // ── Store → Wire (set_weather payload) ────────────────────────────────────
 // cloud_layers is always included (possibly empty) so an Accept with all
 // clouds deleted can clear the backend's cloud list.
-export function globalDraftToWire(global) {
+//
+// AGL/MSL handoff (Slice 5d): the DRAFT carries base_agl_ft (display
+// convenience — "above the ground under me"). The WIRE carries
+// base_elevation_m (MSL, canonical). Conversion uses aircraft ground
+// elevation at the moment of Accept. Caller passes aircraftGroundM.
+// Backend no longer maintains a weather_station reference for AGL math.
+export function globalDraftToWire(global, aircraftGroundM = 0) {
   return {
     temperature_sl_k:   global.temperature_c + K_OFFSET,
     pressure_sl_pa:     global.pressure_hpa * HPA_TO_PA,
@@ -40,7 +49,8 @@ export function globalDraftToWire(global) {
     runway_friction:    global.runway_friction ?? 0,
     cloud_layers: (global.cloud_layers ?? []).map(cl => ({
       cloud_type:   cl.cloud_type,
-      base_agl_ft:  cl.base_agl_ft,
+      // Resolve AGL (draft) → MSL (wire) using aircraft ground snapshot.
+      base_elevation_m: (cl.base_agl_ft ?? 0) * FT_TO_M + aircraftGroundM,
       thickness_m:  cl.thickness_m,
       coverage_pct: cl.coverage_pct,
     })),
@@ -58,18 +68,17 @@ export function globalDraftToWire(global) {
 }
 
 // ── useSimStore.activeWeather (camelCase, post-broadcast-parse) → Store ──
-// activeWeather.cloudLayers is a pass-through of the snake-case objects
-// the backend publishes: {cloud_type, base_agl_ft, thickness_m,
-// coverage_pct}. Re-shape defensively to drop any extra keys.
-export function activeWeatherToGlobalDraft(active) {
+// Symmetric with globalDraftToWire: broadcast carries base_elevation_m
+// (MSL), we reconstruct base_agl_ft relative to current aircraft ground
+// for the draft's AGL-oriented display. See AGL/MSL handoff note above.
+export function activeWeatherToGlobalDraft(active, aircraftGroundM = 0) {
+  const aircraftGroundFt = aircraftGroundM * M_TO_FT
   const cloud_layers = (active.cloudLayers ?? []).map(cl => ({
     cloud_type:   cl.cloud_type,
-    base_agl_ft:  cl.base_agl_ft,
+    base_agl_ft:  (cl.base_elevation_m ?? 0) * M_TO_FT - aircraftGroundFt,
     thickness_m:  cl.thickness_m,
     coverage_pct: cl.coverage_pct,
   }))
-  // windLayers is a pass-through of the snake-case objects the backend
-  // broadcasts. Reshape defensively to drop unknown keys.
   const wind_layers = (active.windLayers ?? []).map(wl => ({
     altitude_msl_m:       wl.altitude_msl_m       ?? 0,
     wind_direction_deg:   wl.wind_direction_deg   ?? 0,
@@ -114,9 +123,14 @@ function applyOverridesToWire(p, data) {
   data.precipitation_rate     = p.precipitation_rate
   data.precipitation_type     = p.precipitation_type
 
+  // AGL→MSL using this patch's own ground elevation (from airport DB
+  // when patch is an airport; SRTM probe for custom). Fixes pre-existing
+  // shape mismatch where patch cloud_layers serialized base_agl_ft but
+  // backend expected base_elevation_m (dropped to 0 MSL).
+  const patchGroundM = p.ground_elevation_m ?? 0
   data.cloud_layers = (p.cloud_layers || []).map(cl => ({
     cloud_type:   cl.cloud_type,
-    base_agl_ft:  cl.base_agl_ft,
+    base_elevation_m: (cl.base_agl_ft ?? 0) * FT_TO_M + patchGroundM,
     thickness_m:  cl.thickness_m,
     coverage_pct: cl.coverage_pct,
   }))
@@ -188,7 +202,15 @@ export function patchesFromBroadcast(raw) {
     precipitation_rate:     rp.precipitation_rate ?? 0,
     precipitation_type:     rp.precipitation_type ?? 0,
 
-    cloud_layers: rp.cloud_layers || [],
+    // MSL→AGL using the patch's own ground elevation, symmetric with
+    // applyOverridesToWire. Patches are self-referential for AGL — the
+    // patch's ground_elevation_m is the stable reference.
+    cloud_layers: (rp.cloud_layers || []).map(cl => ({
+      cloud_type:   cl.cloud_type,
+      base_agl_ft:  (cl.base_elevation_m ?? 0) * M_TO_FT - (rp.ground_elevation_m ?? 0) * M_TO_FT,
+      thickness_m:  cl.thickness_m,
+      coverage_pct: cl.coverage_pct,
+    })),
     wind_layers:  rp.wind_layers  || [],
 
     // Deferred (5b-iv) — broadcast doesn't carry these yet
