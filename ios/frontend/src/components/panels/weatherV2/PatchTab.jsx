@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import LayerPropertiesColumn from './LayerPropertiesColumn'
-import MSLGraphColumn        from './MSLGraphColumn'
-import PatchScalarsPanel     from './PatchScalarsPanel'
-import PatchHeader           from './PatchHeader'
-import EmptyPatchState       from './EmptyPatchState'
+import LayerPropertiesColumn   from './LayerPropertiesColumn'
+import MSLGraphColumn          from './MSLGraphColumn'
+import PatchScalarsPanel       from './PatchScalarsPanel'
+import PatchHeader             from './PatchHeader'
+import EmptyPatchState         from './EmptyPatchState'
+import PatchMicroburstSection  from './PatchMicroburstSection'
 
 const WIDE_BREAKPOINT = 1200
 
@@ -55,7 +56,10 @@ export default function PatchTab({ patch }) {
       }}>
         <LayerPropertiesColumn patchContext={patchContext} />
         <MSLGraphColumn         patchContext={patchContext} />
-        <PatchScalarsPanel      patch={patch} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
+          <PatchScalarsPanel       patch={patch} />
+          <PatchMicroburstSection  patch={patch} />
+        </div>
       </div>
     </div>
   )

@@ -30,7 +30,7 @@ export default function PatchScalarsPanel({ patch }) {
       background: '#0d1117',
       border: '1px solid #1e293b',
       borderRadius: 3,
-      height: '100%', minHeight: 0,
+      flex: '1 1 auto', minHeight: 0,
       overflowY: 'auto',
       display: 'flex', flexDirection: 'column', gap: 10,
     }}>
