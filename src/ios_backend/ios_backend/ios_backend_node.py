@@ -1036,6 +1036,7 @@ class IosBackendNode(Node):
             mb_msg.intensity = float(mb['intensity'])
             mb_msg.lifecycle_phase = int(mb['lifecycle_phase'])
             mb_msg.activation_time_sec = float(mb['activation_time_sec'])
+            mb_msg.source_patch_id = int(mb.get('source_patch_id', 0))
             msg.microbursts.append(mb_msg)
 
         # Append active patches (Slice 4 — regional weather)
@@ -1154,6 +1155,124 @@ class IosBackendNode(Node):
         self.publish_weather()
         self._broadcast_microbursts()
 
+    def set_patch_microburst(self, data: dict):
+        """Create or update a microburst tied to a patch.
+
+        Wire payload: patch_id (uint16, must match existing patch),
+        latitude_deg, longitude_deg (client-resolved), core_radius_m,
+        intensity, shaft_altitude_m.
+
+        At most ONE microburst per patch — updates in-place if one already
+        exists with matching source_patch_id.
+        """
+        patch_id = int(data.get('patch_id', 0))
+        if patch_id == 0:
+            self.get_logger().warn('set_patch_microburst: patch_id required')
+            return
+        if not any(p['patch_id'] == patch_id for p in self._active_patches):
+            self.get_logger().warn(f'set_patch_microburst: unknown patch_id {patch_id}')
+            return
+
+        existing = next((mb for mb in self._active_microbursts
+                         if mb.get('source_patch_id') == patch_id), None)
+
+        with self._lock:
+            sim_time = self._latest.get('sim_state', {}).get('sim_time_sec', 0.0)
+
+        if existing:
+            existing['latitude_deg']     = float(data['latitude_deg'])
+            existing['longitude_deg']    = float(data['longitude_deg'])
+            existing['core_radius_m']    = float(data.get('core_radius_m', 1000.0))
+            existing['intensity']        = float(data.get('intensity', 10.0))
+            existing['shaft_altitude_m'] = float(data.get('shaft_altitude_m', 300.0))
+            self.get_logger().info(
+                f'Microburst #{existing["hazard_id"]} updated (patch_id={patch_id})')
+        else:
+            mb = {
+                'hazard_id':           self._mb_next_id,
+                'source_patch_id':     patch_id,
+                'latitude_deg':        float(data['latitude_deg']),
+                'longitude_deg':       float(data['longitude_deg']),
+                'core_radius_m':       float(data.get('core_radius_m', 1000.0)),
+                'intensity':           float(data.get('intensity', 10.0)),
+                'shaft_altitude_m':    float(data.get('shaft_altitude_m', 300.0)),
+                'lifecycle_phase':     2,  # Mature
+                'activation_time_sec': float(sim_time),
+            }
+            self._mb_next_id += 1
+            self._active_microbursts.append(mb)
+            self.get_logger().info(
+                f'Microburst #{mb["hazard_id"]} created (patch_id={patch_id})')
+
+        self.publish_weather()
+        self._broadcast_microbursts()
+
+    def set_standalone_microburst(self, data: dict):
+        """Create or update the standalone microburst (source_patch_id=0).
+
+        At most ONE standalone microburst at a time.
+        """
+        existing = next((mb for mb in self._active_microbursts
+                         if mb.get('source_patch_id', 0) == 0), None)
+
+        with self._lock:
+            sim_time = self._latest.get('sim_state', {}).get('sim_time_sec', 0.0)
+
+        if existing:
+            existing['latitude_deg']     = float(data['latitude_deg'])
+            existing['longitude_deg']    = float(data['longitude_deg'])
+            existing['core_radius_m']    = float(data.get('core_radius_m', 1000.0))
+            existing['intensity']        = float(data.get('intensity', 10.0))
+            existing['shaft_altitude_m'] = float(data.get('shaft_altitude_m', 300.0))
+            self.get_logger().info(
+                f'Standalone microburst #{existing["hazard_id"]} updated')
+        else:
+            mb = {
+                'hazard_id':           self._mb_next_id,
+                'source_patch_id':     0,
+                'latitude_deg':        float(data['latitude_deg']),
+                'longitude_deg':       float(data['longitude_deg']),
+                'core_radius_m':       float(data.get('core_radius_m', 1000.0)),
+                'intensity':           float(data.get('intensity', 10.0)),
+                'shaft_altitude_m':    float(data.get('shaft_altitude_m', 300.0)),
+                'lifecycle_phase':     2,
+                'activation_time_sec': float(sim_time),
+            }
+            self._mb_next_id += 1
+            self._active_microbursts.append(mb)
+            self.get_logger().info(
+                f'Standalone microburst #{mb["hazard_id"]} created')
+
+        self.publish_weather()
+        self._broadcast_microbursts()
+
+    def clear_patch_microburst(self, data: dict):
+        """Remove the microburst tied to a given patch."""
+        patch_id = int(data.get('patch_id', 0))
+        if patch_id == 0:
+            return
+        before = len(self._active_microbursts)
+        self._active_microbursts = [
+            mb for mb in self._active_microbursts
+            if mb.get('source_patch_id') != patch_id
+        ]
+        if len(self._active_microbursts) < before:
+            self.get_logger().info(f'Microburst cleared (patch_id={patch_id})')
+            self.publish_weather()
+            self._broadcast_microbursts()
+
+    def clear_standalone_microburst(self, data: dict = None):
+        """Remove the standalone microburst."""
+        before = len(self._active_microbursts)
+        self._active_microbursts = [
+            mb for mb in self._active_microbursts
+            if mb.get('source_patch_id', 0) != 0
+        ]
+        if len(self._active_microbursts) < before:
+            self.get_logger().info('Standalone microburst cleared')
+            self.publish_weather()
+            self._broadcast_microbursts()
+
     def _broadcast_microbursts(self):
         """Send current microburst list to all WS clients."""
         data = {
@@ -1161,8 +1280,10 @@ class IosBackendNode(Node):
             'hazards': [
                 {
                     'hazard_id': mb['hazard_id'],
+                    'source_patch_id': mb.get('source_patch_id', 0),
                     'core_radius_m': mb['core_radius_m'],
                     'intensity': mb['intensity'],
+                    'shaft_altitude_m': mb.get('shaft_altitude_m', 300.0),
                     'latitude_deg': mb['latitude_deg'],
                     'longitude_deg': mb['longitude_deg'],
                 }
@@ -1346,8 +1467,20 @@ class IosBackendNode(Node):
             if p['patch_id'] == patch_id:
                 self._active_patches.pop(i)
                 self.get_logger().info(f'[patch] removed id={patch_id}')
+                # Cascade-delete any microburst tied to this patch (Slice 5c)
+                before = len(self._active_microbursts)
+                self._active_microbursts = [
+                    mb for mb in self._active_microbursts
+                    if mb.get('source_patch_id') != patch_id
+                ]
+                cascaded = before > len(self._active_microbursts)
+                if cascaded:
+                    self.get_logger().info(
+                        f'[patch] cascade-deleted microburst for patch_id={patch_id}')
                 self.publish_weather()
                 self._broadcast_patches()
+                if cascaded:
+                    self._broadcast_microbursts()
                 return True
         return False
 
@@ -2525,6 +2658,18 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 elif msg.get('type') == 'clear_all_microbursts' and ros_node:
                     ros_node.clear_all_microbursts()
+
+                elif msg.get('type') == 'set_patch_microburst' and ros_node:
+                    ros_node.set_patch_microburst(msg.get('data', {}))
+
+                elif msg.get('type') == 'set_standalone_microburst' and ros_node:
+                    ros_node.set_standalone_microburst(msg.get('data', {}))
+
+                elif msg.get('type') == 'clear_patch_microburst' and ros_node:
+                    ros_node.clear_patch_microburst(msg.get('data', {}))
+
+                elif msg.get('type') == 'clear_standalone_microburst' and ros_node:
+                    ros_node.clear_standalone_microburst(msg.get('data', {}))
 
                 elif msg.get('type') == 'add_patch' and ros_node:
                     _spawn(_handle_add_patch(websocket, msg.get('data', {})))

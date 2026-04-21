@@ -10,3 +10,8 @@ float32 shaft_altitude_m         # Z_m — center altitude of downdraft shaft
 float32 intensity                # lambda parameter (m/s scale factor)
 uint8   lifecycle_phase          # 0=Dormant, 1=Intensifying, 2=Mature, 3=Decaying
 float32 activation_time_sec      # sim time at activation (for lifecycle computation)
+
+# Patch linkage (Slice 5c)
+# 0 = standalone (not tied to any patch)
+# Nonzero = matches WeatherPatch.patch_id; cascade-deletes with patch
+uint16  source_patch_id
