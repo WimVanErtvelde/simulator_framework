@@ -174,9 +174,6 @@ export const useSimStore = create((set, get) => ({
   airportSearchResults: [],
   runwayResults: null,  // full airport object with runways
 
-  // Weather station (WX page) — weather is authored relative to this airport
-  weatherStation: { icao: '', elevation_m: 0, lat_deg: 0, lon_deg: 0 },
-
   // Full active weather state (published by backend after set_weather)
   activeWeather: {
     stationIcao: '', stationElevationM: 0,
@@ -368,12 +365,6 @@ export const useSimStore = create((set, get) => ({
     ws.send(JSON.stringify({ type: 'get_runways', icao }))
   },
 
-  setWeatherStation: (icao) => {
-    const { ws, wsConnected } = get()
-    if (!wsConnected || !ws || !icao) return
-    ws.send(JSON.stringify({ type: 'set_weather_station', data: { icao } }))
-  },
-
   setDeparture: (data) => {
     const { ws, wsConnected, icConfiguration } = get()
     if (!wsConnected || !ws) return false
@@ -478,17 +469,6 @@ export const useSimStore = create((set, get) => ({
 
           case 'microbursts':
             set({ microbursts: msg.hazards ?? [] })
-            break
-
-          case 'weather_station':
-            set({
-              weatherStation: {
-                icao: msg.icao ?? '',
-                elevation_m: msg.elevation_m ?? 0,
-                lat_deg: msg.lat_deg ?? 0,
-                lon_deg: msg.lon_deg ?? 0,
-              }
-            })
             break
 
           case 'weather_state': {

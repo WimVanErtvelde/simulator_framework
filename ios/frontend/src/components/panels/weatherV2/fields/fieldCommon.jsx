@@ -1,10 +1,6 @@
-// Small shared primitives for Slice 5a-ii+ field components.
+// Small shared primitives for scalar field components.
 // Styles live in fieldStyles.js so this file can export only components
 // (react-refresh requirement).
-//
-// PillGroup is a byte-for-byte port of WeatherPanel.jsx's PillGroup (which
-// is private there). Kept duplicated so V1/V2 stay decoupled during
-// development; consolidation into PanelUtils will happen when V2 replaces V1.
 
 import { neutralBtn, COLOR_ACCENT_TEAL, COLOR_BG_CARD, COLOR_BORDER, COLOR_TEXT_MUTED } from './fieldStyles'
 

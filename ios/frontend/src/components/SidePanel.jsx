@@ -3,7 +3,6 @@ import { useShallow } from 'zustand/react/shallow'
 import PositionPanel from './panels/PositionPanel'
 import AircraftPanel from './panels/AircraftPanel'
 import FailuresPanel from './panels/FailuresPanel'
-import WeatherPanel from './panels/WeatherPanel'
 import WeatherPanelV2 from './panels/WeatherPanelV2'
 import TimePanel from './panels/TimePanel'
 import ScenariosPanel from './panels/ScenariosPanel'
@@ -15,8 +14,7 @@ const TABS = {
   position: { title: 'POSITION', component: PositionPanel },
   aircraft: { title: 'AIRCRAFT', component: AircraftPanel },
   failures: { title: 'FAILURES', component: FailuresPanel },
-  weather: { title: 'WEATHER', component: WeatherPanel },
-  weather_v2: { title: 'WEATHER V2', component: WeatherPanelV2 },
+  weather: { title: 'WEATHER', component: WeatherPanelV2 },
   time: { title: 'TIME', component: TimePanel },
   scenarios: { title: 'SCENARIOS', component: ScenariosPanel },
   nodes: { title: 'NODES', component: NodesPanel },
