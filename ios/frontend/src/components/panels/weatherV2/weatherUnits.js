@@ -187,6 +187,30 @@ export function patchDraftToUpdateWire(p) {
   return data
 }
 
+// ── Slice 5c-refactor-I: identity + override split payloads ───────────────
+// reserve_patch and update_patch_identity carry only identity fields.
+// update_patch_overrides carries only override flags/values + layers.
+
+export function patchIdentityToWire(p) {
+  return {
+    client_id:          p.client_id,
+    patch_type:         p.patch_type,
+    role:               p.role,
+    label:              p.label,
+    icao:               p.icao,
+    lat_deg:            p.lat_deg,
+    lon_deg:            p.lon_deg,
+    radius_m:           p.radius_m,
+    ground_elevation_m: p.ground_elevation_m,
+  }
+}
+
+export function patchOverridesToWire(p) {
+  const data = { patch_id: p.patch_id }
+  applyOverridesToWire(p, data)
+  return data
+}
+
 // Reconstruct draft patch shape from the 'patches' WS broadcast.
 // Role fallback: if backend hasn't sent role, infer from patch_type
 // (airport→departure, custom→custom). Instructor can rename in UI.
@@ -197,7 +221,10 @@ export function patchesFromBroadcast(raw) {
   // null/undefined, so guard explicitly.
   const finiteOr = (v, d) => (Number.isFinite(v) ? v : d)
   return list.map(rp => ({
-    client_id:          `srv-${rp.patch_id}`,
+    // Use backend's echoed client_id when present (5c-refactor-I reserve
+    // path). Fall back to srv-<id> for legacy patches created pre-refactor
+    // where the backend didn't thread client_id (add_patch / scenario load).
+    client_id:          rp.client_id || `srv-${rp.patch_id}`,
     patch_id:           rp.patch_id,
     role:               rp.role || (rp.patch_type === 'airport' ? 'departure' : 'custom'),
     patch_type:         rp.patch_type || 'custom',

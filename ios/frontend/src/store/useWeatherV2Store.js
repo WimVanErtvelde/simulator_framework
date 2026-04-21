@@ -3,10 +3,47 @@ import { useSimStore } from './useSimStore'
 import {
   globalDraftToWire,
   activeWeatherToGlobalDraft,
-  patchDraftToAddWire,
-  patchDraftToUpdateWire,
+  patchIdentityToWire,
+  patchOverridesToWire,
   patchesFromBroadcast,
 } from '../components/panels/weatherV2/weatherUnits'
+
+// ── Module-level bookkeeping for patch lifecycle (Slice 5c-refactor-I) ────
+// Actions deferred until a reserve_patch broadcast assigns patch_id. Each
+// entry: { client_id, message, isRemoval }. Pushed by updatePatchIdentity
+// or removePatch when patch_id is still null; flushed by syncFromBroadcast
+// when broadcast echoes the reserve with a real patch_id.
+const _pendingPatchActions = []
+
+// client_ids the user has locally removed but whose remove_patch WS message
+// may not have been processed by the backend yet. Filtered out of
+// syncFromBroadcast so a stale broadcast doesn't re-introduce them. Pruned
+// when the broadcast stops containing that client_id.
+const _suppressedClientIds = new Set()
+
+function _sendWs(message) {
+  const { ws, wsConnected } = useSimStore.getState()
+  if (!wsConnected || !ws) return false
+  ws.send(JSON.stringify(message))
+  return true
+}
+
+function _flushPendingForClient(client_id, patch_id) {
+  const toFire = []
+  for (let i = _pendingPatchActions.length - 1; i >= 0; i--) {
+    if (_pendingPatchActions[i].client_id === client_id) {
+      toFire.unshift(_pendingPatchActions.splice(i, 1)[0])
+    }
+  }
+  for (const action of toFire) {
+    const payload = {
+      ...action.message,
+      data: { ...action.message.data, patch_id },
+    }
+    _sendWs(payload)
+    if (action.isRemoval) _suppressedClientIds.add(client_id)
+  }
+}
 
 // Draft state for WeatherPanelV2.
 //
@@ -73,17 +110,21 @@ function roleToDefaultRadiusM(role) {
   return role === 'custom' ? 3 * NM_TO_M_CONST : 10 * NM_TO_M_CONST
 }
 
-// Normalize a patch to the subset of fields that travel over the wire.
-// Used to decide whether to emit update_patch. Every wire field must be
-// covered here — if a field is missing, its changes won't trigger an
-// update_patch, the optimistic commit overwrites serverState locally, and
-// the next broadcast silently clobbers the draft.
-function normalizePatchForDiff(p) {
+// Identity diff — fields that travel on reserve_patch / update_patch_identity.
+// Changes here fire update_patch_identity immediately (not batched to Accept).
+function normalizePatchIdentityForDiff(p) {
   return JSON.stringify({
     label: p.label, icao: p.icao,
     lat_deg: p.lat_deg, lon_deg: p.lon_deg,
     ground_elevation_m: p.ground_elevation_m, radius_m: p.radius_m,
     role: p.role, patch_type: p.patch_type,
+  })
+}
+
+// Override diff — fields that travel on update_patch_overrides.
+// Changes here are batched to Accept.
+function normalizePatchOverridesForDiff(p) {
+  return JSON.stringify({
     override_visibility:    !!p.override_visibility,
     visibility_m:           p.visibility_m,
     override_temperature:   !!p.override_temperature,
@@ -102,8 +143,12 @@ function normalizePatchForDiff(p) {
   })
 }
 
-function patchesDiffer(dp, sp) {
-  return normalizePatchForDiff(dp) !== normalizePatchForDiff(sp)
+function identityDiffers(dp, sp) {
+  return normalizePatchIdentityForDiff(dp) !== normalizePatchIdentityForDiff(sp)
+}
+
+function overridesDiffer(dp, sp) {
+  return normalizePatchOverridesForDiff(dp) !== normalizePatchOverridesForDiff(sp)
 }
 
 // Microburst diff — authored fields only (hazard_id / activation_time are
@@ -125,16 +170,16 @@ function microburstsDiffer(a, b) {
   return normalizeMicroburstForDiff(a) !== normalizeMicroburstForDiff(b)
 }
 
-// Stable identity match for broadcast sync: preserve draft's client_id
-// when the same logical patch re-appears from the server. Prevents the
-// activeTab/selectedLayer from losing its target after add-accept-
-// broadcast roundtrip (where the draft patch's patch_id goes null → N).
-// - airport patches: match by (role, icao)
-// - custom patches:  match by (role, lat, lon) with 0.0001° tolerance
-//   (~10 m at equator — tight enough that two distinct custom patches
-//   won't collide, loose enough to tolerate float roundtrip through JSON
-//   serialization and ROS2 float32 quantization).
+// Stable identity match for broadcast sync. Preserves the draft's tab slot
+// and selectedLayer target when broadcast echoes the same logical patch.
+// - Primary: client_id (set by reserve_patch since 5c-refactor-I)
+// - Fallback A: (role, icao) for airport patches (legacy / scenario-loaded)
+// - Fallback B: (role, lat/lon) with 0.0001° tolerance for custom patches
 function matchDraftPatch(serverPatch, draftPatches) {
+  if (serverPatch.client_id) {
+    const byCid = draftPatches.find(d => d.client_id === serverPatch.client_id)
+    if (byCid) return byCid
+  }
   if (serverPatch.patch_type === 'airport') {
     return draftPatches.find(d =>
       d.role === serverPatch.role && d.icao === serverPatch.icao
@@ -205,19 +250,32 @@ export const useWeatherV2Store = create((set, get) => ({
   }),
 
   // Called when useSimStore.activeWeather changes (a weather_state or
-  // patches broadcast arrived). Merges scalars into serverState.global
-  // and patches into serverState.patches. Draft receives the same merge
-  // only if it was clean at sync time — never clobbers in-flight edits.
-  //
-  // Patch client_id preservation: when a broadcast patch matches a draft
-  // patch by (role, icao) for airports or (role, lat/lon) for custom, the
-  // draft's client_id is carried into the merged patch. This keeps the
-  // activeTab / selectedLayer.tabId reference valid across the add →
-  // broadcast roundtrip where the server assigns a real patch_id.
-  syncFromBroadcast: (activeWeather) => set((state) => {
+  // patches broadcast arrived). Under 5c-refactor-I the patch lifecycle
+  // commits identity on-change (reserve_patch / update_patch_identity),
+  // so the frontend never carries a long-lived patch_id=null state — just
+  // a ~10ms window between reserve_patch fire and broadcast echo. The
+  // reconciliation here:
+  //  - filters broadcast by _suppressedClientIds (locally-removed patches)
+  //  - matches broadcast patches to draft by client_id (primary) with
+  //    icao/coord fallback for legacy/scenario-loaded patches
+  //  - backfills patch_id + ground_elevation_m onto matched draft patches
+  //  - flushes _pendingPatchActions for any just-backfilled client_ids
+  //  - for CLEAN drafts, replaces draft.patches wholesale from broadcast
+  //  - for DIRTY drafts (override authoring in flight), preserves draft
+  //    overrides but still accepts identity+patch_id updates from server
+  syncFromBroadcast: (activeWeather) => {
+    const state = get()
     const groundM      = aircraftGroundM()
     const freshGlobal  = activeWeatherToGlobalDraft(activeWeather, groundM)
     const rawPatches   = patchesFromBroadcast(activeWeather?.patches)
+
+    // Suppress locally-removed patches. Prune entries whose client_ids the
+    // broadcast no longer contains (backend has caught up with the delete).
+    const broadcastCids = new Set(rawPatches.map(p => p.client_id))
+    for (const cid of [..._suppressedClientIds]) {
+      if (!broadcastCids.has(cid)) _suppressedClientIds.delete(cid)
+    }
+    const visiblePatches = rawPatches.filter(sp => !_suppressedClientIds.has(sp.client_id))
 
     // Microburst reconciliation (Slice 5c). Split broadcast hazards by
     // source_patch_id: 0 = standalone, nonzero = per-patch.
@@ -237,78 +295,69 @@ export const useWeatherV2Store = create((set, get) => ({
       else           mbByPatchId.set(pid, normalized)
     }
 
-    const freshPatches = rawPatches.map(sp => {
+    // Flush queued actions for any reserve that just assigned patch_id.
+    // Detect by matching each broadcast patch against a draft patch whose
+    // current patch_id is null.
+    for (const sp of visiblePatches) {
+      if (sp.patch_id == null) continue
+      const matched = matchDraftPatch(sp, state.draft.patches)
+      if (matched && matched.patch_id == null) {
+        _flushPendingForClient(matched.client_id, sp.patch_id)
+      }
+    }
+
+    const freshPatches = visiblePatches.map(sp => {
       const matched = matchDraftPatch(sp, state.draft.patches)
       const mbFromBroadcast = (sp.patch_id != null)
         ? (mbByPatchId.get(sp.patch_id) ?? null)
         : null
-      // Race-protect: a matched draft patch that was mid-add (patch_id=null)
-      // with a user-authored microburst. The first add_patch broadcast
-      // echoes the patch but set_patch_microburst hasn't fired yet (next
-      // Accept will pick it up per accept()'s skip-null-patch_id rule).
-      // Without this guard, wasClean=true clean path would wipe the
-      // authored microburst.
-      const mb = (matched?.microburst && !mbFromBroadcast && matched.patch_id == null)
-        ? matched.microburst
-        : mbFromBroadcast
       return matched
-        ? { ...sp, client_id: matched.client_id, microburst: mb }
+        ? { ...sp, client_id: matched.client_id, microburst: mbFromBroadcast }
         : { ...sp, microburst: mbFromBroadcast }
     })
-    // Pending-add: draft patches with patch_id=null that the broadcast
-    // doesn't yet echo back. Two common causes:
-    //  1. Accept sends `set_weather` + `add_patch` in sequence; the first
-    //     triggers a broadcast BEFORE add_patch is processed, so the wire
-    //     snapshot doesn't yet include the new patch.
-    //  2. Airport DB / SRTM lookup on the backend adds latency before the
-    //     patch enters _active_patches.
-    // Preserving them across the sync keeps the user's authored overrides
-    // and the stable client_id so the next broadcast (which DOES include
-    // the patch) can match and backfill patch_id instead of inserting a
-    // duplicate with a srv-prefixed client_id.
-    const matchedCids  = new Set(freshPatches.map(fp => fp.client_id))
-    const pendingAdds  = state.draft.patches.filter(
-      dp => dp.patch_id == null && !matchedCids.has(dp.client_id)
-    )
+
     const wasClean = draftEquals(state.draft, state.serverState)
     const nextServer = {
       ...state.serverState,
       global:  { ...state.serverState.global, ...freshGlobal },
-      // serverState keeps pending-adds too, so the optimistic-commit
-      // invariant (serverState is a superset of "what the server has seen")
-      // is preserved — otherwise the next accept() would re-emit add_patch
-      // and also mis-compute the `remove_patch` loop.
-      patches: [...freshPatches, ...pendingAdds],
+      patches: freshPatches,
       microbursts: { standalone: standaloneMb },
     }
     const nextDraft = wasClean
       ? {
           ...state.draft,
           global:  { ...state.draft.global, ...freshGlobal },
-          patches: [...freshPatches, ...pendingAdds],
+          patches: freshPatches,
           microbursts: { standalone: standaloneMb },
         }
       : {
           ...state.draft,
+          // Dirty draft: preserve user's override authoring per-patch but
+          // still accept server-authoritative fields (patch_id + ground
+          // elevation). Identity fields are committed on-change under the
+          // refactor, so draft identity is already in sync — the backfill
+          // path is only needed for the patch_id-null window.
           patches: state.draft.patches.map(dp => {
-            if (dp.patch_id != null) return dp
             const match = freshPatches.find(fp => fp.client_id === dp.client_id)
-            return (match && match.patch_id != null)
-              ? { ...dp, patch_id: match.patch_id, ground_elevation_m: match.ground_elevation_m }
-              : dp
+            if (!match) return dp
+            return {
+              ...dp,
+              patch_id:           match.patch_id,
+              ground_elevation_m: match.ground_elevation_m,
+            }
           }),
-          // Dirty path: leave draft.microbursts untouched. User may be
-          // authoring a microburst; overwriting from server would lose
-          // in-flight edits. Same tradeoff as draft.global in this branch.
         }
-    return { serverState: nextServer, draft: nextDraft }
-  }),
+    set({ serverState: nextServer, draft: nextDraft })
+  },
 
-  // Commits the draft to the backend. Fires set_weather for global scalars
-  // and one add_patch / update_patch / remove_patch per patch-diff entry.
-  // Patch diff is computed against serverState.patches (the last-known
-  // backend state). Optimistic commit of serverState=draft at the end; the
-  // next broadcast will reconcile any backend clamp / new patch_id.
+  // Commits the draft to the backend. Under 5c-refactor-I, patch identity
+  // and removals commit on their respective actions (addPatch fires
+  // reserve_patch; updatePatchIdentity fires update_patch_identity;
+  // removePatch fires remove_patch). Accept only fires:
+  //  - set_weather (global scalars, always)
+  //  - update_patch_overrides per patch with override-side diff
+  //  - set/clear_patch_microburst per patch with microburst diff
+  //  - set/clear_standalone_microburst on standalone diff
   accept: () => {
     const state = get()
     if (draftEquals(state.draft, state.serverState)) return
@@ -319,58 +368,35 @@ export const useWeatherV2Store = create((set, get) => ({
       return
     }
 
-    // 1. Global — fire every Accept for safety; publish_weather merges.
+    // 1. Global scalars.
     ws.send(JSON.stringify({
       type: 'set_weather',
       data: globalDraftToWire(state.draft.global, aircraftGroundM()),
     }))
 
-    // 2. Patches — diff draft vs serverState and emit per-delta messages.
+    // 2. Patches — override diffs only. Patches with patch_id==null are
+    //    still mid-reserve; their overrides (all disabled by default at
+    //    reserve time) will match serverState and not trigger a diff.
     const draftPatches  = state.draft.patches  ?? []
-    const serverPatches = state.serverState.patches ?? []
-    const serverById    = new Map(serverPatches.map(p => [p.patch_id, p]))
-    const draftIds      = new Set(
-      draftPatches.filter(p => p.patch_id != null).map(p => p.patch_id)
+    const serverById    = new Map(
+      (state.serverState.patches ?? [])
+        .filter(p => p.patch_id != null)
+        .map(p => [p.patch_id, p])
     )
-
-    // New (patch_id == null) → add_patch
-    for (const dp of draftPatches) {
-      if (dp.patch_id == null) {
-        ws.send(JSON.stringify({
-          type: 'add_patch',
-          data: patchDraftToAddWire(dp),
-        }))
-      }
-    }
-
-    // Existing — send update_patch only if something changed
     for (const dp of draftPatches) {
       if (dp.patch_id == null) continue
       const sp = serverById.get(dp.patch_id)
-      if (!sp) continue     // race: patch removed server-side
-      if (patchesDiffer(dp, sp)) {
+      if (!sp) continue
+      if (overridesDiffer(dp, sp)) {
         ws.send(JSON.stringify({
-          type: 'update_patch',
-          data: patchDraftToUpdateWire(dp),
+          type: 'update_patch_overrides',
+          data: patchOverridesToWire(dp),
         }))
       }
     }
 
-    // Removed — in server but not in draft → remove_patch
-    // Backend cascade-deletes any attached microburst, so we don't need
-    // a separate clear_patch_microburst for removed patches.
-    for (const sp of serverPatches) {
-      if (!draftIds.has(sp.patch_id)) {
-        ws.send(JSON.stringify({
-          type: 'remove_patch',
-          data: { patch_id: sp.patch_id },
-        }))
-      }
-    }
-
-    // 3. Microbursts — per-patch diff. Skip patches with patch_id==null
-    //    (just-added, no backend id yet); next Accept picks them up after
-    //    the add_patch broadcast backfills patch_id via syncFromBroadcast.
+    // 3. Per-patch microbursts. Skip patches with patch_id==null; once the
+    //    broadcast assigns the id, the next Accept picks them up.
     for (const dp of draftPatches) {
       if (dp.patch_id == null) continue
       const sp = serverById.get(dp.patch_id)
@@ -406,12 +432,14 @@ export const useWeatherV2Store = create((set, get) => ({
       }
     }
 
-    // Optimistic commit. The next weather_state / patches / microbursts
-    // broadcast will correct serverState via syncFromBroadcast (including
-    // new patch_ids and server-assigned hazard_ids).
+    // Optimistic commit. Next broadcast reconciles authoritative fields.
     set((s) => ({ serverState: structuredClone(s.draft) }))
   },
 
+  // Under 5c-refactor-I, identity changes commit on-change (fire WS + mirror
+  // to serverState), so discard has nothing at the wire level to revert —
+  // only local override authoring diffs between draft and serverState.
+  // draft := serverState is sufficient.
   discard: () => set((state) => ({ draft: structuredClone(state.serverState) })),
 
   // ── Layer selection (drives LayerPropertiesColumn content) ─────────────
@@ -526,59 +554,121 @@ export const useWeatherV2Store = create((set, get) => ({
     return applyLayers(state, client_id, 'wind_layers', next)
   }),
 
-  // ── Patch actions (Slice 5b-ii — draft only; Accept emits WS messages) ─
-  // All mutate draft.patches in-memory; no WS traffic until accept() fires.
-  // Per-field overrides (visibility/temperature/precipitation) are gated by
-  // explicit override_<field> booleans matching WeatherPatch.msg. Cloud /
-  // wind overrides use empty-array-as-inherit convention (no flag).
-  addPatch: (role, initial = {}) => set((state) => {
+  // ── Patch actions (Slice 5c-refactor-I — identity commits on change) ───
+  // addPatch fires reserve_patch and mirrors to BOTH draft and serverState
+  // so creation doesn't register as dirty (only subsequent override
+  // authoring makes the Accept button light up). All overrides start
+  // disabled — a reserved-but-unauthored patch is FDM-invisible (weather_
+  // solver falls through to global inside the radius).
+  //
+  // `initial` may include: icao, lat_deg, lon_deg, ground_elevation_m,
+  // radius_m, label. For airport patches, caller should pass the
+  // AirportSearch hit's {icao, arp_lat_deg, arp_lon_deg, elevation_m} to
+  // avoid a backend re-resolve. For custom patches, passing no
+  // ground_elevation_m triggers backend SRTM probe + follow-up
+  // update_patch_identity.
+  addPatch: (role, initial = {}) => {
+    const state = get()
+    const client_id  = `${role}-${Date.now()}`
     const patch_type = role === 'custom' ? 'custom' : 'airport'
+    const globalG = state.draft.global
+
     const newPatch = {
-      client_id: `${role}-${Date.now()}`,
-      patch_id:  null,
+      client_id,
+      patch_id:           null,   // backfilled from broadcast (~10-20ms)
       role,
       patch_type,
-      label:              initial.label || roleToLabel(role),
-      icao:               initial.icao || '',
+      label:              initial.label ?? roleToLabel(role),
+      icao:               initial.icao  ?? '',
       lat_deg:            initial.lat_deg ?? 0,
       lon_deg:            initial.lon_deg ?? 0,
       ground_elevation_m: initial.ground_elevation_m ?? 0,
       radius_m:           initial.radius_m ?? roleToDefaultRadiusM(role),
 
-      override_visibility:    false,
-      visibility_m:           state.draft.global.visibility_m,
-      override_temperature:   false,
-      temperature_c:          state.draft.global.temperature_c,
-      override_precipitation: false,
-      precipitation_rate:     state.draft.global.precipitation_rate,
-      precipitation_type:     state.draft.global.precipitation_type,
+      // All overrides disabled. Value fields seeded from current Global so
+      // the UI shows sensible starting numbers when the user flips a toggle.
+      override_visibility:    false, visibility_m:       globalG.visibility_m,
+      override_temperature:   false, temperature_c:      globalG.temperature_c,
+      override_precipitation: false, precipitation_rate: globalG.precipitation_rate,
+                                     precipitation_type: globalG.precipitation_type,
+      override_humidity:      false, humidity_pct:       globalG.humidity_pct,
+      override_pressure:      false, pressure_hpa:       globalG.pressure_hpa,
+      override_runway:        false, runway_friction:    globalG.runway_friction ?? 0,
 
       cloud_layers: [],
       wind_layers:  [],
-
-      override_humidity: false, humidity_pct:     state.draft.global.humidity_pct,
-      override_pressure: false, pressure_hpa:     state.draft.global.pressure_hpa,
-      override_runway:   false, runway_friction:  state.draft.global.runway_friction ?? 0,
-
-      // Slice 5c: per-patch microburst (null | hazard fields). Authoring
-      // UI gates on patch_id != null so the backend has a real id to
-      // attach the set_patch_microburst to.
-      microburst: null,
-
-      ...initial,
+      microburst:   null,
     }
-    return {
-      draft: { ...state.draft, patches: [...state.draft.patches, newPatch] },
+
+    // Mirror to both draft and serverState — creation is a commit, not
+    // a dirty edit. Active tab pivots to the new patch.
+    set(s => ({
+      draft:       { ...s.draft,       patches: [...s.draft.patches,       newPatch] },
+      serverState: { ...s.serverState, patches: [...s.serverState.patches, newPatch] },
+      activeTab:   client_id,
+    }))
+
+    // Fire reserve_patch. Omit ground_elevation_m if caller didn't pass
+    // one (signals backend to SRTM/SearchAirports-resolve + follow up).
+    const reserveData = {
+      client_id,
+      patch_type,
+      role,
+      label:    newPatch.label,
+      icao:     newPatch.icao,
+      lat_deg:  newPatch.lat_deg,
+      lon_deg:  newPatch.lon_deg,
+      radius_m: newPatch.radius_m,
     }
-  }),
+    if (initial.ground_elevation_m != null) {
+      reserveData.ground_elevation_m = initial.ground_elevation_m
+    }
+    _sendWs({ type: 'reserve_patch', data: reserveData })
+  },
 
-  removePatch: (client_id) => set((state) => ({
-    draft: {
-      ...state.draft,
-      patches: state.draft.patches.filter(p => p.client_id !== client_id),
-    },
-  })),
+  // Identity commit-on-change. Mirrors to both draft and serverState so
+  // the commit doesn't register as dirty. If patch_id hasn't been backfilled
+  // yet (reserve still in flight, very short window), queue the WS message
+  // for flush by syncFromBroadcast once patch_id arrives.
+  //
+  // Pass only the identity fields that changed. Other fields remain intact.
+  // When changing icao/lat/lon, omit ground_elevation_m to trigger backend
+  // re-resolve (SearchAirports for airport, SRTM for custom).
+  updatePatchIdentity: (client_id, identity) => {
+    const state = get()
+    const patch = state.draft.patches.find(p => p.client_id === client_id)
+    if (!patch) return
 
+    set(s => ({
+      draft: {
+        ...s.draft,
+        patches: s.draft.patches.map(p =>
+          p.client_id === client_id ? { ...p, ...identity } : p
+        ),
+      },
+      serverState: {
+        ...s.serverState,
+        patches: s.serverState.patches.map(p =>
+          p.client_id === client_id ? { ...p, ...identity } : p
+        ),
+      },
+    }))
+
+    const message = {
+      type: 'update_patch_identity',
+      data: { ...identity },  // patch_id injected on send
+    }
+    if (patch.patch_id != null) {
+      _sendWs({ ...message, data: { patch_id: patch.patch_id, ...identity } })
+    } else {
+      _pendingPatchActions.push({ client_id, message })
+    }
+  },
+
+  // Local-only patch mutator. Used by UI for in-progress authoring (radius
+  // slider drag, label typing, override value editing). Does NOT fire WS.
+  // For identity fields, callers commit on release/blur via updatePatchIdentity.
+  // For override fields, changes are batched to Accept (update_patch_overrides).
   updatePatch: (client_id, patch) => set((state) => ({
     draft: {
       ...state.draft,
@@ -587,6 +677,40 @@ export const useWeatherV2Store = create((set, get) => ({
       ),
     },
   })),
+
+  // Fires remove_patch immediately if patch_id is known; otherwise queues
+  // until syncFromBroadcast backfills patch_id. Hides the patch from both
+  // draft and serverState optimistically, and suppresses it from future
+  // broadcast reconciliation until the backend drops it.
+  removePatch: (client_id) => {
+    const state = get()
+    const patch = state.draft.patches.find(p => p.client_id === client_id)
+    if (!patch) return
+
+    set(s => ({
+      draft: {
+        ...s.draft,
+        patches: s.draft.patches.filter(p => p.client_id !== client_id),
+      },
+      serverState: {
+        ...s.serverState,
+        patches: s.serverState.patches.filter(p => p.client_id !== client_id),
+      },
+      activeTab: s.activeTab === client_id ? 'global' : s.activeTab,
+    }))
+
+    _suppressedClientIds.add(client_id)
+
+    if (patch.patch_id != null) {
+      _sendWs({ type: 'remove_patch', data: { patch_id: patch.patch_id } })
+    } else {
+      _pendingPatchActions.push({
+        client_id,
+        message: { type: 'remove_patch', data: {} },
+        isRemoval: true,
+      })
+    }
+  },
 
   toggleOverride: (client_id, field, enabled) => set((state) => ({
     draft: {
