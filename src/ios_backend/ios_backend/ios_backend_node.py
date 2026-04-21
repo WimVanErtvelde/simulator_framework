@@ -225,7 +225,6 @@ class IosBackendNode(Node):
         self._active_microbursts = []   # list of MicroburstHazard-like dicts
         self._mb_next_id = 1
         self._last_weather_data = {}    # cache last set_weather data for republish
-        self._weather_station = {}      # {icao, elevation_m, lat_deg, lon_deg}
 
         # WeatherPatch lifecycle (Slice 4). Patches are dicts, patch_id is
         # monotonic uint16 owned by this process, no reuse within a session.
@@ -927,10 +926,13 @@ class IosBackendNode(Node):
         msg = WeatherState()
         msg.header.stamp = self.get_clock().now().to_msg()
 
-        # Weather station reference
-        station = self._weather_station
-        msg.station_icao = station.get('icao', '')
-        msg.station_elevation_m = float(station.get('elevation_m', 0.0))
+        # Station fields preserved as empty defaults so downstream consumers
+        # (IOS display only — weather_solver / cigi_bridge / plugin don't
+        # read them) don't need a schema change. The V1 weather_station
+        # picker was retired in Slice 5d — Global weather uses aircraft
+        # ground, patches use their own ground_elevation_m.
+        msg.station_icao = ''
+        msg.station_elevation_m = 0.0
 
         # Global atmosphere (UI sends °C/hPa, convert to K/Pa)
         msg.temperature_sl_k = float(source.get('temperature_sl_k', 288.15))
@@ -938,39 +940,17 @@ class IosBackendNode(Node):
         msg.visibility_m = float(source.get('visibility_m', 9999.0))
         msg.humidity_pct = int(source.get('humidity_pct', 50))
 
-        # Legacy V1 (WX) flat-triple wind fields. Always read — even on the
-        # V2 path — because `turb_sev` feeds the turbulence_model default
-        # further down. Prior to this, V2 Accept NameError'd on turb_sev.
-        wind_dir = source.get('wind_direction_deg')
-        wind_spd = source.get('wind_speed_ms')
-        turb_sev = source.get('turbulence_severity')
-
-        # Wind layers. V2 Accept path sends a `wind_layers` list with full
-        # per-layer fields. V1 (WX) Accept uses the flat triple above to
-        # build a single surface wind layer.
-        wind_list = source.get('wind_layers')
-        if isinstance(wind_list, list):
-            for wl_data in wind_list:
-                wl = WeatherWindLayer()
-                wl.altitude_msl_m      = float(wl_data.get('altitude_msl_m', 0.0))
-                wl.wind_speed_ms       = float(wl_data.get('wind_speed_ms', 0.0))
-                wl.wind_direction_deg  = float(wl_data.get('wind_direction_deg', 0.0))
-                wl.vertical_wind_ms    = float(wl_data.get('vertical_wind_ms', 0.0))
-                wl.gust_speed_ms       = float(wl_data.get('gust_speed_ms', 0.0))
-                wl.shear_direction_deg = float(wl_data.get('shear_direction_deg', 0.0))
-                wl.shear_speed_ms      = float(wl_data.get('shear_speed_ms', 0.0))
-                wl.turbulence_severity = float(wl_data.get('turbulence_severity', 0.0))
-                msg.wind_layers.append(wl)
-        elif wind_dir is not None or wind_spd is not None or turb_sev is not None:
+        # Wind layers — V2 is the sole sender, always a list.
+        for wl_data in source.get('wind_layers', []):
             wl = WeatherWindLayer()
-            wl.altitude_msl_m      = 0.0  # surface
-            wl.wind_speed_ms       = float(wind_spd or 0.0)
-            wl.wind_direction_deg  = float(wind_dir or 0.0)
-            wl.vertical_wind_ms    = 0.0
-            wl.gust_speed_ms       = float(source.get('gust_speed_ms', 0.0))
-            wl.shear_direction_deg = 0.0
-            wl.shear_speed_ms      = 0.0
-            wl.turbulence_severity = float(turb_sev or 0.0)
+            wl.altitude_msl_m      = float(wl_data.get('altitude_msl_m', 0.0))
+            wl.wind_speed_ms       = float(wl_data.get('wind_speed_ms', 0.0))
+            wl.wind_direction_deg  = float(wl_data.get('wind_direction_deg', 0.0))
+            wl.vertical_wind_ms    = float(wl_data.get('vertical_wind_ms', 0.0))
+            wl.gust_speed_ms       = float(wl_data.get('gust_speed_ms', 0.0))
+            wl.shear_direction_deg = float(wl_data.get('shear_direction_deg', 0.0))
+            wl.shear_speed_ms      = float(wl_data.get('shear_speed_ms', 0.0))
+            wl.turbulence_severity = float(wl_data.get('turbulence_severity', 0.0))
             msg.wind_layers.append(wl)
 
         # Cloud layers — wire carries base_elevation_m directly (MSL).
@@ -1081,22 +1061,19 @@ class IosBackendNode(Node):
         self._broadcast_weather_state()
 
     def activate_microburst(self, data: dict):
-        """Compute lat/lon from bearing/distance relative to station (or aircraft), add to active list."""
+        """Compute lat/lon from bearing/distance relative to aircraft position."""
         import math
         with self._lock:
             fms = self._latest.get('flight_model_state', {})
             sim = self._latest.get('sim_state', {})
 
-        # Use station position as reference when set, aircraft as fallback
-        station = self._weather_station
-        if station.get('icao'):
-            ref_lat = station.get('lat_deg', 0.0)
-            ref_lon = station.get('lon_deg', 0.0)
-            ref_label = station['icao']
-        else:
-            ref_lat = fms.get('lat', 0.0)
-            ref_lon = fms.get('lon', 0.0)
-            ref_label = 'aircraft'
+        # Reference point is always the aircraft now that the weather_station
+        # picker is retired (Slice 5d). Slice 5c will rework microburst
+        # authoring into the patch-radius model — at which point the IOS
+        # can author microbursts by absolute lat/lon via the map.
+        ref_lat = fms.get('lat', 0.0)
+        ref_lon = fms.get('lon', 0.0)
+        ref_label = 'aircraft'
 
         bearing_deg = float(data.get('bearing_deg', 0))
         distance_nm = float(data.get('distance_nm', 3))
@@ -1224,8 +1201,10 @@ class IosBackendNode(Node):
         data = {
             'type': 'weather_state',
             'data': {
-                'station_icao': self._weather_station.get('icao', ''),
-                'station_elevation_m': float(self._weather_station.get('elevation_m', 0.0)),
+                # Station picker retired in Slice 5d; fields preserved
+                # as empty defaults for schema compatibility only.
+                'station_icao': '',
+                'station_elevation_m': 0.0,
                 'visibility_m': float(source.get('visibility_m', 9999.0)),
                 'temperature_sl_k': float(source.get('temperature_sl_k', 288.15)),
                 'pressure_sl_pa': float(source.get('pressure_sl_pa', 101325.0)),
@@ -1239,64 +1218,6 @@ class IosBackendNode(Node):
         }
         with self._lock:
             self._latest['weather_state'] = data
-
-    def add_cloud_layer(self, cloud: dict):
-        """Append one cloud layer to the cached weather and republish (cap at 3)."""
-        layers = self._last_weather_data.setdefault('cloud_layers', [])
-        if len(layers) >= 3:
-            self.get_logger().warn('Cloud layer add rejected: max 3 reached')
-            return
-        layers.append(cloud)
-        self.get_logger().info(
-            f'Cloud layer added: type={cloud.get("cloud_type")} '
-            f'base_agl_ft={cloud.get("base_agl_ft")} '
-            f'cov={cloud.get("coverage_pct")}% (total={len(layers)})')
-        self.publish_weather()
-
-    def remove_cloud_layer(self, index: int):
-        """Remove one cloud layer from the cached weather and republish."""
-        layers = self._last_weather_data.get('cloud_layers', []) if self._last_weather_data else []
-        if 0 <= index < len(layers):
-            removed = layers.pop(index)
-            self.get_logger().info(f'Cloud layer #{index} removed (type={removed.get("cloud_type")})')
-            self.publish_weather()
-
-    def clear_cloud_layers(self):
-        """Remove all cloud layers from the cached weather and republish."""
-        if self._last_weather_data:
-            self._last_weather_data['cloud_layers'] = []
-            self.get_logger().info('All cloud layers cleared')
-            self.publish_weather()
-
-    def set_runway_condition(self, index: int):
-        """Update runway_friction (0-15) from the RUNWAY CONDITION picker and republish."""
-        self.get_logger().info(f'[runway] set_runway_condition index={index}')
-        try:
-            clamped = max(0, min(15, int(index)))
-        except (TypeError, ValueError):
-            self.get_logger().warn(f'set_runway_condition: bad index {index!r}, ignored')
-            return
-        self._last_weather_data['runway_friction'] = clamped
-        self.publish_weather()
-
-    def set_weather_station(self, station: dict):
-        """Store weather station and broadcast to clients."""
-        self._weather_station = station
-        data = {
-            'type': 'weather_station',
-            'icao': station.get('icao', ''),
-            'elevation_m': station.get('elevation_m', 0.0),
-            'lat_deg': station.get('lat_deg', 0.0),
-            'lon_deg': station.get('lon_deg', 0.0),
-        }
-        with self._lock:
-            self._latest['weather_station'] = data
-        self.get_logger().info(
-            f'Weather station set: {station.get("icao", "")} '
-            f'elev={station.get("elevation_m", 0):.1f}m')
-        # Republish weather with updated station
-        if self._last_weather_data:
-            self.publish_weather()
 
     # ── WeatherPatch lifecycle (Slice 4) ─────────────────────────────────────
     # Sync methods: receive pre-resolved ground_elevation_m from async WS
@@ -2090,46 +2011,6 @@ async def _handle_search_airports(ws, query, max_results):
         await ws.send_text(json.dumps({'type': 'airport_search_results', 'airports': []}))
 
 
-async def _handle_set_weather_station(ws, icao):
-    """Resolve airport ICAO via SearchAirports, set as weather station."""
-    if not ros_node or not icao:
-        await ws.send_text(json.dumps({'type': 'weather_station_error', 'error': 'No ICAO provided'}))
-        return
-    try:
-        cli = ros_node._search_airports_cli
-        if not cli.service_is_ready():
-            ros_node.get_logger().warn('[set_weather_station] SearchAirports service not available, using elevation 0')
-            ros_node.set_weather_station({'icao': icao.upper(), 'elevation_m': 0.0, 'lat_deg': 0.0, 'lon_deg': 0.0})
-            return
-        req = SearchAirports.Request()
-        req.query = icao.upper()
-        req.max_results = 1
-        future = cli.call_async(req)
-        deadline = time.time() + 3.0
-        while not future.done() and time.time() < deadline:
-            await asyncio.sleep(0.05)
-        if not future.done():
-            ros_node.get_logger().warn(f'[set_weather_station] SearchAirports timeout for {icao}')
-            ros_node.set_weather_station({'icao': icao.upper(), 'elevation_m': 0.0, 'lat_deg': 0.0, 'lon_deg': 0.0})
-            return
-        result = future.result()
-        if result and result.airports:
-            apt = result.airports[0]
-            ros_node.set_weather_station({
-                'icao': apt.icao,
-                'elevation_m': apt.elevation_m,
-                'lat_deg': apt.arp_lat_deg,
-                'lon_deg': apt.arp_lon_deg,
-            })
-        else:
-            ros_node.get_logger().warn(f'[set_weather_station] Airport not found: {icao}')
-            await ws.send_text(json.dumps({'type': 'weather_station_error', 'error': f'Airport not found: {icao}'}))
-    except Exception as e:
-        if ros_node:
-            ros_node.get_logger().warn(f'[set_weather_station] error: {e}')
-        await ws.send_text(json.dumps({'type': 'weather_station_error', 'error': str(e)}))
-
-
 async def _resolve_ground_elevation_async(data: dict):
     """Returns (ground_elevation_m, lat_override_or_None, lon_override_or_None).
 
@@ -2210,8 +2091,10 @@ async def _resolve_ground_elevation_async(data: dict):
 
 
 async def _handle_add_patch(websocket, data: dict):
-    """Async WS handler: validate, resolve ground elevation, then commit
-    via sync ros_node.add_patch(). Mirrors _handle_set_weather_station pattern.
+    """Async WS handler: validate, resolve ground elevation (SearchAirports
+    for airport patches / SRTM probe for custom), then commit via sync
+    ros_node.add_patch(). The async/sync split keeps service calls out of
+    the ros_node thread.
     """
     if ros_node is None:
         return
@@ -2599,24 +2482,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 elif msg.get('type') == 'clear_all_microbursts' and ros_node:
                     ros_node.clear_all_microbursts()
-
-                elif msg.get('type') == 'add_cloud_layer' and ros_node:
-                    ros_node.add_cloud_layer(msg.get('data', {}))
-
-                elif msg.get('type') == 'remove_cloud_layer' and ros_node:
-                    idx = msg.get('data', {}).get('index', -1)
-                    ros_node.remove_cloud_layer(int(idx))
-
-                elif msg.get('type') == 'clear_cloud_layers' and ros_node:
-                    ros_node.clear_cloud_layers()
-
-                elif msg.get('type') == 'set_runway_condition' and ros_node:
-                    ros_node.set_runway_condition(
-                        msg.get('data', {}).get('index', 0))
-
-                elif msg.get('type') == 'set_weather_station' and ros_node:
-                    asyncio.create_task(
-                        _handle_set_weather_station(websocket, msg.get('data', {}).get('icao', '')))
 
                 elif msg.get('type') == 'add_patch' and ros_node:
                     asyncio.create_task(
