@@ -31,3 +31,10 @@ float64 wind_down_ms             # NED down component (m/s, + = downdraft)
 # Moisture and turbulence at aircraft position
 bool    visible_moisture          # true = in cloud or precipitation
 float32 turbulence_intensity      # 0.0-1.0 at aircraft position
+
+# Effective runway friction at aircraft position
+# Patch-aware: equals global WeatherState.runway_friction, unless aircraft is
+# inside a patch with override_runway=true, in which case it's the patch value.
+# Consumed by flight_model_adapter_node → JSBSimSurfaceWriteback. The "apply only
+# on ground" gate lives in the writeback (on_ground state), not here.
+uint8   effective_runway_friction

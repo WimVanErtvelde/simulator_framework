@@ -146,6 +146,7 @@ private:
     msg.wind_down_ms        = r.wind_down_ms;
     msg.visible_moisture     = r.visible_moisture;
     msg.turbulence_intensity = r.turbulence_intensity;
+    msg.effective_runway_friction = r.effective_runway_friction;
 
     atmo_pub_->publish(msg);
   }

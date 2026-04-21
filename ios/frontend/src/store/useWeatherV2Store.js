@@ -71,9 +71,10 @@ function roleToDefaultRadiusM(role) {
 }
 
 // Normalize a patch to the subset of fields that travel over the wire.
-// Used to decide whether to emit update_patch. Draft-only deferred fields
-// (humidity/pressure/runway overrides) are intentionally excluded — the
-// msg doesn't carry them, so changes don't warrant an update round-trip.
+// Used to decide whether to emit update_patch. Every wire field must be
+// covered here — if a field is missing, its changes won't trigger an
+// update_patch, the optimistic commit overwrites serverState locally, and
+// the next broadcast silently clobbers the draft.
 function normalizePatchForDiff(p) {
   return JSON.stringify({
     label: p.label, icao: p.icao,
@@ -87,6 +88,12 @@ function normalizePatchForDiff(p) {
     override_precipitation: !!p.override_precipitation,
     precipitation_rate:     p.precipitation_rate,
     precipitation_type:     p.precipitation_type,
+    override_humidity:      !!p.override_humidity,
+    humidity_pct:           p.humidity_pct,
+    override_pressure:      !!p.override_pressure,
+    pressure_hpa:           p.pressure_hpa,
+    override_runway:        !!p.override_runway,
+    runway_friction:        p.runway_friction,
     cloud_layers: p.cloud_layers || [],
     wind_layers:  p.wind_layers  || [],
   })
@@ -193,19 +200,47 @@ export const useWeatherV2Store = create((set, get) => ({
       const matched = matchDraftPatch(sp, state.draft.patches)
       return matched ? { ...sp, client_id: matched.client_id } : sp
     })
+    // Pending-add: draft patches with patch_id=null that the broadcast
+    // doesn't yet echo back. Two common causes:
+    //  1. Accept sends `set_weather` + `add_patch` in sequence; the first
+    //     triggers a broadcast BEFORE add_patch is processed, so the wire
+    //     snapshot doesn't yet include the new patch.
+    //  2. Airport DB / SRTM lookup on the backend adds latency before the
+    //     patch enters _active_patches.
+    // Preserving them across the sync keeps the user's authored overrides
+    // and the stable client_id so the next broadcast (which DOES include
+    // the patch) can match and backfill patch_id instead of inserting a
+    // duplicate with a srv-prefixed client_id.
+    const matchedCids  = new Set(freshPatches.map(fp => fp.client_id))
+    const pendingAdds  = state.draft.patches.filter(
+      dp => dp.patch_id == null && !matchedCids.has(dp.client_id)
+    )
     const wasClean = draftEquals(state.draft, state.serverState)
     const nextServer = {
       ...state.serverState,
       global:  { ...state.serverState.global, ...freshGlobal },
-      patches: freshPatches,
+      // serverState keeps pending-adds too, so the optimistic-commit
+      // invariant (serverState is a superset of "what the server has seen")
+      // is preserved — otherwise the next accept() would re-emit add_patch
+      // and also mis-compute the `remove_patch` loop.
+      patches: [...freshPatches, ...pendingAdds],
     }
     const nextDraft = wasClean
       ? {
           ...state.draft,
           global:  { ...state.draft.global, ...freshGlobal },
-          patches: freshPatches,
+          patches: [...freshPatches, ...pendingAdds],
         }
-      : state.draft
+      : {
+          ...state.draft,
+          patches: state.draft.patches.map(dp => {
+            if (dp.patch_id != null) return dp
+            const match = freshPatches.find(fp => fp.client_id === dp.client_id)
+            return (match && match.patch_id != null)
+              ? { ...dp, patch_id: match.patch_id, ground_elevation_m: match.ground_elevation_m }
+              : dp
+          }),
+        }
     return { serverState: nextServer, draft: nextDraft }
   }),
 
@@ -420,7 +455,6 @@ export const useWeatherV2Store = create((set, get) => ({
       cloud_layers: [],
       wind_layers:  [],
 
-      // Draft-only / deferred to 5b-iv (not serialized to wire yet)
       override_humidity: false, humidity_pct:     state.draft.global.humidity_pct,
       override_pressure: false, pressure_hpa:     state.draft.global.pressure_hpa,
       override_runway:   false, runway_friction:  state.draft.global.runway_friction ?? 0,

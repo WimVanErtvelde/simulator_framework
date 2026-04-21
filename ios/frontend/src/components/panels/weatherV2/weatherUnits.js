@@ -40,13 +40,15 @@ const M_TO_FT = 1 / FT_TO_M
 // Backend no longer maintains a weather_station reference for AGL math.
 export function globalDraftToWire(global, aircraftGroundM = 0) {
   return {
-    temperature_sl_k:   global.temperature_c + K_OFFSET,
-    pressure_sl_pa:     global.pressure_hpa * HPA_TO_PA,
-    visibility_m:       global.visibility_m,
-    humidity_pct:       global.humidity_pct,
-    precipitation_rate: global.precipitation_rate,
-    precipitation_type: global.precipitation_type,
-    runway_friction:    global.runway_friction ?? 0,
+    // Every scalar coerces through ?? so a null draft field never reaches
+    // the wire — backend int(data.get(k, default)) crashes on explicit null.
+    temperature_sl_k:   (global.temperature_c ?? 15.0) + K_OFFSET,
+    pressure_sl_pa:     (global.pressure_hpa ?? 1013.25) * HPA_TO_PA,
+    visibility_m:       global.visibility_m       ?? 160000,
+    humidity_pct:       global.humidity_pct       ?? 50,
+    precipitation_rate: global.precipitation_rate ?? 0.0,
+    precipitation_type: global.precipitation_type ?? 0,
+    runway_friction:    global.runway_friction    ?? 0,
     cloud_layers: (global.cloud_layers ?? []).map(cl => ({
       cloud_type:   cl.cloud_type,
       // Resolve AGL (draft) → MSL (wire) using aircraft ground snapshot.
@@ -102,32 +104,40 @@ export function activeWeatherToGlobalDraft(active, aircraftGroundM = 0) {
   }
 }
 
-// ── Patch wire builders (Slice 5b-ii) ─────────────────────────────────────
+// ── Patch wire builders (Slice 5b-ii / 5b-iv) ─────────────────────────────
 // Accept emits per-patch WS messages (add_patch / update_patch). Wire
 // shape mirrors WeatherPatch.msg's per-field override model:
 //   override_<field> boolean + <field> value, always present together.
 // cloud_layers / wind_layers use empty-array-as-inherit convention.
-//
-// DEFERRED to Slice 5b-iv: humidity, pressure, runway_friction overrides
-// — msg doesn't have fields for them yet. Draft carries them for forward
-// compat; wire drops them here.
 
 function applyOverridesToWire(p, data) {
+  // Every scalar coerces through ?? so a null draft field never reaches
+  // the wire — backend int(data.get(k, default)) crashes on explicit null.
   data.override_visibility = !!p.override_visibility
-  data.visibility_m        = p.visibility_m
+  data.visibility_m        = p.visibility_m ?? 9999
 
   data.override_temperature = !!p.override_temperature
-  data.temperature_k        = p.temperature_c + K_OFFSET
+  data.temperature_k        = (p.temperature_c ?? 15.0) + K_OFFSET
 
   data.override_precipitation = !!p.override_precipitation
-  data.precipitation_rate     = p.precipitation_rate
-  data.precipitation_type     = p.precipitation_type
+  data.precipitation_rate     = p.precipitation_rate ?? 0.0
+  data.precipitation_type     = p.precipitation_type ?? 0
+
+  data.override_humidity = !!p.override_humidity
+  data.humidity_pct      = p.humidity_pct ?? 50
+
+  data.override_pressure = !!p.override_pressure
+  data.pressure_sl_pa    = (p.pressure_hpa ?? 1013.25) * HPA_TO_PA
+
+  data.override_runway   = !!p.override_runway
+  data.runway_friction   = p.runway_friction ?? 0
 
   // AGL→MSL using this patch's own ground elevation (from airport DB
-  // when patch is an airport; SRTM probe for custom). Fixes pre-existing
-  // shape mismatch where patch cloud_layers serialized base_agl_ft but
-  // backend expected base_elevation_m (dropped to 0 MSL).
-  const patchGroundM = p.ground_elevation_m ?? 0
+  // when patch is an airport; SRTM probe for custom). NaN-safe coalesce:
+  // SRTM probe failures return NaN on the wire, and `??` does NOT coalesce
+  // NaN — it only handles null/undefined. Without this guard, NaN would
+  // propagate into cloud base_elevation_m and poison weather_solver.
+  const patchGroundM = Number.isFinite(p.ground_elevation_m) ? p.ground_elevation_m : 0
   data.cloud_layers = (p.cloud_layers || []).map(cl => ({
     cloud_type:   cl.cloud_type,
     base_elevation_m: (cl.base_agl_ft ?? 0) * FT_TO_M + patchGroundM,
@@ -182,6 +192,10 @@ export function patchDraftToUpdateWire(p) {
 // (airport→departure, custom→custom). Instructor can rename in UI.
 export function patchesFromBroadcast(raw) {
   const list = Array.isArray(raw) ? raw : []
+  // NaN-safe coalesce for ground_elevation_m: backend returns NaN on SRTM
+  // probe failure / timeout / service-not-ready. `??` only handles
+  // null/undefined, so guard explicitly.
+  const finiteOr = (v, d) => (Number.isFinite(v) ? v : d)
   return list.map(rp => ({
     client_id:          `srv-${rp.patch_id}`,
     patch_id:           rp.patch_id,
@@ -191,7 +205,7 @@ export function patchesFromBroadcast(raw) {
     icao:               rp.icao  || '',
     lat_deg:            rp.lat_deg ?? 0,
     lon_deg:            rp.lon_deg ?? 0,
-    ground_elevation_m: rp.ground_elevation_m ?? 0,
+    ground_elevation_m: finiteOr(rp.ground_elevation_m, 0),
     radius_m:           rp.radius_m ?? 0,
 
     override_visibility:    !!rp.override_visibility,
@@ -201,6 +215,12 @@ export function patchesFromBroadcast(raw) {
     override_precipitation: !!rp.override_precipitation,
     precipitation_rate:     rp.precipitation_rate ?? 0,
     precipitation_type:     rp.precipitation_type ?? 0,
+    override_humidity:      !!rp.override_humidity,
+    humidity_pct:           rp.humidity_pct ?? 50,
+    override_pressure:      !!rp.override_pressure,
+    pressure_hpa:           (rp.pressure_sl_pa ?? 101325) / HPA_TO_PA,
+    override_runway:        !!rp.override_runway,
+    runway_friction:        rp.runway_friction ?? 0,
 
     // MSL→AGL using the patch's own ground elevation, symmetric with
     // applyOverridesToWire. Patches are self-referential for AGL — the
@@ -212,11 +232,6 @@ export function patchesFromBroadcast(raw) {
       coverage_pct: cl.coverage_pct,
     })),
     wind_layers:  rp.wind_layers  || [],
-
-    // Deferred (5b-iv) — broadcast doesn't carry these yet
-    override_humidity: false, humidity_pct: 50,
-    override_pressure: false, pressure_hpa: 1013.25,
-    override_runway:   false, runway_friction: 0,
   }))
 }
 

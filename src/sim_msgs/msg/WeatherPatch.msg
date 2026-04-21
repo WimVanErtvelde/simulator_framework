@@ -57,3 +57,17 @@ bool    override_precipitation
 float32 precipitation_rate         # 0.0-1.0 intensity; applied when override_precipitation=true
 uint8   precipitation_type         # 0=None, 1=Rain, 2=Snow, 3=Sleet
                                    # Applied when override_precipitation=true
+
+bool    override_humidity
+uint8   humidity_pct               # 0-100; applied when override_humidity=true
+                                   # Wire-only today (no FDM consumer); reserved for
+                                   # future cockpit hygrometer + CIGI regional moisture
+
+bool    override_pressure
+float32 pressure_sl_pa             # 80000-110000 Pa; applied when override_pressure=true
+                                   # Altimeter setting only (qnh_pa) — does NOT shift
+                                   # P_isa or density (field QNH exercise, not density physics)
+
+bool    override_runway
+uint8   runway_friction            # 0-15 category×severity index; applied when
+                                   # override_runway=true AND aircraft on ground inside patch

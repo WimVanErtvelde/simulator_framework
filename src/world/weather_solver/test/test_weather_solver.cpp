@@ -419,3 +419,93 @@ TEST(WeatherSolver, PatchOverrideFlagOffDoesNotApply)
     auto r = s.compute(0.02, 0.0, 0.0, 60.0, 50.9, 4.5, 0.0);
     EXPECT_NEAR(r.oat_k, 288.15, 0.5);  // global wins
 }
+
+// ── Patch pressure/runway overrides (Slice 5b-iv) ──────────────────────────
+
+TEST(WeatherSolver, PatchPressureOverrideWhenInside)
+{
+    WeatherSolver s;
+    s.configure({});
+
+    sim_msgs::msg::WeatherState w;
+    w.temperature_sl_k = 288.15f;
+    w.pressure_sl_pa   = 101325.0f;
+    w.turbulence_model = 0;
+
+    sim_msgs::msg::WeatherPatch p;
+    p.patch_id = 1;
+    p.lat_deg  = 50.9014;
+    p.lon_deg  = 4.4844;
+    p.radius_m = 10000.0f;
+    p.override_pressure = true;
+    p.pressure_sl_pa    = 99000.0f;  // ~990 hPa low pressure
+    w.patches.push_back(p);
+
+    s.set_weather(w);
+
+    // Inside patch — altimeter-only shift
+    auto r_inside = s.compute(0.02, 0.0, 0.0, 60.0, 50.9014, 4.4844, 0.0);
+    EXPECT_NEAR(r_inside.qnh_pa, 99000.0, 10.0);
+    // Actual pressure/density untouched (field QNH is altimeter setting,
+    // not density physics).
+    EXPECT_NEAR(r_inside.pressure_pa, 101325.0, 1.0);
+    EXPECT_NEAR(r_inside.density_kgm3, 1.225, 0.001);
+
+    // Outside patch — global QNH wins
+    auto r_outside = s.compute(0.02, 0.0, 0.0, 60.0, 51.4, 4.4844, 0.0);
+    EXPECT_NEAR(r_outside.qnh_pa, 101325.0, 10.0);
+}
+
+TEST(WeatherSolver, PatchPressureOverrideFlagOffIgnored)
+{
+    WeatherSolver s;
+    s.configure({});
+
+    sim_msgs::msg::WeatherState w;
+    w.temperature_sl_k = 288.15f;
+    w.pressure_sl_pa   = 101325.0f;
+
+    sim_msgs::msg::WeatherPatch p;
+    p.patch_id = 1;
+    p.lat_deg  = 50.9;
+    p.lon_deg  = 4.5;
+    p.radius_m = 10000.0f;
+    p.override_pressure = false;
+    p.pressure_sl_pa    = 99000.0f;  // populated but ignored
+    w.patches.push_back(p);
+
+    s.set_weather(w);
+
+    auto r = s.compute(0.02, 0.0, 0.0, 60.0, 50.9, 4.5, 0.0);
+    EXPECT_NEAR(r.qnh_pa, 101325.0, 10.0);  // global wins
+}
+
+TEST(WeatherSolver, PatchRunwayOverrideWhenInside)
+{
+    WeatherSolver s;
+    s.configure({});
+
+    sim_msgs::msg::WeatherState w;
+    w.temperature_sl_k = 288.15f;
+    w.pressure_sl_pa   = 101325.0f;
+    w.runway_friction  = 0;  // global DRY
+
+    sim_msgs::msg::WeatherPatch p;
+    p.patch_id = 1;
+    p.lat_deg  = 50.9;
+    p.lon_deg  = 4.5;
+    p.radius_m = 10000.0f;
+    p.override_runway    = true;
+    p.runway_friction    = 12;  // ICE+MEDIUM (example index)
+    w.patches.push_back(p);
+
+    s.set_weather(w);
+
+    // Inside patch — patch friction wins
+    auto r_inside = s.compute(0.02, 0.0, 0.0, 60.0, 50.9, 4.5, 0.0);
+    EXPECT_EQ(r_inside.effective_runway_friction, 12);
+
+    // Outside — global wins
+    auto r_outside = s.compute(0.02, 0.0, 0.0, 60.0, 51.4, 4.5, 0.0);
+    EXPECT_EQ(r_outside.effective_runway_friction, 0);
+}

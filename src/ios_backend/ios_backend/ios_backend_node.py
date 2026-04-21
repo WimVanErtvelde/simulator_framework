@@ -74,6 +74,7 @@ WEATHER_BOUNDS = {
     # Global atmosphere
     'temperature_c':       (-100.0,     60.0),
     'pressure_hpa':        ( 880.0,   1075.0),
+    'pressure_sl_pa':      (80000.0, 110000.0),
     'visibility_m':        (   0.0, 160000.0),
     'humidity_pct':        (   0,       100),
 
@@ -195,6 +196,14 @@ def _validate_patch(data: dict) -> dict:
     if data.get('override_precipitation'):
         _validate_in_range('precip_rate', data.get('precipitation_rate'), 'precipitation_rate')
         _validate_in_range('precip_type', data.get('precipitation_type'), 'precipitation_type')
+    if data.get('override_humidity'):
+        _validate_in_range('humidity_pct', data.get('humidity_pct'), 'humidity_pct')
+    if data.get('override_pressure'):
+        _validate_in_range('pressure_sl_pa', data.get('pressure_sl_pa'), 'pressure_sl_pa')
+    if data.get('override_runway'):
+        rf = data.get('runway_friction')
+        if rf is None or not (0 <= int(rf) <= 15):
+            raise ValueError(f"runway_friction out of range [0, 15]: {rf}")
 
     return data
 
@@ -1050,6 +1059,12 @@ class IosBackendNode(Node):
             wp.override_precipitation = bool(p['override_precipitation'])
             wp.precipitation_rate     = float(p['precipitation_rate'])
             wp.precipitation_type     = int(p['precipitation_type'])
+            wp.override_humidity      = bool(p.get('override_humidity', False))
+            wp.humidity_pct           = int(p.get('humidity_pct', 50))
+            wp.override_pressure      = bool(p.get('override_pressure', False))
+            wp.pressure_sl_pa         = float(p.get('pressure_sl_pa', 101325.0))
+            wp.override_runway        = bool(p.get('override_runway', False))
+            wp.runway_friction        = int(p.get('runway_friction', 0))
             msg.patches.append(wp)
 
         self._weather_pub.publish(msg)
@@ -1257,6 +1272,12 @@ class IosBackendNode(Node):
             'override_precipitation':bool(data.get('override_precipitation', False)),
             'precipitation_rate':    float(data.get('precipitation_rate', 0.0)),
             'precipitation_type':    int(data.get('precipitation_type', 0)),
+            'override_humidity':     bool(data.get('override_humidity', False)),
+            'humidity_pct':          int(data.get('humidity_pct', 50)),
+            'override_pressure':     bool(data.get('override_pressure', False)),
+            'pressure_sl_pa':        float(data.get('pressure_sl_pa', 101325.0)),
+            'override_runway':       bool(data.get('override_runway', False)),
+            'runway_friction':       int(data.get('runway_friction', 0)),
         }
         self._next_patch_id += 1
         self._active_patches.append(patch)
@@ -1343,6 +1364,12 @@ class IosBackendNode(Node):
                     'override_precipitation':p['override_precipitation'],
                     'precipitation_rate':    p['precipitation_rate'],
                     'precipitation_type':    p['precipitation_type'],
+                    'override_humidity':     p['override_humidity'],
+                    'humidity_pct':          p['humidity_pct'],
+                    'override_pressure':     p['override_pressure'],
+                    'pressure_sl_pa':        p['pressure_sl_pa'],
+                    'override_runway':       p['override_runway'],
+                    'runway_friction':       p['runway_friction'],
                 }
                 for p in self._active_patches
             ],

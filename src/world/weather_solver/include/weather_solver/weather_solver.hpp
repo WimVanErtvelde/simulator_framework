@@ -41,6 +41,9 @@ public:
     // Metadata
     bool  visible_moisture     = false;
     float turbulence_intensity = 0.0f;
+    // Patch-aware runway friction at aircraft position. Equals global
+    // WeatherState.runway_friction unless inside a patch with override_runway.
+    uint8_t effective_runway_friction = 0;
   };
 
   void configure(const Config & cfg);

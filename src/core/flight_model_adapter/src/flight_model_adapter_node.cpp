@@ -14,7 +14,6 @@
 #include <sim_msgs/msg/electrical_state.hpp>
 #include <sim_msgs/msg/fuel_state.hpp>
 #include <sim_msgs/msg/atmosphere_state.hpp>
-#include <sim_msgs/msg/weather_state.hpp>
 #include <sim_msgs/msg/flight_controls.hpp>
 #include <sim_msgs/msg/engine_controls.hpp>
 #include <sim_msgs/msg/hat_hot_response.hpp>
@@ -326,20 +325,16 @@ public:
         if (adapter_) adapter_->write_back_fuel(*msg);
       });
 
-    // Atmosphere writeback — stored and applied synchronously before step()
+    // Atmosphere writeback — stored and applied synchronously before step().
+    // Also carries the patch-aware effective_runway_friction, driving
+    // surface writeback (Slice 5b-iv — moved here from /world/weather so
+    // patch logic stays centralized in weather_solver).
     atmosphere_sub_ = this->create_subscription<sim_msgs::msg::AtmosphereState>(
       "/world/atmosphere", 10,
       [this](sim_msgs::msg::AtmosphereState::ConstSharedPtr msg) {
         latest_atmosphere_ = *msg;
         atmosphere_received_ = true;
-      });
-
-    // Weather — runway friction drives surface writeback (ground handling)
-    weather_sub_ = this->create_subscription<sim_msgs::msg::WeatherState>(
-      "/world/weather", 10,
-      [this](sim_msgs::msg::WeatherState::ConstSharedPtr msg) {
-        latest_runway_friction_ = msg->runway_friction;
-        weather_received_ = true;
+        latest_runway_friction_ = msg->effective_runway_friction;
       });
 
     payload_command_sub_ = this->create_subscription<sim_msgs::msg::PayloadCommand>(
@@ -508,11 +503,9 @@ public:
     elec_writeback_sub_.reset();
     fuel_writeback_sub_.reset();
     atmosphere_sub_.reset();
-    weather_sub_.reset();
     latest_flight_controls_.reset();
     latest_engine_controls_.reset();
     atmosphere_received_ = false;
-    weather_received_ = false;
     terrain_hot_.clear();
     pending_ic_.reset();
     RCLCPP_INFO(this->get_logger(), "flight_model_adapter deactivated");
@@ -535,7 +528,6 @@ public:
     elec_writeback_sub_.reset();
     fuel_writeback_sub_.reset();
     atmosphere_sub_.reset();
-    weather_sub_.reset();
     hat_response_sub_.reset();
     terrain_source_pub_.reset();
     terrain_ready_pub_.reset();
@@ -711,7 +703,6 @@ private:
   rclcpp::Subscription<sim_msgs::msg::ElectricalState>::SharedPtr elec_writeback_sub_;
   rclcpp::Subscription<sim_msgs::msg::FuelState>::SharedPtr fuel_writeback_sub_;
   rclcpp::Subscription<sim_msgs::msg::AtmosphereState>::SharedPtr atmosphere_sub_;
-  rclcpp::Subscription<sim_msgs::msg::WeatherState>::SharedPtr weather_sub_;
   rclcpp::Subscription<sim_msgs::msg::PayloadCommand>::SharedPtr payload_command_sub_;
   rclcpp::Subscription<sim_msgs::msg::HatHotResponse>::SharedPtr hat_response_sub_;
 
@@ -720,7 +711,6 @@ private:
   sim_msgs::msg::AtmosphereState latest_atmosphere_;
   bool atmosphere_received_ = false;
   uint8_t latest_runway_friction_ = 0;
-  bool weather_received_ = false;
   // Default to ASPHALT (1) so ground handling is nominal before the first
   // HAT response arrives (e.g., at startup parked on a runway).
   uint8_t latest_surface_type_ = 1;
