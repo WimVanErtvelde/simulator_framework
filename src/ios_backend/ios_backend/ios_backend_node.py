@@ -1228,45 +1228,6 @@ class IosBackendNode(Node):
         self.publish_weather()
         self._broadcast_microbursts()
 
-    def set_standalone_microburst(self, data: dict):
-        """Create or update the standalone microburst (source_patch_id=0).
-
-        At most ONE standalone microburst at a time.
-        """
-        existing = next((mb for mb in self._active_microbursts
-                         if mb.get('source_patch_id', 0) == 0), None)
-
-        with self._lock:
-            sim_time = self._latest.get('sim_state', {}).get('sim_time_sec', 0.0)
-
-        if existing:
-            existing['latitude_deg']     = float(data['latitude_deg'])
-            existing['longitude_deg']    = float(data['longitude_deg'])
-            existing['core_radius_m']    = float(data.get('core_radius_m', 1000.0))
-            existing['intensity']        = float(data.get('intensity', 10.0))
-            existing['shaft_altitude_m'] = float(data.get('shaft_altitude_m', 300.0))
-            self.get_logger().info(
-                f'Standalone microburst #{existing["hazard_id"]} updated')
-        else:
-            mb = {
-                'hazard_id':           self._mb_next_id,
-                'source_patch_id':     0,
-                'latitude_deg':        float(data['latitude_deg']),
-                'longitude_deg':       float(data['longitude_deg']),
-                'core_radius_m':       float(data.get('core_radius_m', 1000.0)),
-                'intensity':           float(data.get('intensity', 10.0)),
-                'shaft_altitude_m':    float(data.get('shaft_altitude_m', 300.0)),
-                'lifecycle_phase':     2,
-                'activation_time_sec': float(sim_time),
-            }
-            self._mb_next_id += 1
-            self._active_microbursts.append(mb)
-            self.get_logger().info(
-                f'Standalone microburst #{mb["hazard_id"]} created')
-
-        self.publish_weather()
-        self._broadcast_microbursts()
-
     def clear_patch_microburst(self, data: dict):
         """Remove the microburst tied to a given patch."""
         patch_id = int(data.get('patch_id', 0))
@@ -1279,18 +1240,6 @@ class IosBackendNode(Node):
         ]
         if len(self._active_microbursts) < before:
             self.get_logger().info(f'Microburst cleared (patch_id={patch_id})')
-            self.publish_weather()
-            self._broadcast_microbursts()
-
-    def clear_standalone_microburst(self, data: dict = None):
-        """Remove the standalone microburst."""
-        before = len(self._active_microbursts)
-        self._active_microbursts = [
-            mb for mb in self._active_microbursts
-            if mb.get('source_patch_id', 0) != 0
-        ]
-        if len(self._active_microbursts) < before:
-            self.get_logger().info('Standalone microburst cleared')
             self.publish_weather()
             self._broadcast_microbursts()
 
@@ -2681,14 +2630,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 elif msg.get('type') == 'set_patch_microburst' and ros_node:
                     ros_node.set_patch_microburst(msg.get('data', {}))
 
-                elif msg.get('type') == 'set_standalone_microburst' and ros_node:
-                    ros_node.set_standalone_microburst(msg.get('data', {}))
-
                 elif msg.get('type') == 'clear_patch_microburst' and ros_node:
                     ros_node.clear_patch_microburst(msg.get('data', {}))
-
-                elif msg.get('type') == 'clear_standalone_microburst' and ros_node:
-                    ros_node.clear_standalone_microburst(msg.get('data', {}))
 
                 elif msg.get('type') == 'reserve_patch' and ros_node:
                     _spawn(_handle_reserve_patch(websocket, msg.get('data', {})))

@@ -1,6 +1,6 @@
 // Shared microburst authoring UI. Used by PatchMicroburstSection
-// (inside patch tabs) and MicroburstTab (standalone). Keeps controls
-// identical across the two authoring entry points.
+// inside each patch tab. (Formerly also used by a standalone
+// MicroburstTab, retired in the 5c followup cleanup.)
 //
 // Intensity preset → peak outflow lambda (m/s). Matches V1 INTENSITY_MAP.
 export const INTENSITY_MS = { Mild: 5.0, Med: 10.0, Sev: 15.0 }

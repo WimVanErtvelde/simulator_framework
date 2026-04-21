@@ -4,17 +4,16 @@ import { useWeatherV2Store } from '../../store/useWeatherV2Store'
 import WeatherV2Tabs     from './weatherV2/WeatherV2Tabs'
 import GlobalTab         from './weatherV2/GlobalTab'
 import PatchTab          from './weatherV2/PatchTab'
-import MicroburstTab     from './weatherV2/MicroburstTab'
 import PendingPatchState from './weatherV2/PendingPatchState'
 
 // New weather authoring UI. Coexists with the legacy WeatherPanel (WX
 // sidebar entry) during development. Expected to replace it after the
 // 5a / 5b / 5c slices land.
 //
-// Slice 5b-iii: activeTab is 'global', 'microburst', or a patch's
-// client_id. PatchTab is looked up by matching draft.patches client_id;
-// if the lookup fails (e.g. the patch was just removed), we fall back
-// to Global.
+// activeTab is 'global', a patch client_id, or a role string while
+// pendingTabs is open. The standalone microburst tab was removed in
+// the 5c followup cleanup — all microbursts live on patches via
+// source_patch_id > 0.
 export default function WeatherPanelV2() {
   const activeTab     = useWeatherV2Store(s => s.activeTab)
   const patches       = useWeatherV2Store(s => s.draft.patches)
@@ -29,15 +28,19 @@ export default function WeatherPanelV2() {
 
   const activePatch = patches.find(p => p.client_id === activeTab)
 
-  // Route: 'global' → GlobalTab. 'microburst' → MicroburstTab.
-  // Role strings ('departure' / 'destination') with pendingTabs membership
+  // Route: 'global' → GlobalTab. Role strings with pendingTabs membership
   // → PendingPatchState. Anything else must be a patch client_id; if the
-  // patch vanished (race during sync), fall back to Global.
+  // patch vanished (race during sync) or activeTab is stale (e.g. the
+  // retired 'microburst' string from pre-cleanup sessions), fall back to
+  // Global.
   let content
   if (activeTab === 'global') {
     content = <GlobalTab />
   } else if (activeTab === 'microburst') {
-    content = <MicroburstTab />
+    // Defensive fallback: 'microburst' activeTab is no longer valid after
+    // the standalone tab deletion. Redirect to Global.
+    if (activeTab !== 'global') setActiveTab('global')
+    content = <GlobalTab />
   } else if (pendingTabs.has(activeTab)) {
     content = <PendingPatchState role={activeTab} />
   } else if (activePatch) {

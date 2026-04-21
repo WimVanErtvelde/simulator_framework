@@ -6,7 +6,6 @@ import { useShallow } from 'zustand/react/shallow'
 //
 // Tab ids:
 //   'global'       — always present, first slot
-//   'microburst'   — standalone microburst authoring (Slice 5c)
 //   'departure' / 'destination' — role string when pendingTabs has the
 //                   role (user clicked +DEP but hasn't picked an airport);
 //                   pivots to a client_id once addPatch fires
@@ -126,12 +125,6 @@ export default function WeatherV2Tabs() {
 
         {/* + Custom — fires addPatch immediately with aircraft pos */}
         <TabButton dimmed onClick={createCustomPatch}>+</TabButton>
-
-        {/* Microburst — retained placeholder, pending 5c rework */}
-        <TabButton
-          active={activeTab === 'microburst'}
-          onClick={() => setActiveTab('microburst')}
-        >MICROBURST</TabButton>
       </div>
 
       {/* Right — Unsaved indicator + Discard + Accept */}
