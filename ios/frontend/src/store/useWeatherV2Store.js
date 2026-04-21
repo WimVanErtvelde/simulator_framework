@@ -239,6 +239,28 @@ export const useWeatherV2Store = create((set, get) => ({
   // rendering a layer from a different tab (indices don't map across).
   setActiveTab: (tab) => set({ activeTab: tab, selectedLayer: null }),
 
+  // ── Pending tabs (Slice 5c-refactor-I) ─────────────────────────────────
+  // Tab state for +DEP / +DEST clicked but not yet committed via airport
+  // pick. Pure UI — not part of draft/serverState (no wire representation).
+  // When the user picks an airport inside a pending tab, addPatch fires
+  // reserve_patch and closePendingTab removes the role from this set.
+  pendingTabs: new Set(),
+
+  openPendingTab: (role) => set((state) => {
+    const next = new Set(state.pendingTabs)
+    next.add(role)
+    return { pendingTabs: next, activeTab: role, selectedLayer: null }
+  }),
+
+  closePendingTab: (role) => set((state) => {
+    const next = new Set(state.pendingTabs)
+    next.delete(role)
+    return {
+      pendingTabs: next,
+      activeTab: state.activeTab === role ? 'global' : state.activeTab,
+    }
+  }),
+
   // Generic draft mutator. Tabs call with a path into the draft:
   //   updateDraft(['global', 'temperature_c'], 20)
   updateDraft: (path, value) => set((state) => {

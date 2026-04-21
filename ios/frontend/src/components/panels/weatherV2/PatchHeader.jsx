@@ -8,20 +8,28 @@ const RADIUS_MAX_NM = 50
 
 // Top strip of a PatchTab once an airport is set. Holds the airport
 // picker, ground elevation readout, radius slider, (custom-only) label
-// input, and a delete button. Airport re-pick re-resolves lat/lon and
-// ground elevation — backend does not re-lookup on update (frontend is
-// the source of truth for coords per 5b-ii design).
+// input, and a delete button.
+//
+// Identity fields (icao, radius, label) commit on user-release events,
+// not on every change. updatePatch is local-only (for smooth drag/type
+// feedback); updatePatchIdentity fires update_patch_identity to the
+// backend:
+//   - AirportSearch onSelect       (discrete event; fires immediately)
+//   - Radius slider onMouseUp/onTouchEnd (fires on drag release)
+//   - Label input onBlur           (fires on focus loss / Enter)
+// removePatch fires remove_patch immediately; the tab disappears from
+// the draft/serverState on the same set call.
 export default function PatchHeader({ patch }) {
-  const updatePatch  = useWeatherV2Store(s => s.updatePatch)
-  const removePatch  = useWeatherV2Store(s => s.removePatch)
-  const setActiveTab = useWeatherV2Store(s => s.setActiveTab)
+  const updatePatch         = useWeatherV2Store(s => s.updatePatch)
+  const updatePatchIdentity = useWeatherV2Store(s => s.updatePatchIdentity)
+  const removePatch         = useWeatherV2Store(s => s.removePatch)
 
   const radiusNm = Math.round(((patch.radius_m || 0) / NM_TO_M) * 10) / 10
   const groundFt = Math.round((patch.ground_elevation_m || 0) * M_TO_FT)
 
   const onSelectAirport = (apt) => {
     if (!apt) return
-    updatePatch(patch.client_id, {
+    updatePatchIdentity(patch.client_id, {
       icao:               apt.icao,
       lat_deg:            apt.arp_lat_deg ?? 0,
       lon_deg:            apt.arp_lon_deg ?? 0,
@@ -29,9 +37,16 @@ export default function PatchHeader({ patch }) {
     })
   }
 
-  const onDelete = () => {
-    setActiveTab('global')
-    removePatch(patch.client_id)
+  const onDelete = () => removePatch(patch.client_id)
+
+  // Commit current draft radius to the wire. Called on slider release.
+  const commitRadius = () => {
+    updatePatchIdentity(patch.client_id, { radius_m: patch.radius_m })
+  }
+
+  // Commit current draft label. Called on input blur.
+  const commitLabel = () => {
+    updatePatchIdentity(patch.client_id, { label: patch.label })
   }
 
   return (
@@ -51,7 +66,7 @@ export default function PatchHeader({ patch }) {
         />
       </div>
 
-      {/* Label (editable for custom only) */}
+      {/* Label (editable for custom only). Local on keystroke, commit on blur. */}
       {patch.role === 'custom' && (
         <div style={{ flex: '0 1 180px', minWidth: 140 }}>
           <div style={fieldTagStyle}>LABEL</div>
@@ -59,6 +74,8 @@ export default function PatchHeader({ patch }) {
             type="text"
             value={patch.label}
             onChange={e => updatePatch(patch.client_id, { label: e.target.value })}
+            onBlur={commitLabel}
+            onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
             style={labelInputStyle}
           />
         </div>
@@ -88,6 +105,9 @@ export default function PatchHeader({ patch }) {
             onChange={e => updatePatch(patch.client_id, {
               radius_m: Number(e.target.value) * NM_TO_M,
             })}
+            onMouseUp={commitRadius}
+            onTouchEnd={commitRadius}
+            onKeyUp={commitRadius}
             style={{ flex: 1, accentColor: '#39d0d8', touchAction: 'manipulation' }}
           />
           <span style={{

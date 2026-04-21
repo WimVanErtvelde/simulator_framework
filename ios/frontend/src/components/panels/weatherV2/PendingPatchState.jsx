@@ -1,35 +1,37 @@
 import { useWeatherV2Store } from '../../../store/useWeatherV2Store'
 import AirportSearch from '../../ui/AirportSearch'
 
-// Fallback empty state: a patch exists (patch_id reserved) but has no
-// icao yet. Under 5c-refactor-I the normal +DEP/+DEST flow creates the
-// pending tab first and only reserves on airport pick — so this path is
-// only reached by legacy/scenario patches that reserve with empty icao.
-// Airport pick commits via updatePatchIdentity (fires
-// update_patch_identity immediately since patch_id is known).
-export default function EmptyPatchState({ patch }) {
-  const updatePatchIdentity = useWeatherV2Store(s => s.updatePatchIdentity)
-  const removePatch         = useWeatherV2Store(s => s.removePatch)
+// Rendered when the user has clicked +DEP or +DEST but hasn't picked
+// an airport yet. Under 5c-refactor-I, creation is deferred until the
+// airport is picked — no draft patch with an empty icao. On select,
+// addPatch fires reserve_patch immediately; the tab pivots to the new
+// client_id and the role drops out of pendingTabs.
+//
+// AirportSearch hands back the full airport dict
+// ({icao, arp_lat_deg, arp_lon_deg, elevation_m, ...}); we pass
+// elevation_m through so the backend doesn't need to re-resolve via
+// SearchAirports.
+export default function PendingPatchState({ role }) {
+  const addPatch         = useWeatherV2Store(s => s.addPatch)
+  const closePendingTab  = useWeatherV2Store(s => s.closePendingTab)
 
   const onSelectAirport = (apt) => {
     if (!apt) return
-    updatePatchIdentity(patch.client_id, {
+    addPatch(role, {
       icao:               apt.icao,
       lat_deg:            apt.arp_lat_deg ?? 0,
       lon_deg:            apt.arp_lon_deg ?? 0,
       ground_elevation_m: apt.elevation_m  ?? 0,
-      // Custom tabs display the ICAO as their label by default; dep/dest
-      // keep their DEPARTURE/DESTINATION titles.
-      label: patch.role === 'custom' ? apt.icao : patch.label,
     })
+    closePendingTab(role)
   }
 
-  const onCancel = () => removePatch(patch.client_id)
+  const onCancel = () => closePendingTab(role)
 
   const title =
-    patch.role === 'departure'   ? 'DEPARTURE PATCH' :
-    patch.role === 'destination' ? 'DESTINATION PATCH' :
-                                   'CUSTOM PATCH'
+    role === 'departure'   ? 'DEPARTURE PATCH' :
+    role === 'destination' ? 'DESTINATION PATCH' :
+                             'PATCH'
 
   return (
     <div style={{
@@ -43,7 +45,7 @@ export default function EmptyPatchState({ patch }) {
         letterSpacing: 1, textTransform: 'uppercase', fontWeight: 700,
       }}>{title}</div>
       <div style={{ color: '#64748b', fontSize: 13, fontFamily: 'monospace' }}>
-        Pick an airport to configure this patch.
+        Pick an airport to reserve this patch.
       </div>
       <div style={{ width: 320 }}>
         <AirportSearch

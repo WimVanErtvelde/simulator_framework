@@ -1,36 +1,47 @@
 import { useWeatherV2Store } from '../../../store/useWeatherV2Store'
+import { useSimStore } from '../../../store/useSimStore'
 import { useShallow } from 'zustand/react/shallow'
 
 // Tabs row for WeatherPanelV2.
 //
 // Tab ids:
 //   'global'       — always present, first slot
-//   <client_id>    — a patch tab (departure/destination/custom)
-//   'microburst'   — placeholder retained from V1 until Slice 5c reworks
+//   'microburst'   — standalone microburst authoring (Slice 5c)
+//   'departure' / 'destination' — role string when pendingTabs has the
+//                   role (user clicked +DEP but hasn't picked an airport);
+//                   pivots to a client_id once addPatch fires
+//   <client_id>    — a patch tab (departure/destination/custom with
+//                   reserved patch_id)
 //
-// Slots are dynamic: the Departure and Destination slots render as create
-// chips ("+ DEP", "+ DEST") until a patch with that role exists, then
-// switch to a selectable tab labeled "DEP · EBBR" etc. Custom patches
-// each get their own tab. A "+" chip creates a new custom patch and
-// switches to it.
+// Slots are dynamic. For DEP/DEST:
+//   patch exists        → DEP · EBBR tab (× closes via removePatch)
+//   pendingTabs has role → DEP (…) pending tab (× closes via closePendingTab)
+//   neither             → "+ DEP" chip (opens pending tab)
+// Custom patches each get their own tab. "+" chip fires addPatch('custom',
+// {lat, lon}) immediately with aircraft-position defaults.
 //
 // Accept / Discard are inline on the right. Dirty indicator shows when
 // draft ≠ serverState (covers global scalars, cloud/wind layers, and
-// patches).
+// patch override authoring — identity changes mirror to serverState on
+// change and don't trigger dirty).
 
 export default function WeatherV2Tabs() {
   const {
     activeTab, setActiveTab, draft, serverState,
     accept, discard, addPatch, removePatch,
+    pendingTabs, openPendingTab, closePendingTab,
   } = useWeatherV2Store(useShallow(s => ({
-    activeTab:    s.activeTab,
-    setActiveTab: s.setActiveTab,
-    draft:        s.draft,
-    serverState:  s.serverState,
-    accept:       s.accept,
-    discard:      s.discard,
-    addPatch:     s.addPatch,
-    removePatch:  s.removePatch,
+    activeTab:       s.activeTab,
+    setActiveTab:    s.setActiveTab,
+    draft:           s.draft,
+    serverState:     s.serverState,
+    accept:          s.accept,
+    discard:         s.discard,
+    addPatch:        s.addPatch,
+    removePatch:     s.removePatch,
+    pendingTabs:     s.pendingTabs,
+    openPendingTab:  s.openPendingTab,
+    closePendingTab: s.closePendingTab,
   })))
 
   const isDirty = JSON.stringify(draft) !== JSON.stringify(serverState)
@@ -40,17 +51,16 @@ export default function WeatherV2Tabs() {
   const destination = patches.find(p => p.role === 'destination')
   const customs     = patches.filter(p => p.role === 'custom')
 
-  // After addPatch runs, the new patch is the last in the list.
-  // setTimeout lets the state update flush before we reach in for the
-  // client_id to pivot activeTab.
-  const createAndSwitch = (role) => {
-    addPatch(role, {})
-    setTimeout(() => {
-      const st = useWeatherV2Store.getState()
-      const list = st.draft.patches
-      const fresh = list[list.length - 1]
-      if (fresh) st.setActiveTab(fresh.client_id)
-    }, 0)
+  // +Custom fires addPatch immediately with aircraft-position defaults.
+  // Omitting ground_elevation_m signals the backend to SRTM-resolve and
+  // follow up via update_patch_identity once the service returns.
+  const createCustomPatch = () => {
+    const fdm = useSimStore.getState().fdm ?? {}
+    addPatch('custom', {
+      lat_deg: fdm.lat ?? 0,
+      lon_deg: fdm.lon ?? 0,
+    })
+    // addPatch pivots activeTab to the new client_id itself.
   }
 
   return (
@@ -66,26 +76,40 @@ export default function WeatherV2Tabs() {
           onClick={() => setActiveTab('global')}
         >GLOBAL</TabButton>
 
-        {/* Departure slot */}
+        {/* Departure slot: patch > pending > +chip */}
         {departure ? (
           <TabButton
             active={activeTab === departure.client_id}
             onClick={() => setActiveTab(departure.client_id)}
+            onClose={() => removePatch(departure.client_id)}
           >DEP{departure.icao ? ` · ${departure.icao}` : ''}</TabButton>
+        ) : pendingTabs.has('departure') ? (
+          <TabButton
+            active={activeTab === 'departure'}
+            onClick={() => setActiveTab('departure')}
+            onClose={() => closePendingTab('departure')}
+          >DEP …</TabButton>
         ) : (
-          <TabButton dimmed onClick={() => createAndSwitch('departure')}>
+          <TabButton dimmed onClick={() => openPendingTab('departure')}>
             + DEP
           </TabButton>
         )}
 
-        {/* Destination slot */}
+        {/* Destination slot: patch > pending > +chip */}
         {destination ? (
           <TabButton
             active={activeTab === destination.client_id}
             onClick={() => setActiveTab(destination.client_id)}
+            onClose={() => removePatch(destination.client_id)}
           >DEST{destination.icao ? ` · ${destination.icao}` : ''}</TabButton>
+        ) : pendingTabs.has('destination') ? (
+          <TabButton
+            active={activeTab === 'destination'}
+            onClick={() => setActiveTab('destination')}
+            onClose={() => closePendingTab('destination')}
+          >DEST …</TabButton>
         ) : (
-          <TabButton dimmed onClick={() => createAndSwitch('destination')}>
+          <TabButton dimmed onClick={() => openPendingTab('destination')}>
             + DEST
           </TabButton>
         )}
@@ -96,15 +120,12 @@ export default function WeatherV2Tabs() {
             key={c.client_id}
             active={activeTab === c.client_id}
             onClick={() => setActiveTab(c.client_id)}
-            onClose={() => {
-              if (activeTab === c.client_id) setActiveTab('global')
-              removePatch(c.client_id)
-            }}
+            onClose={() => removePatch(c.client_id)}
           >{c.label || 'CUSTOM'}{c.icao && c.icao !== c.label ? ` · ${c.icao}` : ''}</TabButton>
         ))}
 
-        {/* + Custom */}
-        <TabButton dimmed onClick={() => createAndSwitch('custom')}>+</TabButton>
+        {/* + Custom — fires addPatch immediately with aircraft pos */}
+        <TabButton dimmed onClick={createCustomPatch}>+</TabButton>
 
         {/* Microburst — retained placeholder, pending 5c rework */}
         <TabButton
