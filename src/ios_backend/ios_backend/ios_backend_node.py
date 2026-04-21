@@ -149,6 +149,105 @@ def _validate_in_range(field_name: str, value, bounds_key: str):
     return value
 
 
+# ── Patch lifecycle validators (Slice 5c-refactor-I) ────────────────────────
+# Split from _validate_patch to support reserve_patch / update_patch_identity
+# / update_patch_overrides, where identity and overrides arrive on separate
+# WS messages. _validate_patch is retained for the V1 add_patch / update_patch
+# handlers (removed in Commit D).
+
+def _validate_identity(data: dict, require_all: bool = True) -> dict:
+    """Validate the identity subset of a patch payload.
+
+    require_all=True (reserve path): patch_type, lat_deg/lon_deg or icao,
+    and radius_m must be present.
+    require_all=False (update_patch_identity): only validates fields that
+    are present; patch_id is the anchor. Missing fields mean "unchanged".
+    """
+    if 'patch_type' in data:
+        patch_type = data['patch_type']
+        if patch_type not in ('airport', 'custom'):
+            raise ValueError(f"patch_type must be 'airport' or 'custom', got {patch_type!r}")
+    elif require_all:
+        raise ValueError('patch_type required')
+
+    # ICAO shape check (airport patches); empty OK for custom.
+    if 'icao' in data:
+        icao = (data.get('icao') or '').strip().upper()
+        if icao and (len(icao) > 4 or not icao.isalnum()):
+            raise ValueError(f"icao must be up to 4 alphanumeric chars, got {icao!r}")
+        data['icao'] = icao
+    elif require_all and data.get('patch_type') == 'airport':
+        raise ValueError('airport patch requires icao')
+
+    if 'lat_deg' in data:
+        lat = float(data['lat_deg'])
+        if not (-90.0 <= lat <= 90.0):
+            raise ValueError(f"lat_deg out of range: {lat}")
+    elif require_all and data.get('patch_type') == 'custom':
+        raise ValueError('custom patch requires lat_deg')
+
+    if 'lon_deg' in data:
+        lon = float(data['lon_deg'])
+        if not (-180.0 <= lon <= 180.0):
+            raise ValueError(f"lon_deg out of range: {lon}")
+    elif require_all and data.get('patch_type') == 'custom':
+        raise ValueError('custom patch requires lon_deg')
+
+    if 'radius_m' in data:
+        radius_nm = float(data['radius_m']) / 1852.0
+        _validate_in_range('radius_m->nm', radius_nm, 'radius_nm')
+    elif require_all:
+        raise ValueError('radius_m required')
+
+    return data
+
+
+def _validate_overrides(data: dict) -> dict:
+    """Validate the override + layers subset of a patch payload. All fields
+    optional — only present fields are range-checked.
+    """
+    for i, cl in enumerate(data.get('cloud_layers', [])):
+        _validate_in_range(f"cloud[{i}].cloud_type",   cl.get('cloud_type'),   'cloud_type')
+        _validate_in_range(f"cloud[{i}].coverage_pct", cl.get('coverage_pct'), 'cloud_coverage_pct')
+        base_m = cl.get('base_elevation_m')
+        if base_m is not None:
+            _validate_in_range(f"cloud[{i}].base_ft", base_m * 3.28084, 'cloud_base_ft')
+        thick_m = cl.get('thickness_m')
+        if base_m is not None and thick_m is not None:
+            _validate_in_range(f"cloud[{i}].top_ft", (base_m + thick_m) * 3.28084, 'cloud_top_ft')
+        _validate_in_range(f"cloud[{i}].scud_freq", cl.get('scud_frequency_pct'), 'scud_frequency_pct')
+
+    for i, wl in enumerate(data.get('wind_layers', [])):
+        alt_m = wl.get('altitude_msl_m')
+        if alt_m is not None:
+            _validate_in_range(f"wind[{i}].alt_ft", alt_m * 3.28084, 'wind_altitude_ft')
+        spd_ms = wl.get('wind_speed_ms')
+        if spd_ms is not None:
+            _validate_in_range(f"wind[{i}].speed_kt", spd_ms / 0.51444, 'wind_speed_kt')
+        _validate_in_range(f"wind[{i}].direction", wl.get('wind_direction_deg'), 'wind_direction_deg')
+        _validate_in_range(f"wind[{i}].vertical", wl.get('vertical_wind_ms'), 'wind_vertical_ms')
+
+    if data.get('override_visibility'):
+        _validate_in_range('visibility_m', data.get('visibility_m'), 'visibility_m')
+    if data.get('override_temperature'):
+        temp_k = data.get('temperature_k')
+        if temp_k is not None:
+            _validate_in_range('temperature_c', float(temp_k) - 273.15, 'temperature_c')
+    if data.get('override_precipitation'):
+        _validate_in_range('precip_rate', data.get('precipitation_rate'), 'precipitation_rate')
+        _validate_in_range('precip_type', data.get('precipitation_type'), 'precipitation_type')
+    if data.get('override_humidity'):
+        _validate_in_range('humidity_pct', data.get('humidity_pct'), 'humidity_pct')
+    if data.get('override_pressure'):
+        _validate_in_range('pressure_sl_pa', data.get('pressure_sl_pa'), 'pressure_sl_pa')
+    if data.get('override_runway'):
+        rf = data.get('runway_friction')
+        if rf is None or not (0 <= int(rf) <= 15):
+            raise ValueError(f"runway_friction out of range [0, 15]: {rf}")
+
+    return data
+
+
 def _validate_patch(data: dict) -> dict:
     """Validate a WeatherPatch payload dict. Raises ValueError on any violation.
     Returns the (possibly normalized) dict on success.
@@ -1393,6 +1492,7 @@ class IosBackendNode(Node):
         ptype = data['patch_type']
         patch = {
             'patch_id':              self._next_patch_id,
+            'client_id':             str(data.get('client_id', '')),
             'patch_type':            ptype,
             'role':                  data.get('role', 'custom'),
             'label':                 data.get('label', ''),
@@ -1459,6 +1559,128 @@ class IosBackendNode(Node):
         self._broadcast_patches()
         return patch
 
+    # ── Lifecycle handlers (Slice 5c-refactor-I) ──────────────────────────
+    # Replaces add_patch / update_patch monolith. Separates identity commits
+    # (airport/coords/radius/ground) from override commits (per-field flags
+    # + layers). Enables reserve-on-creation UX (patch_id assigned before
+    # the user authors anything) and eliminates the two-Accept flow for
+    # new-patch-with-microburst.
+
+    def reserve_patch(self, data: dict) -> dict:
+        """Sync: allocate patch_id, append patch with identity + disabled
+        overrides. Called first on any patch creation. Caller (usually
+        _handle_reserve_patch) may follow up with async SRTM/SearchAirports
+        resolution + update_patch_identity.
+
+        Raises ValueError on validation failure or cap breach.
+        """
+        if len(self._active_patches) >= 10:
+            raise ValueError('max 10 patches per session')
+
+        _validate_identity(data, require_all=True)
+
+        ptype = data['patch_type']
+        patch = {
+            'patch_id':              self._next_patch_id,
+            'client_id':             str(data.get('client_id', '')),
+            'patch_type':            ptype,
+            'role':                  data.get('role', 'custom'),
+            'label':                 data.get('label', ''),
+            'icao':                  data.get('icao', ''),
+            'lat_deg':               float(data['lat_deg']),
+            'lon_deg':               float(data['lon_deg']),
+            'radius_m':              float(data['radius_m']),
+            'ground_elevation_m':    float(data.get('ground_elevation_m', 0.0)),
+            # Overrides start disabled — reserved patch is FDM-invisible.
+            'cloud_layers':          [],
+            'wind_layers':           [],
+            'override_visibility':   False, 'visibility_m':       10000.0,
+            'override_temperature':  False, 'temperature_k':      288.15,
+            'override_precipitation':False, 'precipitation_rate': 0.0,
+                                            'precipitation_type': 0,
+            'override_humidity':     False, 'humidity_pct':       50,
+            'override_pressure':     False, 'pressure_sl_pa':     101325.0,
+            'override_runway':       False, 'runway_friction':    0,
+        }
+        self._next_patch_id += 1
+        self._active_patches.append(patch)
+        self.get_logger().info(
+            f'[patch] reserved id={patch["patch_id"]} type={ptype} '
+            f'icao={patch["icao"]!r} label={patch["label"]!r} '
+            f'client_id={patch["client_id"]!r}'
+        )
+        self.publish_weather()
+        self._broadcast_patches()
+        return patch
+
+    def update_patch_identity(self, data: dict) -> dict:
+        """Sync: apply identity fields (icao, label, lat/lon, radius,
+        ground_elevation_m, patch_type) to an existing patch. Override
+        fields and layers are preserved. patch_id is required.
+
+        Raises ValueError if patch_id missing/unknown or validation fails.
+        """
+        patch_id = data.get('patch_id')
+        if patch_id is None:
+            raise ValueError('update_patch_identity requires patch_id')
+        patch = next((p for p in self._active_patches
+                      if p['patch_id'] == int(patch_id)), None)
+        if patch is None:
+            raise ValueError(f'patch_id={patch_id} not found')
+
+        _validate_identity(data, require_all=False)
+
+        for f in ('patch_type', 'role', 'label', 'icao'):
+            if f in data:
+                patch[f] = str(data[f]) if f != 'role' else data[f]
+        for f in ('lat_deg', 'lon_deg', 'radius_m', 'ground_elevation_m'):
+            if f in data:
+                patch[f] = float(data[f])
+
+        self.get_logger().info(
+            f'[patch] identity updated id={patch_id} '
+            f'icao={patch["icao"]!r} ground_m={patch["ground_elevation_m"]:.1f}')
+        self.publish_weather()
+        self._broadcast_patches()
+        return patch
+
+    def update_patch_overrides(self, data: dict) -> dict:
+        """Sync: apply override flags/values and layers to an existing
+        patch. Identity fields are preserved. patch_id is required.
+
+        Raises ValueError if patch_id missing/unknown or validation fails.
+        """
+        patch_id = data.get('patch_id')
+        if patch_id is None:
+            raise ValueError('update_patch_overrides requires patch_id')
+        patch = next((p for p in self._active_patches
+                      if p['patch_id'] == int(patch_id)), None)
+        if patch is None:
+            raise ValueError(f'patch_id={patch_id} not found')
+
+        _validate_overrides(data)
+
+        OVERRIDE_FIELDS = (
+            'override_visibility',    'visibility_m',
+            'override_temperature',   'temperature_k',
+            'override_precipitation', 'precipitation_rate', 'precipitation_type',
+            'override_humidity',      'humidity_pct',
+            'override_pressure',      'pressure_sl_pa',
+            'override_runway',        'runway_friction',
+        )
+        for f in OVERRIDE_FIELDS:
+            if f in data:
+                patch[f] = data[f]
+        if 'cloud_layers' in data:
+            patch['cloud_layers'] = data['cloud_layers']
+        if 'wind_layers' in data:
+            patch['wind_layers'] = data['wind_layers']
+
+        self.get_logger().info(f'[patch] overrides updated id={patch_id}')
+        self.publish_weather()
+        self._broadcast_patches()
+        return patch
+
     def remove_patch(self, patch_id: int) -> bool:
         """Remove a patch by patch_id. Returns True on success, False if not
         found. Idempotent — safe to call with unknown id.
@@ -1498,6 +1720,7 @@ class IosBackendNode(Node):
             'patches': [
                 {
                     'patch_id':              p['patch_id'],
+                    'client_id':             p.get('client_id', ''),
                     'patch_type':            p['patch_type'],
                     'role':                  p.get('role', 'custom'),
                     'label':                 p['label'],
@@ -2268,6 +2491,75 @@ async def _resolve_ground_elevation_async(data: dict):
         return (float(result.elevation_msl_m), None, None)
 
 
+# ── Patch lifecycle async handlers (Slice 5c-refactor-I) ────────────────────
+# reserve_patch + update_patch_identity are the SRTM/SearchAirports entry
+# points. reserve allocates patch_id synchronously; ground resolution happens
+# in the background via a follow-up update_patch_identity. Keeps the user-
+# visible round-trip short (~10ms for patch_id) while ground elevation
+# converges over ~100–500ms.
+
+async def _resolve_and_followup_identity(patch_id: int, patch_data: dict):
+    """Background task: resolve ground_elevation_m (and ARP lat/lon for
+    airport patches) via SearchAirports / SRTM, then apply via
+    update_patch_identity. Fire-and-forget — logs on error, doesn't retry.
+    """
+    if ros_node is None:
+        return
+    try:
+        ground_m, lat_ov, lon_ov = await _resolve_ground_elevation_async(patch_data)
+        update = {'patch_id': patch_id, 'ground_elevation_m': ground_m}
+        if lat_ov is not None: update['lat_deg'] = lat_ov
+        if lon_ov is not None: update['lon_deg'] = lon_ov
+        ros_node.update_patch_identity(update)
+    except Exception as e:
+        if ros_node is not None:
+            ros_node.get_logger().warn(
+                f'[patch] background identity resolve failed for id={patch_id}: {e}')
+
+
+async def _handle_reserve_patch(websocket, data: dict):
+    """WS handler: validate + reserve synchronously, then spawn background
+    ground-elevation resolution for patches that need it (custom patches
+    without provided ground; airport patches without provided ground).
+    Frontend is expected to pass ground_elevation_m from its airport DB
+    hit for airport patches — in that case no background resolve fires.
+    """
+    if ros_node is None:
+        return
+    try:
+        patch = ros_node.reserve_patch(dict(data))
+    except ValueError as e:
+        await websocket.send_text(json.dumps({
+            'type': 'patch_error', 'operation': 'reserve', 'error': str(e),
+        }))
+        return
+
+    # Background resolve only when caller didn't supply ground. Skip for
+    # airport patches with valid ground already set.
+    if 'ground_elevation_m' not in data:
+        _spawn(_resolve_and_followup_identity(patch['patch_id'], dict(patch)))
+
+
+async def _handle_update_patch_identity(websocket, data: dict):
+    """WS handler: sync identity update, then background-resolve ground if
+    lat/lon or icao changed and caller didn't supply ground.
+    """
+    if ros_node is None:
+        return
+    try:
+        patch = ros_node.update_patch_identity(dict(data))
+    except ValueError as e:
+        await websocket.send_text(json.dumps({
+            'type': 'patch_error', 'operation': 'update_identity', 'error': str(e),
+        }))
+        return
+
+    coord_or_icao_changed = ('lat_deg' in data or 'lon_deg' in data
+                             or 'icao' in data)
+    if coord_or_icao_changed and 'ground_elevation_m' not in data:
+        _spawn(_resolve_and_followup_identity(patch['patch_id'], dict(patch)))
+
+
 async def _handle_add_patch(websocket, data: dict):
     """Async WS handler: validate, resolve ground elevation (SearchAirports
     for airport patches / SRTM probe for custom), then commit via sync
@@ -2670,6 +2962,21 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 elif msg.get('type') == 'clear_standalone_microburst' and ros_node:
                     ros_node.clear_standalone_microburst(msg.get('data', {}))
+
+                elif msg.get('type') == 'reserve_patch' and ros_node:
+                    _spawn(_handle_reserve_patch(websocket, msg.get('data', {})))
+
+                elif msg.get('type') == 'update_patch_identity' and ros_node:
+                    _spawn(_handle_update_patch_identity(websocket, msg.get('data', {})))
+
+                elif msg.get('type') == 'update_patch_overrides' and ros_node:
+                    try:
+                        ros_node.update_patch_overrides(msg.get('data', {}))
+                    except ValueError as e:
+                        await websocket.send_text(json.dumps({
+                            'type': 'patch_error', 'operation': 'update_overrides',
+                            'error': str(e),
+                        }))
 
                 elif msg.get('type') == 'add_patch' and ros_node:
                     _spawn(_handle_add_patch(websocket, msg.get('data', {})))
