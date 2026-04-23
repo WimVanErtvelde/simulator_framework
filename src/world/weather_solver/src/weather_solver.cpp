@@ -296,18 +296,18 @@ WeatherSolver::AtmoResult WeatherSolver::compute(
     r.visible_moisture     = false;  // proper computation deferred
     r.turbulence_intensity = static_cast<float>(std::clamp(iw.turbulence, 0.0, 1.0));
 
-    // ── Effective runway friction ───────────────────────────────────────────
+    // ── Runway condition index ──────────────────────────────────────────────
     // Patch override replaces global when inside a patch with override_runway.
     // "Apply only on ground" is enforced downstream in the writeback (uses
     // aircraft on_ground state); here we just publish the regional value.
-    uint8_t effective_runway = 0;
+    uint8_t condition_idx = 0;
     if (weather_received_) {
-        effective_runway = weather_.runway_friction;
+        condition_idx = weather_.runway_friction;
         if (active_patch && active_patch->override_runway) {
-            effective_runway = active_patch->runway_friction;
+            condition_idx = active_patch->runway_friction;
         }
     }
-    r.effective_runway_friction = effective_runway;
+    r.runway_condition_idx = condition_idx;
 
     return r;
 }

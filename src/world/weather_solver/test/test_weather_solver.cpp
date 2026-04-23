@@ -503,9 +503,9 @@ TEST(WeatherSolver, PatchRunwayOverrideWhenInside)
 
     // Inside patch — patch friction wins
     auto r_inside = s.compute(0.02, 0.0, 0.0, 60.0, 50.9, 4.5, 0.0);
-    EXPECT_EQ(r_inside.effective_runway_friction, 12);
+    EXPECT_EQ(r_inside.runway_condition_idx, 12);
 
     // Outside — global wins
     auto r_outside = s.compute(0.02, 0.0, 0.0, 60.0, 51.4, 4.5, 0.0);
-    EXPECT_EQ(r_outside.effective_runway_friction, 0);
+    EXPECT_EQ(r_outside.runway_condition_idx, 0);
 }

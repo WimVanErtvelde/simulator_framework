@@ -326,15 +326,15 @@ public:
       });
 
     // Atmosphere writeback — stored and applied synchronously before step().
-    // Also carries the patch-aware effective_runway_friction, driving
-    // surface writeback (Slice 5b-iv — moved here from /world/weather so
-    // patch logic stays centralized in weather_solver).
+    // Also carries the patch-aware runway_condition_idx, driving surface
+    // writeback (Slice 5b-iv — moved here from /world/weather so patch logic
+    // stays centralized in weather_solver).
     atmosphere_sub_ = this->create_subscription<sim_msgs::msg::AtmosphereState>(
       "/world/atmosphere", 10,
       [this](sim_msgs::msg::AtmosphereState::ConstSharedPtr msg) {
         latest_atmosphere_ = *msg;
         atmosphere_received_ = true;
-        latest_runway_friction_ = msg->effective_runway_friction;
+        latest_runway_friction_ = msg->runway_condition_idx;
       });
 
     payload_command_sub_ = this->create_subscription<sim_msgs::msg::PayloadCommand>(
