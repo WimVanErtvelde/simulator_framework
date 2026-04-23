@@ -19,6 +19,8 @@
 #include <CigiAtmosCtrl.h>
 #include <CigiWeatherCtrlV3.h>
 #include <CigiBaseWeatherCtrl.h>
+#include <CigiEnvRgnCtrlV3.h>
+#include <CigiBaseEnvRgnCtrl.h>
 
 namespace cigi_session {
 
@@ -188,6 +190,35 @@ void HostSession::AppendWeatherControl(const WeatherCtrlFields & f) {
     pkt.SetWindDir(wd);
     pkt.SetBaroPress(f.barometric_pressure_hpa);
     pkt.SetAerosol(f.aerosol_concentration_gm3);
+    impl_->ccl.GetOutgoingMsgMgr() << pkt;
+}
+
+void HostSession::AppendEnvRegionControl(std::uint16_t region_id, RegionState state,
+                                           bool merge_weather,
+                                           double lat_deg, double lon_deg,
+                                           float size_x_m, float size_y_m,
+                                           float corner_radius_m, float rotation_deg,
+                                           float transition_perimeter_m) {
+    CigiEnvRgnCtrlV3 pkt;
+    pkt.SetRegionID(region_id);
+    pkt.SetRgnState(static_cast<CigiBaseEnvRgnCtrl::RgnStateGrp>(state));
+    auto merge_mode = merge_weather ? CigiBaseEnvRgnCtrl::Merge
+                                     : CigiBaseEnvRgnCtrl::UseLast;
+    pkt.SetWeatherProp(merge_mode);
+    pkt.SetAerosol(merge_mode);
+    pkt.SetMaritimeSurface(merge_mode);
+    pkt.SetTerrestrialSurface(merge_mode);
+    pkt.SetLat(lat_deg);
+    pkt.SetLon(lon_deg);
+    pkt.SetXSize(size_x_m);
+    pkt.SetYSize(size_y_m);
+    pkt.SetCornerRadius(corner_radius_m);
+    // CCL Rotation range [0, 180]; framework allows 0..360. Normalize.
+    float rot = rotation_deg;
+    while (rot >= 180.0f) rot -= 180.0f;
+    while (rot <    0.0f) rot += 180.0f;
+    pkt.SetRotation(rot);
+    pkt.SetTransition(transition_perimeter_m);
     impl_->ccl.GetOutgoingMsgMgr() << pkt;
 }
 

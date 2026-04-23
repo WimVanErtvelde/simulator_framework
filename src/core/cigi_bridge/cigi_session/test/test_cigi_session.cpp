@@ -5,6 +5,8 @@
 #include <CigiAtmosCtrl.h>
 #include <CigiWeatherCtrlV3.h>
 #include <CigiBaseWeatherCtrl.h>
+#include <CigiEnvRgnCtrlV3.h>
+#include <CigiBaseEnvRgnCtrl.h>
 #include <CigiIGCtrlV3_3.h>
 #include <CigiBaseIGCtrl.h>
 #include <CigiEntityCtrlV3_3.h>
@@ -243,6 +245,36 @@ TEST(CigiSession, WeatherControlRoundTrip) {
     EXPECT_FLOAT_EQ(cigi.GetHorizWindSp(), 3.0f);
     EXPECT_FLOAT_EQ(cigi.GetWindDir(), -140.0f);  // 220° normalized to CCL's [-180,180]
     EXPECT_FLOAT_EQ(cigi.GetBaroPress(), 1010.0f);
+}
+
+TEST(CigiSession, EnvRegionControlRoundTrip) {
+    cigi_session::HostSession sess;
+    sess.BeginFrame(1, 1, 0.0);
+    sess.AppendEnvRegionControl(
+        /*region_id=*/5,
+        cigi_session::HostSession::RegionState::Active,
+        /*merge_weather=*/true,
+        /*lat=*/50.0, /*lon=*/4.0,
+        /*size_x=*/1000.0f, /*size_y=*/500.0f,
+        /*corner_radius=*/50.0f, /*rotation=*/45.0f,
+        /*transition=*/20.0f);
+    auto [buf, len] = sess.FinishFrame();
+    ASSERT_NE(buf, nullptr);
+    ASSERT_GE(len, kIgCtrlSize + 48u);
+
+    CigiEnvRgnCtrlV3 cigi;
+    ASSERT_GE(cigi.Unpack(const_cast<std::uint8_t *>(buf + kIgCtrlSize),
+                          kSameEndianSwap, nullptr), 0);
+    EXPECT_EQ(cigi.GetRegionID(), 5);
+    EXPECT_EQ(cigi.GetRgnState(), CigiBaseEnvRgnCtrl::Active);
+    EXPECT_EQ(cigi.GetWeatherProp(), CigiBaseEnvRgnCtrl::Merge);
+    EXPECT_DOUBLE_EQ(cigi.GetLat(), 50.0);
+    EXPECT_DOUBLE_EQ(cigi.GetLon(), 4.0);
+    EXPECT_FLOAT_EQ(cigi.GetXSize(), 1000.0f);
+    EXPECT_FLOAT_EQ(cigi.GetYSize(), 500.0f);
+    EXPECT_FLOAT_EQ(cigi.GetCornerRadius(), 50.0f);
+    EXPECT_FLOAT_EQ(cigi.GetRotation(), 45.0f);
+    EXPECT_FLOAT_EQ(cigi.GetTransition(), 20.0f);
 }
 
 TEST(CigiSession, HatHotRequestRoundTrip) {

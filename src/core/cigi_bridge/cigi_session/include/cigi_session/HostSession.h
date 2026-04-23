@@ -91,6 +91,18 @@ public:
     };
     void AppendWeatherControl(const WeatherCtrlFields & f);
 
+    // Append an Environmental Region Control (§4.1.9, 48 bytes). Defines a
+    // rectangular (with corner rounding) region for regional weather.
+    enum class RegionState : std::uint8_t {
+        Inactive = 0, Active = 1, Destroyed = 2,
+    };
+    void AppendEnvRegionControl(std::uint16_t region_id, RegionState state,
+                                 bool merge_weather,
+                                 double lat_deg, double lon_deg,
+                                 float size_x_m, float size_y_m,
+                                 float corner_radius_m, float rotation_deg,
+                                 float transition_perimeter_m);
+
     // Finalise the current frame and return a pointer to the wire-format
     // datagram and its length. The buffer is owned by this session and
     // remains valid until the next BeginFrame call.
