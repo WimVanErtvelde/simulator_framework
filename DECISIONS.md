@@ -3374,3 +3374,57 @@ Frontend state-machine bugs discovered during end-to-end validation of 5b-iv —
     `get_state()` reads JSBSim friction properties.
   - `src/systems/gear/src/gear_node.cpp` — copies from FMS to
     GearState at publish time.
+
+## 2026-04-23 — Claude Code (Nosewheel steering wired end-to-end)
+
+- DECIDED: Drive JSBSim's `fcs/steer-cmd-norm` from the arbitrated
+  rudder channel, and read `gear/unit[i]/steering-angle-deg` back
+  into `FlightModelState.wheel_angle_deg[]`. Before this change the
+  nose wheel never turned: the command path wrote `fcs/rudder-cmd-norm`
+  only, and the readback hardcoded `wheel_angle_deg[i] = 0.0f`.
+
+- REASON: Observed during GearState-publish debugging (same day) —
+  nosewheel-angle field stuck at 0 on the wire regardless of pedal
+  input. Tracing showed (a) `flight_model_adapter_node.cpp:388-390`
+  writes rudder-cmd-norm but not steer-cmd-norm; c172p.xml's FCS Yaw
+  channel is aero-only — no internal rudder→steer tie, so JSBSim's
+  FGLGear never received a steering command. (b) `JSBSimAdapter.cpp`
+  in the gear section hardcoded `wheel_angle_deg = 0.0f` instead of
+  reading back the per-bogey steering angle. Both bugs latent since
+  the aircraft first ran on JSBSim — ground handling with pedals had
+  never actually been exercised on C172 before today.
+
+- DATA FLOW:
+  1. Rudder pedals → input_arbitrator → `/aircraft/controls/flight`
+     as `FlightControls.rudder_norm` (unchanged).
+  2. `flight_model_adapter_node` (step 386-404) now writes BOTH
+     `fcs/rudder-cmd-norm` (aero rudder, unchanged) and
+     `fcs/steer-cmd-norm` (ground steering, new) from the same
+     `rudder_norm` value.
+  3. JSBSim's FGLGear multiplies steer-cmd-norm by each bogey's
+     `<max_steer>` (c172p.xml: nose=10°, mains=0°, tail=0°) and
+     sets `gear/unit[i]/steering-angle-deg` each frame.
+  4. `JSBSimAdapter::get_state()` reads `steering-angle-deg` per
+     bogey into `FlightModelState.wheel_angle_deg[i]`.
+  5. `sim_gear` already copies `wheel_angle_deg[0]` into
+     `GearState.nosewheel_angle_deg` (unchanged — was just seeing 0
+     before this fix). IOS / cockpit displays now see live steering.
+
+- DESIGN CHOICE: Direct pass-through rudder_norm → steer-cmd-norm
+  with no gain or speed scheduling. Matches C172's real mechanical
+  rudder↔nosewheel spring link. Per-aircraft steering authority stays
+  in the JSBSim XML (via `<max_steer>`), not in adapter code. If
+  ground handling feels twitchy, gain/schedule tuning is a per-
+  aircraft YAML extension, not an adapter hack.
+
+- AIRCRAFT COVERAGE: Works for any aircraft whose JSBSim XML defines
+  nonzero `<max_steer>` on some bogey (default pattern for tricycle
+  gear). Aircraft that don't (tailwheel types, full helicopter with
+  skids) write to `fcs/steer-cmd-norm` harmlessly — nothing consumes
+  it. No plugin or aircraft-id conditionals needed in the adapter.
+
+- AFFECTS:
+  - `src/core/flight_model_adapter/src/flight_model_adapter_node.cpp`
+    — 1 line added (steer-cmd-norm writeback).
+  - `src/core/flight_model_adapter/src/JSBSimAdapter.cpp` — replace
+    hardcoded zero with per-bogey steering-angle-deg readback.
