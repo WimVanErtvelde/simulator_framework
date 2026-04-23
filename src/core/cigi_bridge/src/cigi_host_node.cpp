@@ -643,7 +643,7 @@ void CigiHostNode::recv_pending()
                 // Normal vector (azimuth @ 28, elevation @ 32) currently unused
 
                 // Only publish HOT when IG reports terrain valid
-                if (ig_status_ != CIGI_SOF_IG_STATUS_OPERATE) { offset += pkt_size; continue; }
+                if (ig_status_ != CIGI_SOF_IG_MODE_OPERATE) { offset += pkt_size; continue; }
                 auto resp = hat_tracker_.resolve(hat_hot_id, hat_m, hot_m, valid,
                                                  surface_type);
                 if (resp && hat_pub_->is_activated()) {
@@ -665,8 +665,9 @@ void CigiHostNode::recv_pending()
                                | (static_cast<uint32_t>(buf[offset + 10]) <<  8)
                                | (static_cast<uint32_t>(buf[offset + 11]));
                 if (ig_status_ != prev) {
-                    static const char * mode_names[] = {"Standby", "Reset", "Operate", "Debug"};
-                    RCLCPP_INFO(get_logger(), "IG status changed: %s → %s",
+                    // CIGI 3.3 IG Mode enum: 0=Reset/Standby, 1=Operate, 2=Debug, 3=Offline
+                    static const char * mode_names[] = {"Standby", "Operate", "Debug", "Offline"};
+                    RCLCPP_INFO(get_logger(), "IG mode changed: %s → %s",
                                 mode_names[prev & 0x03], mode_names[ig_status_ & 0x03]);
                     auto status_msg = std_msgs::msg::UInt8();
                     status_msg.data = ig_status_;
