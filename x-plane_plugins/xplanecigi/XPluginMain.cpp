@@ -52,6 +52,13 @@ static uint16_t g_host_port   = 8001;
 enum class RegenMode { Always, GroundOnly, Never };
 static RegenMode g_regen_mode = RegenMode::GroundOnly;
 
+// Host sim freeze state, driven by OnCompCtrl(class=System, id=SimFreezeState).
+// True whenever the host isn't advancing the scene (instructor freeze or
+// pending reposition). Used to gate regen_weather in ground_or_frozen mode —
+// when frozen, the sim is already paused so a cloud regen isn't visible
+// disruption.
+static bool g_sim_frozen = false;
+
 static const char * regen_mode_name(RegenMode m)
 {
     switch (m) {
@@ -723,16 +730,21 @@ public:
     }
 
     // ── Component Control (host → IG) ───────────────────────────────────
-    // Runway condition is carried as class=GlobalTerrainSurface (8) +
-    // component_id=RunwayFriction (100). The component_state byte is the
-    // 0-15 condition index (Dry/Wet/Standing Water/Snow/Ice/Snow+Ice × 3
-    // severities). Earlier protocol versions used a user-defined 0xCB
-    // packet; migrated to standard Component Control.
+    // Framework Component Control dispatch. Classes used:
+    //   class=GlobalTerrainSurface (8), id=RunwayFriction (100)
+    //       component_state = 0-15 runway condition index (Dry/Wet/
+    //       Standing Water/Snow/Ice/Snow+Ice × 3 severities). Earlier
+    //       protocol versions used a user-defined 0xCB packet.
+    //   class=System (13), id=SimFreezeState (200)
+    //       component_state = 0 (RUNNING) / 1 (FROZEN). Emitted every
+    //       frame by the host; drives regen_weather gating.
     void OnCompCtrl(const cigi_session::CompCtrlFields & f) override
     {
         using cigi_session::GlobalTerrainComponentId;
+        using cigi_session::SystemComponentId;
         constexpr uint8_t CLASS_GLOBAL_TERRAIN =
             static_cast<uint8_t>(8);   // matches HostSession::ComponentClass::GlobalTerrainSurface
+        constexpr uint8_t CLASS_SYSTEM = static_cast<uint8_t>(13);
 
         if (f.component_class == CLASS_GLOBAL_TERRAIN &&
             f.component_id ==
@@ -740,6 +752,20 @@ public:
         {
             pending_wx.runway_condition_idx = f.component_state;
             pending_wx.dirty = true;
+            return;
+        }
+
+        if (f.component_class == CLASS_SYSTEM &&
+            f.component_id ==
+                static_cast<uint16_t>(SystemComponentId::SimFreezeState))
+        {
+            bool new_frozen = (f.component_state != 0);
+            if (new_frozen != g_sim_frozen) {
+                g_sim_frozen = new_frozen;
+                XPLMDebugString(g_sim_frozen
+                    ? "xplanecigi: sim freeze → FROZEN\n"
+                    : "xplanecigi: sim freeze → RUNNING\n");
+            }
             return;
         }
 
