@@ -465,9 +465,10 @@ component class — see Table 9 in §4.1.4 for the standard examples.
 - **Mandatory each frame**: no
 
 Narrow version of Component Control (§4.1.4) for components that need
-at most two 32-bit user words. Half the packet size. Component Class
-field is only 4 bits here (15 → reserved at 16), matching the standard
-class list.
+at most two 32-bit user words. Half the packet size. The Component
+Class field is the same 6-bit width as in the long Component Control;
+the only on-wire difference is that Short Component Control carries 2
+user words instead of 6.
 
 **Fields**
 
@@ -477,8 +478,8 @@ class list.
 | 1      | 1    | Packet Size       | unsigned int8   | 16                                                     | fixed |
 | 2      | 2    | Component ID      | unsigned int16  | same semantics as Component Control                    |       |
 | 4      | 2    | Instance ID       | unsigned int16  | Entity ID / View ID / Region ID / etc.                 |       |
-| 6      | —    | Component Class   | unsigned 4-bit  | 0..15 (Entity..Symbol); 16..63 not encodable           | byte 6, bits 3..0 |
-| 6      | —    | Reserved          | 4-bit           | 0                                                      | byte 6, bits 7..4 |
+| 6      | —    | Component Class   | unsigned 6-bit  | 0..15 (Entity..Symbol); 16..63 Reserved                | byte 6, bits 5..0 |
+| 6      | —    | Reserved          | 2-bit           | 0                                                      | byte 6, bits 7..6 |
 | 7      | 1    | Component State   | unsigned int8   | component-specific                                     |       |
 | 8      | 4    | Component Data 1  | word            | user-defined 32-bit datum                              | byte-swapped as 32-bit |
 | 12     | 4    | Component Data 2  | word            | user-defined                                           |       |
