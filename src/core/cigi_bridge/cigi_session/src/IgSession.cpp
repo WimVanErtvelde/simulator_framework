@@ -255,6 +255,11 @@ void IgSession::BeginFrame(std::uint8_t ig_mode,
                             std::uint32_t ig_frame_number,
                             std::uint32_t last_host_frame) {
     auto & out = impl_->ccl.GetOutgoingMsgMgr();
+    if (impl_->last_msg) {
+        out.FreeMsg();
+        impl_->last_msg = nullptr;
+        impl_->last_len = 0;
+    }
     out.BeginMsg();
 
     CigiSOFV3_2 sof;

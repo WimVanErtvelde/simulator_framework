@@ -28,6 +28,10 @@ find_path(CCL_INCLUDE_DIR
   NO_DEFAULT_PATH
 )
 
+# Prefer the static archive so the cigi_bridge_node has no runtime
+# dependency on libcigicl.so (which lives outside any system path).
+set(_ccl_save_suffixes ${CMAKE_FIND_LIBRARY_SUFFIXES})
+set(CMAKE_FIND_LIBRARY_SUFFIXES ".a" ${CMAKE_FIND_LIBRARY_SUFFIXES})
 find_library(CCL_LIBRARY
   NAMES cigicl CigiCCL
   PATHS
@@ -36,6 +40,7 @@ find_library(CCL_LIBRARY
     ${CMAKE_CURRENT_SOURCE_DIR}/../../../references/CIGI/cigi3.3/ccl/install/lib
     ${CCL_ROOT}/lib
 )
+set(CMAKE_FIND_LIBRARY_SUFFIXES ${_ccl_save_suffixes})
 
 if(NOT CCL_INCLUDE_DIR OR NOT CCL_LIBRARY)
   message(FATAL_ERROR

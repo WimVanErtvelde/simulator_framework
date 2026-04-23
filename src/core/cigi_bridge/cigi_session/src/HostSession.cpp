@@ -107,6 +107,13 @@ HostSession::~HostSession() = default;
 void HostSession::BeginFrame(std::uint32_t frame_cntr, std::uint8_t ig_mode,
                               double timestamp_s) {
     auto & out = impl_->ccl.GetOutgoingMsgMgr();
+    // Release the previous frame's locked buffer (if any) so PackageMsg
+    // finds a non-locked buffer at the head of its queue next time.
+    if (impl_->last_msg) {
+        out.FreeMsg();
+        impl_->last_msg = nullptr;
+        impl_->last_len = 0;
+    }
     out.BeginMsg();
 
     CigiIGCtrlV3_3 ig;
