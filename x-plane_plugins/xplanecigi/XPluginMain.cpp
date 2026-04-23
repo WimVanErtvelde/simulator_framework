@@ -325,8 +325,10 @@ static uint8_t g_ig_mode             = 2;       // from host: 0=Standby, 1=Opera
 static bool    g_probing_terrain     = false;   // true while waiting for terrain stability
 static double  g_last_probe_t        = 0.0;     // last probe wall time
 static int     g_probe_stable_count  = 0;       // consecutive stable probes
-static double  g_prev_lat            = 0.0;     // last entity lat (for probing position)
-static double  g_prev_lon            = 0.0;     // last entity lon
+// Ownship position from the most recent EntityCtrl (entity 0). Used by the
+// terrain stability probe and (Step 5+) by the weather blend.
+static double  g_ownship_lat         = 0.0;
+static double  g_ownship_lon         = 0.0;
 static double  g_last_probe_alt      = 0.0;
 
 // Timing constants (seconds, frame-rate independent)
@@ -479,9 +481,9 @@ public:
         XPLMSetDataf(g_theta, f.pitch_deg);
         XPLMSetDataf(g_psi,   f.yaw_deg);
 
-        // Track entity position for terrain probing
-        g_prev_lat = f.lat_deg;
-        g_prev_lon = f.lon_deg;
+        // Track ownship position for terrain probing and weather blend.
+        g_ownship_lat = f.lat_deg;
+        g_ownship_lon = f.lon_deg;
     }
 
     // ── HAT/HOT Request (host → IG) ──────────────────────────────────────
@@ -1225,7 +1227,7 @@ static float FlightLoopCallback(float, float, int, void *)
             g_last_probe_t = now;
 
             double lx, ly, lz;
-            XPLMWorldToLocal(g_prev_lat, g_prev_lon, 0.0, &lx, &ly, &lz);
+            XPLMWorldToLocal(g_ownship_lat, g_ownship_lon, 0.0, &lx, &ly, &lz);
             XPLMProbeInfo_t info;
             info.structSize = sizeof(info);
             XPLMProbeResult result = XPLMProbeTerrainXYZ(
