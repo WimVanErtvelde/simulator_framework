@@ -21,6 +21,8 @@
 #include <CigiBaseWeatherCtrl.h>
 #include <CigiEnvRgnCtrlV3.h>
 #include <CigiBaseEnvRgnCtrl.h>
+#include <CigiCompCtrlV3_3.h>
+#include <CigiBaseCompCtrl.h>
 
 namespace cigi_session {
 
@@ -219,6 +221,27 @@ void HostSession::AppendEnvRegionControl(std::uint16_t region_id, RegionState st
     while (rot <    0.0f) rot += 180.0f;
     pkt.SetRotation(rot);
     pkt.SetTransition(transition_perimeter_m);
+    impl_->ccl.GetOutgoingMsgMgr() << pkt;
+}
+
+void HostSession::AppendComponentControl(ComponentClass cls,
+                                           std::uint16_t instance_id,
+                                           std::uint16_t component_id,
+                                           std::uint8_t  component_state,
+                                           std::uint32_t d1, std::uint32_t d2,
+                                           std::uint32_t d3, std::uint32_t d4,
+                                           std::uint32_t d5, std::uint32_t d6) {
+    CigiCompCtrlV3_3 pkt;
+    pkt.SetCompClassV3(static_cast<CigiBaseCompCtrl::CompClassV3Grp>(cls));
+    pkt.SetInstanceID(instance_id);
+    pkt.SetCompID(component_id);
+    pkt.SetCompState(component_state);
+    pkt.SetCompData(static_cast<Cigi_uint32>(d1), 0);
+    pkt.SetCompData(static_cast<Cigi_uint32>(d2), 1);
+    pkt.SetCompData(static_cast<Cigi_uint32>(d3), 2);
+    pkt.SetCompData(static_cast<Cigi_uint32>(d4), 3);
+    pkt.SetCompData(static_cast<Cigi_uint32>(d5), 4);
+    pkt.SetCompData(static_cast<Cigi_uint32>(d6), 5);
     impl_->ccl.GetOutgoingMsgMgr() << pkt;
 }
 

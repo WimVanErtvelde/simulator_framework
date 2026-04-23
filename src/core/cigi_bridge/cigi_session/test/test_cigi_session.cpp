@@ -1,12 +1,15 @@
 #include <gtest/gtest.h>
 
 #include "cigi_session/HostSession.h"
+#include "cigi_session/ComponentIds.h"
 
 #include <CigiAtmosCtrl.h>
 #include <CigiWeatherCtrlV3.h>
 #include <CigiBaseWeatherCtrl.h>
 #include <CigiEnvRgnCtrlV3.h>
 #include <CigiBaseEnvRgnCtrl.h>
+#include <CigiCompCtrlV3_3.h>
+#include <CigiBaseCompCtrl.h>
 #include <CigiIGCtrlV3_3.h>
 #include <CigiBaseIGCtrl.h>
 #include <CigiEntityCtrlV3_3.h>
@@ -275,6 +278,30 @@ TEST(CigiSession, EnvRegionControlRoundTrip) {
     EXPECT_FLOAT_EQ(cigi.GetCornerRadius(), 50.0f);
     EXPECT_FLOAT_EQ(cigi.GetRotation(), 45.0f);
     EXPECT_FLOAT_EQ(cigi.GetTransition(), 20.0f);
+}
+
+// Runway friction uses standard Component Control with Class=8
+// (GlobalTerrainSurface), ID=100 (GlobalTerrainComponentId::RunwayFriction),
+// State=friction level 0..15. Replaces the user-defined 0xCB packet with
+// a spec-conformant CIGI encoding every CCL-based IG can dispatch.
+TEST(CigiSession, ComponentControlRunwayFriction) {
+    cigi_session::HostSession sess;
+    sess.BeginFrame(1, 1, 0.0);
+    sess.AppendComponentControl(
+        cigi_session::HostSession::ComponentClass::GlobalTerrainSurface,
+        /*instance=*/0,
+        static_cast<std::uint16_t>(cigi_session::GlobalTerrainComponentId::RunwayFriction),
+        /*state=*/7);  // wet
+    auto [buf, len] = sess.FinishFrame();
+    ASSERT_NE(buf, nullptr);
+    ASSERT_GE(len, kIgCtrlSize + 32u);
+
+    CigiCompCtrlV3_3 cigi;
+    ASSERT_GE(cigi.Unpack(const_cast<std::uint8_t *>(buf + kIgCtrlSize),
+                          kSameEndianSwap, nullptr), 0);
+    EXPECT_EQ(cigi.GetCompClassV3(), CigiBaseCompCtrl::GlobalTerrainSurfaceV3);
+    EXPECT_EQ(cigi.GetCompID(), 100);
+    EXPECT_EQ(cigi.GetCompState(), 7);
 }
 
 TEST(CigiSession, HatHotRequestRoundTrip) {

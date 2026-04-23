@@ -103,6 +103,33 @@ public:
                                  float corner_radius_m, float rotation_deg,
                                  float transition_perimeter_m);
 
+    // Append a Component Control (§4.1.4, 32 bytes). Six 32-bit data words.
+    enum class ComponentClass : std::uint8_t {
+        Entity               = 0,
+        View                 = 1,
+        ViewGroup            = 2,
+        Sensor               = 3,
+        RegionalSeaSurface   = 4,
+        RegionalTerrain      = 5,
+        RegionalLayeredWx    = 6,
+        GlobalSeaSurface     = 7,
+        GlobalTerrainSurface = 8,
+        GlobalLayeredWx      = 9,
+        Atmosphere           = 10,
+        CelestialSphere      = 11,
+        Event                = 12,
+        System               = 13,
+        SymbolSurface        = 14,
+        Symbol               = 15,
+    };
+    void AppendComponentControl(ComponentClass cls,
+                                 std::uint16_t instance_id,
+                                 std::uint16_t component_id,
+                                 std::uint8_t  component_state,
+                                 std::uint32_t data1 = 0, std::uint32_t data2 = 0,
+                                 std::uint32_t data3 = 0, std::uint32_t data4 = 0,
+                                 std::uint32_t data5 = 0, std::uint32_t data6 = 0);
+
     // Finalise the current frame and return a pointer to the wire-format
     // datagram and its length. The buffer is owned by this session and
     // remains valid until the next BeginFrame call.
