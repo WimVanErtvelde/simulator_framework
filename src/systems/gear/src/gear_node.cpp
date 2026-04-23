@@ -174,10 +174,14 @@ public:
       [this, dt_sec]() {
         if (!model_) return;
 
-        // Gate: if FDM handles gear natively, don't run our solver
-        bool mode_is_ours = !latest_caps_ ||
-          latest_caps_->gear_retract != sim_msgs::msg::FlightModelCapabilities::FDM_NATIVE;
-        if (!mode_is_ours) return;
+        // Historical note: this path previously `return`ed early when
+        // gear_retract == FDM_NATIVE, under the rationale "don't run our
+        // solver if the FDM owns gear". For the current C172 plugin
+        // update() is pure projection of FMS WoW/steering into local
+        // state (no retraction solver), so skipping it left WoW stale in
+        // the published GearState. Always publish; if a future retractable
+        // plugin needs to avoid fighting an FDM-native retraction model,
+        // gating belongs inside that plugin, not here.
 
         bool running = (sim_state_ == sim_msgs::msg::SimState::STATE_INIT ||
                         sim_state_ == sim_msgs::msg::SimState::STATE_READY ||
