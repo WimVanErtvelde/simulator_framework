@@ -1684,7 +1684,166 @@ of a symbol. Each `Attribute Value` field is interpreted per the matching
 ## IG → Host packets
 
 ### 0x65 — Start of Frame
-*TODO*
+
+- **Direction**: IG → Host
+- **Opcode**: 101 / 0x65
+- **Total size**: 24 bytes
+- **ICD section**: §4.2.1 (PDF page 224)
+- **Mandatory each frame**: **yes** — every IG→Host datagram must start with exactly one Start of Frame
+
+Signals the beginning of a new IG frame. Carries the IG mode, database load
+state, byte-swap magic number, frame number, timestamp, and Host frame number
+echo for round-trip latency calculation.
+
+**Fields**
+
+| Offset | Size | Name                  | Type            | Range / Values                                                       | Notes |
+|-------:|-----:|-----------------------|-----------------|----------------------------------------------------------------------|-------|
+| 0      | 1    | Packet ID             | unsigned int8   | 101                                                                  | fixed |
+| 1      | 1    | Packet Size           | unsigned int8   | 24                                                                   | fixed |
+| 2      | 1    | Major Version         | unsigned int8   | 3                                                                    | CIGI 3.x |
+| 3      | 1    | Database Number       | int8            | 0 IG controls loading; 1..127 loaded; -1..-127 loading; -128 unavailable | sign-flip handshake with IG Control |
+| 4      | 1    | IG Status Code        | unsigned int8   | 0 Normal; 1..255 IG-defined error codes                              | highest-priority error wins |
+| 5      | —    | IG Mode (\*1)         | unsigned 2-bit  | 0 Reset/Standby, 1 Operate, 2 Debug, 3 Offline Maintenance           | byte 5, bits 1..0 |
+| 5      | —    | Timestamp Valid (\*2) | 1-bit           | 0 Invalid / 1 Valid                                                  | byte 5, bit 2; required Valid in async |
+| 5      | —    | Earth Reference Model (\*3) | 1-bit     | 0 WGS 84 / 1 Host-Defined                                            | byte 5, bit 3 |
+| 5      | —    | Minor Version         | 4-bit field     | 2 (CIGI 3.3)                                                         | byte 5, bits 7..4 |
+| 6      | 2    | Byte Swap Magic Number| unsigned int16  | **0x8000** when no swap needed; receiver checks for 0x80 in low byte | sender always writes 0x8000 |
+| 8      | 4    | IG Frame Number       | unsigned int32  | monotonic, +1 each frame                                             | independent of Host Frame Number |
+| 12     | 4    | Timestamp             | unsigned int32  | 10 µs ticks since arbitrary reference                                | required in async; rollover ~12h |
+| 16     | 4    | Last Host Frame Number| unsigned int32  | echo of last received IG Control `Host Frame Number`                 | latency measurement |
+| 20     | 4    | Reserved              | —               | 0                                                                    | 8-byte alignment |
+
+**Usage notes**
+- `IG Mode` = Offline Maintenance is *report-only* — Host cannot command it via
+  IG Control. Must be set from the IG's UI; Host must wait for IG to drop back
+  to Reset/Standby before sending any further mode commands.
+- `Database Number` < 0 means the IG is loading; Host should not assume any
+  prior entity definitions still exist.
+
+### 0x66 — HAT/HOT Response
+
+- **Direction**: IG → Host
+- **Opcode**: 102 / 0x66
+- **Total size**: 16 bytes
+- **ICD section**: §4.2.2 (PDF page 229)
+- **Mandatory each frame**: no — sent in response to `HAT/HOT Request` with Request Type = HAT (0) or HOT (1)
+
+Returns either the Height Above Terrain or Height Of Terrain at a test point.
+For HAT + HOT in one packet plus material code and surface normal, see
+HAT/HOT Extended Response (§4.2.3).
+
+**Fields**
+
+| Offset | Size | Name                  | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-----------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID             | unsigned int8   | 102                                             | fixed |
+| 1      | 1    | Packet Size           | unsigned int8   | 16                                              | fixed |
+| 2      | 2    | HAT/HOT ID            | unsigned int16  | echo of request                                 |       |
+| 4      | —    | Valid (\*1)           | 1-bit           | 0 Invalid (point outside DB) / 1 Valid          | byte 4, bit 0 |
+| 4      | —    | Response Type (\*2)   | 1-bit           | 0 HAT / 1 HOT                                   | byte 4, bit 1 |
+| 4      | —    | Reserved (\*3)        | 2-bit           | 0                                               | byte 4, bits 3..2 |
+| 4      | —    | Host Frame Number LSN (\*4) | 4-bit     | least-significant nybble of `Host Frame Number` | byte 4, bits 7..4; ignored if Update Period was 0 |
+| 5      | 3    | Reserved              | —               | 0                                               |       |
+| 8      | 8    | Height                | double float    | metres                                          | datum: HAT → terrain/sea; HOT → MSL |
+
+### 0x67 — HAT/HOT Extended Response
+
+- **Direction**: IG → Host
+- **Opcode**: 103 / 0x67
+- **Total size**: 40 bytes
+- **ICD section**: §4.2.3 (PDF page 231)
+- **Mandatory each frame**: no — response to `HAT/HOT Request` with Request Type = Extended (2)
+
+Carries HAT *and* HOT plus the material code and surface-normal vector at the
+intersected terrain.
+
+**Fields**
+
+| Offset | Size | Name                          | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-------------------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID                     | unsigned int8   | 103                                             | fixed |
+| 1      | 1    | Packet Size                   | unsigned int8   | 40                                              | fixed |
+| 2      | 2    | HAT/HOT ID                    | unsigned int16  | echo of request                                 |       |
+| 4      | —    | Valid (\*1)                   | 1-bit           | 0 Invalid / 1 Valid                             | byte 4, bit 0 |
+| 4      | —    | Reserved                      | 3-bit           | 0                                               | byte 4, bits 3..1 |
+| 4      | —    | Host Frame Number LSN (\*2)   | 4-bit           | LSN of last received Host Frame Number          | byte 4, bits 7..4 |
+| 5      | 3    | Reserved                      | —               | 0                                               |       |
+| 8      | 8    | HAT                           | double float    | metres above terrain (negative → below)         | datum: terrain/sea |
+| 16     | 8    | HOT                           | double float    | metres MSL                                      | datum: MSL |
+| 24     | 4    | Material Code                 | unsigned int32  | IG-defined                                      |       |
+| 28     | 4    | Normal Vector Azimuth         | single float    | -180.0 .. +180.0 deg from True North            |       |
+| 32     | 4    | Normal Vector Elevation       | single float    | -90.0 .. +90.0 deg from geodetic reference plane |      |
+| 36     | 4    | Reserved                      | —               | 0                                               | 8-byte alignment |
+
+**Usage notes**
+- Codebase-specific: our X-Plane plugin emits a custom 48-byte response with
+  surface_type @24 (octet), static_friction @28 and rolling_friction @32 —
+  *not* CIGI 3.3 standard. See "Notes for this codebase" §3 at the top of this file.
+
+### 0x68 — Line of Sight Response
+
+- **Direction**: IG → Host
+- **Opcode**: 104 / 0x68
+- **Total size**: 16 bytes
+- **ICD section**: §4.2.4 (PDF page 234)
+- **Mandatory each frame**: no — response to `LOS Segment Request` or `LOS Vector Request` with Request Type = Basic (0)
+
+Carries the range from the LOS source point to one intersection. One response
+packet *per intersection*; `Response Count` tells the Host how many to expect.
+
+**Fields**
+
+| Offset | Size | Name                          | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-------------------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID                     | unsigned int8   | 104                                             | fixed |
+| 1      | 1    | Packet Size                   | unsigned int8   | 16                                              | fixed |
+| 2      | 2    | LOS ID                        | unsigned int16  | echo of request                                 |       |
+| 4      | —    | Valid (\*1)                   | 1-bit           | 0 Invalid (no intersection / out of range) / 1 Valid | byte 4, bit 0 |
+| 4      | —    | Entity ID Valid (\*2)         | 1-bit           | 0 Invalid (intersection is non-entity) / 1 Valid | byte 4, bit 1 |
+| 4      | —    | Visible (\*3)                 | 1-bit           | 0 Occluded / 1 Visible                          | byte 4, bit 2; only meaningful for Segment requests |
+| 4      | —    | Reserved (\*4)                | 1-bit           | 0                                               | byte 4, bit 3 |
+| 4      | —    | Host Frame Number LSN (\*5)   | 4-bit           | LSN of last received Host Frame Number          | byte 4, bits 7..4 |
+| 5      | 1    | Response Count                | unsigned int8   | total number of response packets for this request | Visible = 1 → Response Count = 1 |
+| 6      | 2    | Entity ID                     | unsigned int16  | intersected entity                              | only valid if Entity ID Valid = 1 |
+| 8      | 8    | Range                         | double float    | metres from LOS source to intersection          |       |
+
+### 0x69 — Line of Sight Extended Response
+
+- **Direction**: IG → Host
+- **Opcode**: 105 / 0x69
+- **Total size**: 56 bytes
+- **ICD section**: §4.2.5 (PDF page 237)
+- **Mandatory each frame**: no — response to `LOS Segment/Vector Request` with Request Type = Extended (1)
+
+Adds intersection point (geodetic or entity-relative), surface RGBA, material
+code, and surface-normal vector to the basic LOS response.
+
+**Fields**
+
+| Offset | Size | Name                              | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-----------------------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID                         | unsigned int8   | 105                                             | fixed |
+| 1      | 1    | Packet Size                       | unsigned int8   | 56                                              | fixed |
+| 2      | 2    | LOS ID                            | unsigned int16  | echo of request                                 |       |
+| 4      | —    | Valid (\*1)                       | 1-bit           | 0/1                                             | byte 4, bit 0 |
+| 4      | —    | Entity ID Valid (\*2)             | 1-bit           | 0/1                                             | byte 4, bit 1 |
+| 4      | —    | Range Valid (\*3)                 | 1-bit           | 0/1                                             | byte 4, bit 2; always 0 for Segment requests |
+| 4      | —    | Visible (\*4)                     | 1-bit           | 0 Occluded / 1 Visible                          | byte 4, bit 3 |
+| 4      | —    | Host Frame Number LSN (\*5)       | 4-bit           | LSN of last received Host Frame Number          | byte 4, bits 7..4 |
+| 5      | 1    | Response Count                    | unsigned int8   | total response packets for this request         |       |
+| 6      | 2    | Entity ID                         | unsigned int16  | intersected entity (when Entity ID Valid = 1)   |       |
+| 8      | 8    | Range                             | double float    | metres from LOS source to intersection          |       |
+| 16     | 8    | Latitude / X Offset               | double float    | deg or metres                                   | per Response Coordinate System of request |
+| 24     | 8    | Longitude / Y Offset              | double float    | deg or metres                                   |       |
+| 32     | 8    | Altitude / Z Offset               | double float    | metres MSL or metres                            |       |
+| 40     | 1    | Red                               | unsigned int8   | 0..255                                          | surface colour at intersection |
+| 41     | 1    | Green                             | unsigned int8   | 0..255                                          |       |
+| 42     | 1    | Blue                              | unsigned int8   | 0..255                                          |       |
+| 43     | 1    | Alpha                             | unsigned int8   | 0..255                                          |       |
+| 44     | 4    | Material Code                     | unsigned int32  | IG-defined                                      |       |
+| 48     | 4    | Normal Vector Azimuth             | single float    | -180.0 .. +180.0 deg from True North            |       |
+| 52     | 4    | Normal Vector Elevation           | single float    | -90.0 .. +90.0 deg from geodetic ref plane      |       |
 
 ### 0x66 — HAT/HOT Response
 *TODO*
@@ -1699,7 +1858,128 @@ of a symbol. Each `Attribute Value` field is interpreted per the matching
 *TODO*
 
 ### 0x6A — Sensor Response
-*TODO*
+
+- **Direction**: IG → Host
+- **Opcode**: 106 / 0x6A
+- **Total size**: 24 bytes
+- **ICD section**: §4.2.6 (PDF page 244)
+- **Mandatory each frame**: conditional — every frame the sensor is on AND track mode ≠ Off, when Sensor Control's Response Type = Normal (0)
+
+Reports the sensor gate symbol size and position on the sensor display. The
+gate position is the (azimuth, elevation) angle from the sensor's viewing
+vector to the centre of the track point.
+
+**Fields**
+
+| Offset | Size | Name                  | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-----------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID             | unsigned int8   | 106                                             | fixed |
+| 1      | 1    | Packet Size           | unsigned int8   | 24                                              | fixed |
+| 2      | 2    | View ID               | unsigned int16  | view representing the sensor display            |       |
+| 4      | 1    | Sensor ID             | unsigned int8   | sensor whose gate is reported                   |       |
+| 5      | —    | Sensor Status (\*1)   | unsigned 2-bit  | 0 Searching for target, 1 Tracking target, 2 Impending breaklock, 3 Breaklock | byte 5, bits 1..0 |
+| 5      | —    | Reserved              | 6-bit           | 0                                               | byte 5, bits 7..2 |
+| 6      | 2    | Reserved              | —               | 0                                               |       |
+| 8      | 2    | Gate X Size           | unsigned int16  | pixels or raster lines (per display orientation) |      |
+| 10     | 2    | Gate Y Size           | unsigned int16  | pixels or raster lines                          |       |
+| 12     | 4    | Gate X Position       | single float    | deg (horizontal angle from viewing vector to gate centre) |  |
+| 16     | 4    | Gate Y Position       | single float    | deg (vertical angle from viewing vector)        |       |
+| 20     | 4    | Host Frame Number     | unsigned int32  | full Host Frame Number at calculation time      | latency calc |
+
+### 0x6B — Sensor Extended Response
+
+- **Direction**: IG → Host
+- **Opcode**: 107 / 0x6B
+- **Total size**: 48 bytes
+- **ICD section**: §4.2.7 (PDF page 247)
+- **Mandatory each frame**: conditional — like Sensor Response, but when Response Type = Extended (1)
+
+Carries gate size/position *plus* the geodetic position of the track point and
+the entity ID of the target.
+
+**Fields**
+
+| Offset | Size | Name                          | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-------------------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID                     | unsigned int8   | 107                                             | fixed |
+| 1      | 1    | Packet Size                   | unsigned int8   | 48                                              | fixed |
+| 2      | 2    | View ID                       | unsigned int16  | view representing the sensor display            |       |
+| 4      | 1    | Sensor ID                     | unsigned int8   |                                                 |       |
+| 5      | —    | Sensor Status (\*1)           | unsigned 2-bit  | 0 Searching, 1 Tracking, 2 Impending Breaklock, 3 Breaklock | byte 5, bits 1..0 |
+| 5      | —    | Entity ID Valid (\*2)         | 1-bit           | 0 Invalid (non-entity target) / 1 Valid         | byte 5, bit 2 |
+| 5      | —    | Reserved                      | 5-bit           | 0                                               | byte 5, bits 7..3 |
+| 6      | 2    | Entity ID                     | unsigned int16  | target entity (when Entity ID Valid = 1)        |       |
+| 8      | 2    | Gate X Size                   | unsigned int16  | pixels / raster lines                           |       |
+| 10     | 2    | Gate Y Size                   | unsigned int16  | pixels / raster lines                           |       |
+| 12     | 4    | Gate X Offset                 | single float    | deg from viewing vector                         | called Position in §4.2.6 |
+| 16     | 4    | Gate Y Offset                 | single float    | deg from viewing vector                         |       |
+| 20     | 4    | Host Frame Number             | unsigned int32  | full Host Frame Number at calculation time      |       |
+| 24     | 8    | Track Point Latitude          | double float    | -90.0 .. +90.0 deg                              | only valid when Sensor Status = 1 or 2 |
+| 32     | 8    | Track Point Longitude         | double float    | -180.0 .. +180.0 deg                            |       |
+| 40     | 8    | Track Point Altitude          | double float    | metres MSL                                      |       |
+
+### 0x6C — Position Response
+
+- **Direction**: IG → Host
+- **Opcode**: 108 / 0x6C
+- **Total size**: 48 bytes
+- **ICD section**: §4.2.8 (PDF page 250)
+- **Mandatory each frame**: no — response to `Position Request` (§4.1.27)
+
+Reports current pose of an entity, articulated part, view, view group, or
+motion tracker.
+
+**Fields**
+
+| Offset | Size | Name                  | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-----------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID             | unsigned int8   | 108                                             | fixed |
+| 1      | 1    | Packet Size           | unsigned int8   | 48                                              | fixed |
+| 2      | 2    | Object ID             | unsigned int16  | target object (per Object Class)                |       |
+| 4      | 1    | Articulated Part ID   | unsigned int8   | only valid when Object Class = Articulated Part |       |
+| 5      | —    | Object Class (\*1)    | unsigned 3-bit  | 0 Entity, 1 Articulated Part, 2 View, 3 View Group, 4 Motion Tracker | byte 5, bits 2..0 |
+| 5      | —    | Coordinate System (\*2) | unsigned 2-bit | 0 Geodetic, 1 Parent Entity, 2 Submodel        | byte 5, bits 4..3 |
+| 5      | —    | Reserved              | 3-bit           | 0                                               | byte 5, bits 7..5 |
+| 6      | 2    | Reserved              | —               | 0                                               |       |
+| 8      | 8    | Latitude / X Offset   | double float    | deg or metres                                   | per Coordinate System |
+| 16     | 8    | Longitude / Y Offset  | double float    | deg or metres                                   |       |
+| 24     | 8    | Altitude / Z Offset   | double float    | metres MSL or metres                            |       |
+| 32     | 4    | Roll                  | single float    | -180.0 .. +180.0 deg                            |       |
+| 36     | 4    | Pitch                 | single float    | -90.0 .. +90.0 deg                              |       |
+| 40     | 4    | Yaw                   | single float    | 0.0 .. 360.0 deg                                |       |
+| 44     | 4    | Reserved              | —               | 0                                               | 8-byte alignment |
+
+**Usage notes**
+- For Motion Tracker (Object Class = 4), Coordinate System is ignored — position
+  is always reported in the tracker's own boresight frame.
+- Parent Entity coordinate system is invalid for top-level entities.
+
+### 0x6D — Weather Conditions Response
+
+- **Direction**: IG → Host
+- **Opcode**: 109 / 0x6D
+- **Total size**: 32 bytes
+- **ICD section**: §4.2.9 (PDF page 255)
+- **Mandatory each frame**: no — response to `Environmental Conditions Request` with Request Type bit 4 (Weather Conditions = 4) set
+
+Reports the weather state (humidity, temperature, visibility, wind, pressure)
+at the requested geodetic point.
+
+**Fields**
+
+| Offset | Size | Name                  | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-----------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID             | unsigned int8   | 109                                             | fixed |
+| 1      | 1    | Packet Size           | unsigned int8   | 32                                              | fixed |
+| 2      | 1    | Request ID            | unsigned int8   | echo of request                                 |       |
+| 3      | 1    | Humidity              | unsigned int8   | 0..100 %                                        |       |
+| 4      | 4    | Air Temperature       | single float    | °C                                              |       |
+| 8      | 4    | Visibility Range      | single float    | metres, ≥ 0                                     |       |
+| 12     | 4    | Horizontal Wind Speed | single float    | m/s, ≥ 0                                        | datum: ellipsoid-tangential ref plane |
+| 16     | 4    | Vertical Wind Speed   | single float    | m/s; +ve = updraft                              |       |
+| 20     | 4    | Wind Direction        | single float    | 0..360 deg from True North (wind FROM)          |       |
+| 24     | 4    | Barometric Pressure   | single float    | mb / hPa, ≥ 0                                   |       |
+| 28     | 4    | Reserved              | —               | 0                                               |       |
 
 ### 0x6B — Sensor Extended Response
 *TODO*
