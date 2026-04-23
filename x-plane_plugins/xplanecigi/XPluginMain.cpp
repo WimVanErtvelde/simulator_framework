@@ -399,26 +399,41 @@ static uint8_t xp_surface_to_framework(int xp_type)
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Send CIGI 3.3 Start-of-Frame (SOF) to host
+// Send CIGI 3.3 Start-of-Frame (SOF, §4.2.1, 24 bytes) to host
+//   Byte 0:    Packet ID = 0x65 (101)
+//   Byte 1:    Packet Size = 24
+//   Byte 2:    Major Version = 3
+//   Byte 3:    Database Number (int8; 0 = no DB loading)
+//   Byte 4:    IG Status Code (0 = Normal)
+//   Byte 5:    bitfield — Minor Version (4 bits, =2) | ERM (1, WGS84=0) |
+//              Timestamp Valid (1, =0) | IG Mode (2 bits, LSB)
+//   Byte 6-7:  Byte Swap Magic Number = 0x8000
+//   Byte 8-11: IG Frame Number (uint32 BE)
+//   Byte 12-15:Timestamp (uint32 BE, unused)
+//   Byte 16-19:Last Host Frame Number (uint32 BE)
+//   Byte 20-23:Reserved
 // ─────────────────────────────────────────────────────────────────────────────
 static void send_sof()
 {
     if (g_send_sock == INVALID_SOCKET) return;
 
-    uint8_t buf[32] = {};
-    buf[0] = 0x65;   // Packet ID = 101 (Start of Frame, CIGI 3.3 IG→Host)
-    buf[1] = 0x20;   // Packet Size = 32
-    buf[2] = 0x00;   // DB Number = 0 (database load complete)
-    buf[3] = 0x00;   // IG Status Code = 0 (OK)
-    buf[4] = g_probing_terrain ? 0x00 : 0x02;  // Standby while probing terrain, Normal when ready
-    // buf[5..7] = 0 (Timestamp Valid=0, ERM=WGS84)
-    // buf[8..11] = 0 (simulation timestamp — not used)
-    write_be32(buf + 12, g_host_frame);   // echo host frame counter
-    write_be32(buf + 16, g_ig_frame);     // IG frame counter
-    // buf[20..31] = 0
+    uint8_t buf[24] = {};
+    buf[0] = 0x65;   // Packet ID
+    buf[1] = 24;     // Packet Size
+    buf[2] = 3;      // Major Version
+    buf[3] = 0;      // Database Number — load complete / no load
+    buf[4] = 0;      // IG Status Code = Normal
+    // IG Mode = Standby (0) while probing terrain, Operate (1) when ready
+    // Minor Version = 2 (bits 7..4), TimestampValid=0, ERM=WGS84
+    buf[5] = static_cast<uint8_t>((2u << 4) | (g_probing_terrain ? 0u : 1u));
+    write_be16(buf + 6,  0x8000);            // Byte Swap Magic Number
+    write_be32(buf + 8,  g_ig_frame);        // IG Frame Number
+    // buf[12..15] = 0 (Timestamp not used)
+    write_be32(buf + 16, g_host_frame);      // Last Host Frame Number echo
+    // buf[20..23] = 0 (Reserved)
 
     sendto(g_send_sock,
-           reinterpret_cast<const char *>(buf), 32, 0,
+           reinterpret_cast<const char *>(buf), 24, 0,
            reinterpret_cast<const struct sockaddr *>(&g_host_addr),
            sizeof(g_host_addr));
 }
@@ -436,32 +451,38 @@ static void process_packet(const uint8_t * pkt, int len)
 
     switch (packet_id)
     {
-    // ── IG Control (host → IG) ─────────────────────────────────────────────
-    // Byte 3 bits[1:0] = IG Mode: 0=Standby, 1=Reset, 2=Operate
+    // ── IG Control (host → IG) — CIGI 3.3 §4.1.1, 24 bytes ────────────────
+    //   Byte 4 bitfield: bits 1..0 = IG Mode (0=Standby, 1=Reset, 2=Operate),
+    //                    bit  2    = Timestamp Valid,
+    //                    bits 7..4 = Minor Version
+    //   Byte 8-11        = Host Frame Number (uint32 BE)
     case 0x01:
-        if (packet_size >= 12) {
+        if (packet_size >= 24) {
             g_host_frame = read_be32(pkt + 8);
-            uint8_t new_mode = pkt[3] & 0x03;
+            uint8_t new_mode = pkt[4] & 0x03;
             if (new_mode != g_ig_mode) {
                 char dbg[128];
-                static const char * mode_names[] = {"Standby", "Reset", "Operate", "Debug"};
+                // CIGI 3.3 IG Mode enum: 0=Reset/Standby, 1=Operate, 2=Debug
+                static const char * mode_names[] = {"Standby", "Operate", "Debug", "Offline"};
                 snprintf(dbg, sizeof(dbg), "xplanecigi: IG Mode %s → %s\n",
                          mode_names[g_ig_mode & 0x03], mode_names[new_mode & 0x03]);
                 XPLMDebugString(dbg);
 
-                // Reset → Operate transition: begin terrain probe stability check
-                if (g_ig_mode == 1 && new_mode == 2) {
+                // Standby → Operate transition: framework's reset/reposition
+                // signal (host sends Standby for one frame, then Operate).
+                // Begin terrain probe stability check.
+                if (g_ig_mode == 0 && new_mode == 1) {
                     g_probing_terrain = true;
                     g_probe_stable_count = 0;
                     g_last_probe_t = 0.0;
                     g_last_probe_alt = 0.0;
-                    XPLMDebugString("xplanecigi: terrain probing started (Reset → Operate)\n");
+                    XPLMDebugString("xplanecigi: terrain probing started (Standby → Operate)\n");
                 }
-                // Entering Reset: host signals reposition or startup reset.
+                // Entering Standby: host signals reposition or startup reset.
                 // Erase all regional weather samples, clear tracking state,
                 // trigger visual refresh. Slice 3c.
-                if (new_mode == 1 && g_ig_mode != 1) {
-                    XPLMDebugString("xplanecigi: entering Reset — cleaning up regional weather\n");
+                if (new_mode == 0 && g_ig_mode != 0) {
+                    XPLMDebugString("xplanecigi: entering Standby — cleaning up regional weather\n");
                     cleanup_regional_weather();
                 }
                 g_ig_mode = new_mode;
@@ -514,19 +535,21 @@ static void process_packet(const uint8_t * pkt, int len)
         }
         break;
 
-    // ── HAT/HOT Request (host → IG) ──────────────────────────────────────
-    // CIGI 3.3, Packet ID = 0x18, Size = 32 bytes
-    //   [2-3]   Request ID (uint16 BE)
-    //   [4]     Request Type bits[1:0] (0=HAT, 1=HOT, 2=Extended)
-    //   [12-19] Latitude  (float64 BE, degrees)
-    //   [20-27] Longitude (float64 BE, degrees)
-    //   [28-31] Altitude  (float32 BE, metres — ignored for HOT)
+    // ── HAT/HOT Request (host → IG) — CIGI 3.3 §4.1.24, 32 bytes ─────────
+    //   [2-3]   HAT/HOT ID (uint16 BE) — host correlation
+    //   [4]     bitfield [1:0] Request Type (0=HAT, 1=HOT, 2=Extended),
+    //                    [2]   Coordinate System (0=Geodetic, 1=Entity)
+    //   [5]     Update Period (0 = one-shot)
+    //   [6-7]   Entity ID (used in Entity coord system)
+    //   [8-15]  Latitude / X Offset  (double BE, deg or metres)
+    //   [16-23] Longitude / Y Offset (double BE, deg or metres)
+    //   [24-31] Altitude / Z Offset  (double BE, m MSL — ignored for HOT)
     case 0x18:
         if (packet_size >= 32 && g_terrain_probe && g_send_sock != INVALID_SOCKET)
         {   // Always respond — host side decides whether to trust based on timing
             const uint16_t req_id  = read_be16(pkt + 2);
-            const double   lat_deg = read_be_double(pkt + 12);
-            const double   lon_deg = read_be_double(pkt + 20);
+            const double   lat_deg = read_be_double(pkt + 8);
+            const double   lon_deg = read_be_double(pkt + 16);
 
             // Convert geodetic to X-Plane local coords
             double lx, ly, lz;
