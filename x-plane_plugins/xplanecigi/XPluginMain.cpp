@@ -1285,6 +1285,36 @@ static void cleanup_regional_weather()
 // ─────────────────────────────────────────────────────────────────────────────
 static float WeatherFlightLoopCb(float, float, int, void *)
 {
+    // ── Blend-at-ownship evaluation (PluginWeatherMode::BlendAtOwnship) ──
+    // Re-blends effective weather from global + active patches at ownship
+    // whenever a trigger fires and the blend rate limit allows. On success
+    // overwrites pending_wx with the blended result and forces a dataref
+    // write via the dirty flag below.
+    if (g_plugin_weather_mode == PluginWeatherMode::BlendAtOwnship) {
+        const double now = XPLMGetElapsedTime();
+
+        bool trigger = g_blend_dirty;
+        if (!trigger && ownship_crossed_zone_boundary()) trigger = true;
+        if (!trigger && (now - g_last_blend_time) > BLEND_SMOOTH_RECOMPUTE_S) {
+            const double dmoved = approx_distance_m(
+                g_last_blend_lat, g_last_blend_lon,
+                g_ownship_lat,    g_ownship_lon);
+            if (dmoved > BLEND_SMOOTH_MIN_MOVE_M && any_patch_active_at_ownship()) {
+                trigger = true;
+            }
+        }
+
+        if (trigger && (now - g_last_blend_time) >= BLEND_MIN_INTERVAL_S) {
+            const bool prev_cloud_changed = pending_wx.cloud_changed;
+            PendingWeather eff = blend_weather_at_ownship();
+            pending_wx = eff;
+            pending_wx.cloud_changed = prev_cloud_changed || eff.cloud_changed;
+            pending_wx.dirty = true;
+            g_blend_dirty = false;
+        }
+        // else: g_blend_dirty stays set; next permitted tick retries.
+    }
+
     // Global weather writes — gated on pending_wx.dirty (existing behavior).
     if (pending_wx.dirty) {
 
@@ -1368,18 +1398,36 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     if (dr_update_immediately)
         XPLMSetDatai(dr_update_immediately, 0);
 
+    // Regen_weather firing rule (per DECISIONS.md 2026-04-23 design). Fires
+    // only when cloud_changed AND gate satisfied AND ≥REGEN_DEBOUNCE_S since
+    // last regen. When the gate isn't satisfied (e.g. mid-flight under
+    // ground_or_frozen), cloud_changed is KEPT — deferred until next ground
+    // touch or freeze. The debounce only guards against a gate-flip double
+    // fire when multiple mutations accumulated before gate opened.
     if (pending_wx.cloud_changed && cmd_regen_weather) {
-        bool fire = false;
+        bool gate_ok = false;
         switch (g_regen_mode) {
-            case RegenMode::Always:     fire = true;  break;
-            case RegenMode::Never:      fire = false; break;
+            case RegenMode::Always:         gate_ok = true;  break;
+            case RegenMode::Never:          gate_ok = false; break;
             case RegenMode::GroundOnly:
-                fire = dr_onground_any
+                gate_ok = dr_onground_any
                     && XPLMGetDatai(dr_onground_any) != 0;
                 break;
+            case RegenMode::GroundOrFrozen:
+                gate_ok = (dr_onground_any && XPLMGetDatai(dr_onground_any) != 0)
+                       || g_sim_frozen;
+                break;
         }
-        if (fire) XPLMCommandOnce(cmd_regen_weather);
-        pending_wx.cloud_changed = false;
+        const double now = XPLMGetElapsedTime();
+        const bool debounced = (now - g_last_regen_time) >= REGEN_DEBOUNCE_S;
+        if (gate_ok && debounced) {
+            XPLMCommandOnce(cmd_regen_weather);
+            g_last_regen_time = now;
+            pending_wx.cloud_changed = false;   // fired; deferral cleared
+            XPLMDebugString("xplanecigi: regen_weather fired\n");
+        }
+        // else: keep cloud_changed=true; retried on the next tick that
+        // satisfies the gate.
     }
 
     // Log once on change
@@ -1397,7 +1445,11 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     }  // end if (pending_wx.dirty)
 
     // ── Slice 3b: Regional weather patch apply / erase ──────────────────────
-    if (!g_pending_patches.empty() || !g_xp_applied.empty()) {
+    // Only runs in PluginWeatherMode::SdkRegional. In BlendAtOwnship mode the
+    // patches are consumed by blend_weather_at_ownship above; no per-patch
+    // XPLMSetWeatherAtLocation calls are made.
+    if (g_plugin_weather_mode == PluginWeatherMode::SdkRegional
+        && (!g_pending_patches.empty() || !g_xp_applied.empty())) {
         struct ApplyJob { uint16_t id; double lat, lon; double ground_m; XPLMWeatherInfo_t info; float radius_nm; };
         struct EraseJob { uint16_t id; double lat, lon; };
         std::vector<ApplyJob> applies;
