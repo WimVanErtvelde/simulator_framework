@@ -6,7 +6,7 @@
 //
 // Packets handled (host → IG direction):
 //   0x01  IG Control (24 bytes) — extract host frame counter
-//   0x03  Entity Control (48 bytes) — set ownship position + attitude
+//   0x02  Entity Control (48 bytes) — set ownship position + attitude
 //
 // Build: mingw-w64 cross-compiler from WSL, see CMakeLists.txt.
 // Install: X-Plane/Resources/plugins/xplanecigi/win_x64/xplanecigi.xpl
@@ -119,6 +119,7 @@ static XPLMDataRef g_psi                = nullptr;  // yaw   (degrees, X-Plane c
 static XPLMDataRef g_override_planepath = nullptr;  // int[20] — index 0 = override user aircraft
 static XPLMProbeRef g_terrain_probe    = nullptr;  // terrain elevation probe for HOT requests + stability
 static XPLMDataRef g_surface_type       = nullptr;  // int, XP surface enum under aircraft CG
+static XPLMDataRef g_elevation          = nullptr;  // double, ownship altitude MSL in metres
 
 // ── Weather datarefs ─────────────────────────────────────────────────────────
 static XPLMDataRef dr_sealevel_temp_c       = nullptr;
@@ -396,26 +397,6 @@ static uint8_t xp_surface_to_framework(int xp_type)
     }
 }
 
-// Default friction factors per framework surface enum.
-// Values match HatHotResponse.msg convention (JSBSim-style multipliers):
-//   static_friction_factor  — braking/static grip   (1.0 = dry pavement baseline)
-//   rolling_friction_factor — rolling drag multiplier (>1.0 = softer surface)
-static void default_friction_for_surface(uint8_t fw_surface, float & static_ff, float & rolling_ff)
-{
-    switch (fw_surface) {
-        case 1:  static_ff = 1.00f; rolling_ff = 1.00f; return;  // ASPHALT
-        case 2:  static_ff = 0.95f; rolling_ff = 0.90f; return;  // CONCRETE
-        case 3:  static_ff = 0.50f; rolling_ff = 3.00f; return;  // GRASS
-        case 4:  static_ff = 0.40f; rolling_ff = 4.00f; return;  // DIRT
-        case 5:  static_ff = 0.45f; rolling_ff = 3.50f; return;  // GRAVEL
-        case 6:  static_ff = 0.05f; rolling_ff = 0.10f; return;  // WATER
-        case 7:  static_ff = 0.30f; rolling_ff = 2.00f; return;  // SNOW_COVERED
-        case 8:  static_ff = 0.10f; rolling_ff = 0.80f; return;  // ICE_SURFACE
-        case 9:  static_ff = 0.35f; rolling_ff = 5.00f; return;  // SAND
-        case 10: static_ff = 0.30f; rolling_ff = 6.00f; return;  // MARSH
-        default: static_ff = 1.00f; rolling_ff = 1.00f; return;  // UNKNOWN → asphalt
-    }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Send CIGI 3.3 Start-of-Frame (SOF) to host
@@ -425,7 +406,7 @@ static void send_sof()
     if (g_send_sock == INVALID_SOCKET) return;
 
     uint8_t buf[32] = {};
-    buf[0] = 0x01;   // Packet ID = 1 (Start of Frame, IG→host direction)
+    buf[0] = 0x65;   // Packet ID = 101 (Start of Frame, CIGI 3.3 IG→Host)
     buf[1] = 0x20;   // Packet Size = 32
     buf[2] = 0x00;   // DB Number = 0 (database load complete)
     buf[3] = 0x00;   // IG Status Code = 0 (OK)
@@ -489,8 +470,8 @@ static void process_packet(const uint8_t * pkt, int len)
         break;
 
     // ── Entity Control ─────────────────────────────────────────────────────
-    // Layout (CIGI 3.3, big-endian, 48 bytes):
-    //   [0]     packet_id = 0x03
+    // Layout (CIGI 3.3 §4.1.2, big-endian, 48 bytes):
+    //   [0]     packet_id = 0x02
     //   [1]     packet_size = 48
     //   [2-3]   entity_id (uint16 BE)
     //   [4]     entity_state + flags
@@ -501,7 +482,7 @@ static void process_packet(const uint8_t * pkt, int len)
     //   [24-31] lat   (float64 BE, degrees)
     //   [32-39] lon   (float64 BE, degrees)
     //   [40-47] alt   (float64 BE, metres MSL)
-    case 0x03:
+    case 0x02:
         if (packet_size >= 48)
         {
             const float  roll_deg  = read_be_float(pkt + 12);
@@ -569,34 +550,34 @@ static void process_packet(const uint8_t * pkt, int len)
                 hot_msl = out_alt;
             }
 
-            // Look up surface type under aircraft CG (same for all gear points,
-            // since XP's terrain probe API doesn't expose surface type per lat/lon)
-            uint8_t fw_surface = 0;
-            float   static_ff  = 1.0f;
-            float   rolling_ff = 1.0f;
+            // HAT = ownship altitude MSL − HOT at this gear point.
+            // X-Plane's terrain probe API doesn't expose surface type per
+            // (lat, lon), so we sample the enum under the aircraft CG and
+            // assume it applies to all gear points (acceptable: gear contact
+            // lat/lon usually share the same runway/surface texture).
+            double  aircraft_alt = g_elevation ? XPLMGetDatad(g_elevation) : 0.0;
+            double  hat_m        = aircraft_alt - hot_msl;
+            uint8_t fw_surface   = 0;
             if (g_surface_type) {
                 int xp_surface = XPLMGetDatai(g_surface_type);
                 fw_surface = xp_surface_to_framework(xp_surface);
-                default_friction_for_surface(fw_surface, static_ff, rolling_ff);
             }
 
-            // Send HOT Response (0x02, 48 bytes — standard 16 + HAT placeholder +
-            // extended fields: surface_type at 24, friction factors at 28/32)
-            uint8_t resp[48] = {};
-            resp[0] = 0x02;        // Packet ID = HAT/HOT Response
-            resp[1] = 48;          // Packet Size
+            // Send HAT/HOT Extended Response (CIGI 3.3 §4.2.3, 0x67, 40 bytes)
+            uint8_t resp[40] = {};
+            resp[0] = 0x67;                         // Packet ID = 103
+            resp[1] = 40;                           // Packet Size
             write_be16(resp + 2, req_id);
-            resp[4] = valid ? 0x01 : 0x00;         // Valid flag
-            write_be_double(resp + 8, hot_msl);     // HOT (terrain MSL, metres)
-            write_be_double(resp + 16, 0.0);        // HAT placeholder
-            resp[24] = fw_surface;                  // framework surface enum
-            // resp[25..27] reserved (zeroed)
-            write_be_float(resp + 28, static_ff);   // static friction factor
-            write_be_float(resp + 32, rolling_ff);  // rolling friction factor
-            // resp[36..47] reserved (zeroed)
+            resp[4] = valid ? 0x01 : 0x00;          // Valid flag
+            write_be_double(resp + 8,  hat_m);      // HAT (metres above terrain)
+            write_be_double(resp + 16, hot_msl);    // HOT (metres MSL)
+            write_be32(resp + 24, static_cast<uint32_t>(fw_surface));  // Material Code
+            write_be_float(resp + 28, 0.0f);        // Normal Vector Azimuth   — stubbed
+            write_be_float(resp + 32, 0.0f);        // Normal Vector Elevation — stubbed
+            // resp[36..39] reserved (zeroed)
 
             sendto(g_send_sock,
-                   reinterpret_cast<const char *>(resp), 48, 0,
+                   reinterpret_cast<const char *>(resp), 40, 0,
                    reinterpret_cast<const struct sockaddr *>(&g_host_addr),
                    sizeof(g_host_addr));
         }
@@ -1525,6 +1506,9 @@ PLUGIN_API int XPluginStart(char * outName, char * outSig, char * outDesc)
     XPLMDebugString(g_surface_type
         ? "xplanecigi: surface_type dataref bound\n"
         : "xplanecigi: WARNING — no surface_type dataref found, HAT surface=UNKNOWN\n");
+
+    // Ownship altitude MSL (metres) — used to compute HAT = elevation − HOT
+    g_elevation = XPLMFindDataRef("sim/flightmodel/position/elevation");
 
     // Weather region datarefs (writable since XP 12.0)
     dr_sealevel_temp_c       = XPLMFindDataRef("sim/weather/region/sealevel_temperature_c");

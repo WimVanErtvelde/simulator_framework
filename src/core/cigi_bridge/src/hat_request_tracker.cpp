@@ -8,26 +8,22 @@ void HatRequestTracker::add_request(uint32_t request_id, double lat, double lon,
 }
 
 std::optional<sim_msgs::msg::HatHotResponse>
-HatRequestTracker::resolve(uint32_t request_id, double hot, bool valid,
-                           uint8_t surface_type,
-                           float static_friction_factor,
-                           float rolling_friction_factor)
+HatRequestTracker::resolve(uint32_t request_id, double hat, double hot, bool valid,
+                           uint8_t surface_type)
 {
     for (auto & e : buf_) {
         if (!e.occupied || e.request_id != request_id) continue;
 
         e.occupied = false;
         sim_msgs::msg::HatHotResponse resp;
-        resp.request_id              = request_id;
-        resp.point_name              = e.point_name;
-        resp.lat_deg                 = e.lat;
-        resp.lon_deg                 = e.lon;
-        resp.hot_m                   = hot;
-        resp.hat_m                   = 0.0;   // HAT needs current aircraft alt — caller fills if needed
-        resp.valid                   = valid;
-        resp.surface_type            = surface_type;
-        resp.static_friction_factor  = static_friction_factor;
-        resp.rolling_friction_factor = rolling_friction_factor;
+        resp.request_id   = request_id;
+        resp.point_name   = e.point_name;
+        resp.lat_deg      = e.lat;
+        resp.lon_deg      = e.lon;
+        resp.hat_m        = hat;
+        resp.hot_m        = hot;
+        resp.valid        = valid;
+        resp.surface_type = surface_type;
         return resp;
     }
     return std::nullopt;

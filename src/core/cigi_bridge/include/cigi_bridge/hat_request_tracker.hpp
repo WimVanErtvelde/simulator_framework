@@ -15,17 +15,12 @@ public:
     void add_request(uint32_t request_id, double lat, double lon,
                      const std::string & point_name = "");
 
-    // On receiving a HAT/HOT response from the IG, look up the original
-    // request and assemble a HatHotResponse msg.  Returns nullopt if the
-    // request_id is not found (stale or duplicate).
-    // Extended fields (surface_type, friction factors) come from the IG
-    // in the xplanecigi-extended 48-byte response; callers receiving the
-    // standard 16-byte response pass defaults (0, 1.0, 1.0).
+    // On receiving a HAT/HOT Extended Response (CIGI 3.3 §4.2.3, 0x67) from
+    // the IG, look up the original request and assemble a HatHotResponse msg.
+    // Returns nullopt if the request_id is not found (stale or duplicate).
     std::optional<sim_msgs::msg::HatHotResponse>
-    resolve(uint32_t request_id, double hot, bool valid,
-            uint8_t surface_type = 0,
-            float static_friction_factor = 1.0f,
-            float rolling_friction_factor = 1.0f);
+    resolve(uint32_t request_id, double hat, double hot, bool valid,
+            uint8_t surface_type = 0);
 
     // Allocate a unique 16-bit request ID (wraps at 65535)
     uint16_t next_id() { return next_request_id_++; }

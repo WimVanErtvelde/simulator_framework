@@ -413,7 +413,7 @@ void CigiHostNode::encode_hot_request(uint8_t * buf, uint16_t request_id,
     buf[0] = CIGI_PKT_HOT_REQUEST;
     buf[1] = CIGI_HOT_REQUEST_SIZE;
     write_be16(&buf[2], request_id);
-    buf[4] = 0x01;  // Request Type = HOT (1), geodetic, one-shot
+    buf[4] = 0x02;  // Request Type = Extended (2), geodetic, one-shot — elicits 0x67 response
     write_be_double(&buf[12], lat_deg);
     write_be_double(&buf[20], lon_deg);
     write_be_float(&buf[28], 0.0f);
@@ -567,22 +567,19 @@ void CigiHostNode::send_hot_requests()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HAT/HOT response wire format (IG → Host), Packet ID = 0x02
-// Standard CIGI 3.3: 16 bytes
-//   Byte 0:   Packet ID = 2
-//   Byte 1:   Packet Size = 16
-//   Byte 2-3: HAT/HOT ID (uint16 BE)
-//   Byte 4:   [0] Valid, [1] Type (0=HOT, 1=HAT), [7:2] Reserved
-//   Byte 5-7: Reserved
-//   Byte 8-15:HOT or HAT value (double BE, metres)
-//
-// Extended response (48 bytes) from our X-Plane plugin:
-//   Byte 0:   Packet ID = 2
-//   Byte 1:   48
-//   Byte 2-3: Request ID (uint16 BE)
-//   Byte 4:   [0] Valid
-//   Byte 8-15:HOT (double BE, metres MSL)
-//   Byte 16-23:HAT (double BE, metres)
+// HAT/HOT Extended Response wire format (IG → Host), CIGI 3.3 §4.2.3
+//   Packet ID = 0x67 (103), Packet Size = 40 bytes
+//   Byte 0:    Packet ID = 0x67
+//   Byte 1:    Packet Size = 40
+//   Byte 2-3:  HAT/HOT ID (uint16 BE)
+//   Byte 4:    [0] Valid, [3:1] Reserved, [7:4] Host Frame Number LSN
+//   Byte 5-7:  Reserved
+//   Byte 8-15: HAT (double BE, metres above terrain)
+//   Byte 16-23:HOT (double BE, metres MSL)
+//   Byte 24-27:Material Code (uint32 BE) — framework surface enum in low byte
+//   Byte 28-31:Normal Vector Azimuth   (float BE, deg) — stubbed 0 for now
+//   Byte 32-35:Normal Vector Elevation (float BE, deg) — stubbed 0 for now
+//   Byte 36-39:Reserved
 void CigiHostNode::recv_pending()
 {
     if (recv_fd_ < 0) return;
@@ -599,48 +596,41 @@ void CigiHostNode::recv_pending()
             uint8_t pkt_size = buf[offset + 1];
             if (pkt_size < 2 || offset + pkt_size > n) break;
 
-            if (pkt_id == 0x02 && pkt_size >= 16) {
-                // HAT/HOT Response (standard 16-byte or extended 48-byte)
-                uint16_t hat_hot_id  = (static_cast<uint16_t>(buf[offset + 2]) << 8) | buf[offset + 3];
-                uint8_t  flags       = buf[offset + 4];
-                bool     valid       = (flags & 0x01) != 0;
+            if (pkt_id == CIGI_PKT_HAT_HOT_EXT_RESPONSE && pkt_size >= 40) {
+                uint16_t hat_hot_id = (static_cast<uint16_t>(buf[offset + 2]) << 8) | buf[offset + 3];
+                bool     valid      = (buf[offset + 4] & 0x01) != 0;
 
-                // Read HOT value (bytes 8-15 in both standard and extended)
+                // HAT @ 8-15
                 uint64_t val_u = 0;
                 for (int i = 0; i < 8; ++i)
                     val_u = (val_u << 8) | buf[offset + 8 + i];
+                double hat_m;
+                memcpy(&hat_m, &val_u, 8);
+
+                // HOT @ 16-23
+                val_u = 0;
+                for (int i = 0; i < 8; ++i)
+                    val_u = (val_u << 8) | buf[offset + 16 + i];
                 double hot_m;
                 memcpy(&hot_m, &val_u, 8);
 
-                // Extended fields (xplanecigi custom): surface_type @ 24,
-                // static_friction @ 28-31, rolling_friction @ 32-35.
-                // Defaults used if IG sends only the standard 16-byte response.
-                uint8_t surface_type = 0;
-                float   static_ff    = 1.0f;
-                float   rolling_ff   = 1.0f;
-                if (pkt_size >= 36) {
-                    surface_type = buf[offset + 24];
+                // Material Code @ 24-27 — low byte carries framework surface enum
+                uint32_t material_code = 0;
+                for (int i = 0; i < 4; ++i)
+                    material_code = (material_code << 8) | buf[offset + 24 + i];
+                uint8_t surface_type = static_cast<uint8_t>(material_code & 0xFF);
 
-                    uint32_t uf = 0;
-                    for (int i = 0; i < 4; ++i)
-                        uf = (uf << 8) | buf[offset + 28 + i];
-                    memcpy(&static_ff, &uf, 4);
-
-                    uf = 0;
-                    for (int i = 0; i < 4; ++i)
-                        uf = (uf << 8) | buf[offset + 32 + i];
-                    memcpy(&rolling_ff, &uf, 4);
-                }
+                // Normal vector (azimuth @ 28, elevation @ 32) currently unused
 
                 // Only publish HOT when IG reports terrain valid
                 if (ig_status_ != CIGI_SOF_IG_STATUS_OPERATE) { offset += pkt_size; continue; }
-                auto resp = hat_tracker_.resolve(hat_hot_id, hot_m, valid,
-                                                 surface_type, static_ff, rolling_ff);
+                auto resp = hat_tracker_.resolve(hat_hot_id, hat_m, hot_m, valid,
+                                                 surface_type);
                 if (resp && hat_pub_->is_activated()) {
                     hat_pub_->publish(*resp);
                 }
             }
-            else if (pkt_id == 0x01 && pkt_size >= 8) {
+            else if (pkt_id == CIGI_PKT_SOF && pkt_size >= 8) {
                 // SOF (Start of Frame) from IG — parse IG Mode
                 // CIGI 3.3 ICD: byte 4 bits[1:0] = IG Mode (0=Standby, 1=Reset, 2=Operate)
                 uint8_t prev = ig_status_;

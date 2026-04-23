@@ -191,6 +191,35 @@
   surface_type). Confirmed in DataRefTool.
 - FIX: primary and fallback lookups updated to use surface_texture_type.
 
+### Bug #20: CIGI SOF and HAT/HOT Response parsed with wrong packet IDs
+- cigi_bridge parsed incoming SOF as 0x01 and HAT/HOT Response as 0x02.
+  CIGI 3.3 ICD defines SOF as 0x65 (101) and HAT/HOT Response as 0x66 (102).
+  Worked only because xplanecigi sent matching non-standard IDs — both sides
+  had the same bug and cancelled out.
+- ROOT CAUSE: RX parser in recv_pending() used bare literals lifted from the
+  Host→IG opcode table (IG Control 0x01, Entity Control 0x02) instead of the
+  IG→Host IDs.
+- FIX: Added named constants CIGI_PKT_SOF = 0x65 and
+  CIGI_PKT_HAT_HOT_EXT_RESPONSE = 0x67 in cigi_host_node.hpp (the latter
+  promoted to spec-compliant Extended Response during the follow-up
+  opcode audit — see DECISIONS.md 2026-04-23). recv_pending() uses the
+  constants; xplanecigi emits SOF with buf[0] = 0x65 and a 40-byte
+  0x67 Extended Response. Both sides must be rebuilt and redeployed
+  together.
+
+### Bug #21: CIGI Entity Control sent with wrong opcode (0x03 instead of 0x02)
+- cigi_host_node.hpp defined CIGI_PKT_ENTITY_CTRL = 0x03 and encoded a full
+  48-byte Entity Control payload (roll/pitch/yaw/lat/lon/alt) under that ID.
+  Per CIGI 3.3 §4.1.2, Entity Control is opcode 0x02 (48 B). Opcode 0x03 is
+  Conformal Clamped Entity Control (24 B, yaw+lat+lon only, requires entity
+  to already exist with Ground/Ocean Clamp = Conformal). Any compliant IG
+  would misparse or drop our Ownship updates.
+- ROOT CAUSE: wrong constant; worked only because xplanecigi parsed incoming
+  as `case 0x03:` with size 48 — symmetric bug, same cancel-out as #20.
+- FIX: CIGI_PKT_ENTITY_CTRL = 0x02 in cigi_host_node.hpp; xplanecigi dispatch
+  changed to `case 0x02:`. Both sides must be rebuilt and redeployed
+  together, same deployment constraint as #20.
+
 ## Known Limitations
 
 ### Limitation #1: XPLMSetWeatherAtLocation produces no visible effect at training-relevant radii in X-Plane 12

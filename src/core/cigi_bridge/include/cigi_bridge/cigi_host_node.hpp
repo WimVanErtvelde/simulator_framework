@@ -43,9 +43,13 @@ public:
 
 private:
     // ── CIGI raw packet encoding ──────────────────────────────────────────
+    // Host→IG packet IDs
     static constexpr uint8_t CIGI_PKT_IG_CTRL      = 0x01;
-    static constexpr uint8_t CIGI_PKT_ENTITY_CTRL   = 0x03;
+    static constexpr uint8_t CIGI_PKT_ENTITY_CTRL   = 0x02;
     static constexpr uint8_t CIGI_PKT_HOT_REQUEST   = 0x18;
+    // IG→Host packet IDs (CIGI 3.3 ICD §2.2.2 Table 1)
+    static constexpr uint8_t CIGI_PKT_SOF                  = 0x65;  // 101
+    static constexpr uint8_t CIGI_PKT_HAT_HOT_EXT_RESPONSE = 0x67;  // 103 — carries both HAT and HOT + material code (§4.2.3, 40 B)
     static constexpr uint8_t CIGI_IG_CTRL_SIZE      = 24;
     static constexpr uint8_t CIGI_ENTITY_CTRL_SIZE  = 48;
     static constexpr uint8_t CIGI_HOT_REQUEST_SIZE  = 32;

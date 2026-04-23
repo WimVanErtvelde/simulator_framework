@@ -35,6 +35,4 @@ float64 hat_m             # height above terrain (metres)
 float64 hot_m             # height of terrain MSL (metres)
 bool    valid
 
-uint8   surface_type              0   # framework surface enum (see constants above)
-float32 static_friction_factor    1.0 # IG-provided surface friction (0-1, default 1.0)
-float32 rolling_friction_factor   1.0 # IG-provided surface friction (0-1, default 1.0)
+uint8   surface_type              0   # framework surface enum (see constants above) — derived from CIGI Material Code low byte
