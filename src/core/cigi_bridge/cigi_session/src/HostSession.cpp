@@ -1,23 +1,67 @@
 #include "cigi_session/HostSession.h"
+#include "cigi_session/processors/ISofProcessor.h"
 
 #include <CigiHostSession.h>
 #include <CigiOutgoingMsg.h>
+#include <CigiIncomingMsg.h>
+#include <CigiBaseEventProcessor.h>
 #include <CigiIGCtrlV3_3.h>
 #include <CigiBaseIGCtrl.h>
 #include <CigiEntityCtrlV3_3.h>
 #include <CigiBaseEntityCtrl.h>
 #include <CigiHatHotReqV3_2.h>
 #include <CigiBaseHatHotReq.h>
+#include <CigiSOFV3_2.h>
+#include <CigiBaseSOF.h>
 
 namespace cigi_session {
 
+namespace {
+
+// CigiBaseEventProcessor adapter: translates CCL's OnPacketReceived
+// callback into an ISofProcessor::OnSof call. The outer HostSession owns the
+// ISofProcessor pointer; the adapter dereferences it each dispatch so
+// SetSofProcessor() can swap targets without re-registering.
+class SofAdapter : public CigiBaseEventProcessor {
+public:
+    explicit SofAdapter(ISofProcessor * const * target) : target_(target) {}
+    void OnPacketReceived(CigiBasePacket * pkt) override {
+        if (!*target_ || !pkt) return;
+        auto * sof = dynamic_cast<CigiBaseSOF *>(pkt);
+        if (!sof) return;
+        SofFields f;
+        f.ig_mode                = static_cast<IgModeRx>(sof->GetIGMode());
+        f.ig_status_code         = sof->GetIGStatus();
+        f.database_id            = sof->GetDatabaseID();
+        f.ig_frame_number        = sof->GetFrameCntr();
+        f.last_host_frame_number = 0;  // filled by V3_2-specific accessor below
+        // V3_2 adds LastRcvdHostFrame; safe to downcast here because
+        // CigiIncomingMsg hands us the V3_2 converter for SOF.
+        if (auto * sof32 = dynamic_cast<CigiSOFV3_2 *>(sof)) {
+            f.last_host_frame_number = sof32->GetLastRcvdHostFrame();
+        }
+        (*target_)->OnSof(f);
+    }
+private:
+    ISofProcessor * const * target_;
+};
+
+}  // namespace
+
 struct HostSession::Impl {
     CigiHostSession ccl;
-    Cigi_uint8 * last_msg = nullptr;
-    int last_len = 0;
+    ISofProcessor *       sof_proc  = nullptr;
+    IHatHotRespProcessor * resp_proc = nullptr;
+    SofAdapter            sof_adapter;
+    Cigi_uint8 *          last_msg = nullptr;
+    int                   last_len = 0;
 
-    Impl() {
+    Impl()
+      : sof_adapter(&sof_proc) {
         ccl.SetCigiVersion(3, 3);
+        ccl.GetIncomingMsgMgr().SetReaderCigiVersion(3, 3);
+        ccl.GetIncomingMsgMgr().RegisterEventProcessor(
+            CIGI_SOF_PACKET_ID_V3, &sof_adapter);
     }
 };
 
@@ -78,11 +122,17 @@ std::pair<const std::uint8_t *, std::size_t> HostSession::FinishFrame() {
     return {impl_->last_msg, static_cast<std::size_t>(impl_->last_len)};
 }
 
-void HostSession::SetSofProcessor(ISofProcessor *) {}
-void HostSession::SetHatHotRespProcessor(IHatHotRespProcessor *) {}
+void HostSession::SetSofProcessor(ISofProcessor * p) { impl_->sof_proc = p; }
+void HostSession::SetHatHotRespProcessor(IHatHotRespProcessor * p) { impl_->resp_proc = p; }
 
-std::size_t HostSession::HandleDatagram(const std::uint8_t *, std::size_t) {
-    return 0;
+std::size_t HostSession::HandleDatagram(const std::uint8_t * data, std::size_t len) {
+    if (data == nullptr || len == 0) return 0;
+    auto & in = impl_->ccl.GetIncomingMsgMgr();
+    // CCL auto-detects byte order from the Byte Swap Magic in SOF/IGCtrl
+    // (bytes 6-7) so the same parser handles native-LE and swapped-BE
+    // datagrams transparently.
+    in.ProcessIncomingMsg(const_cast<Cigi_uint8 *>(data), static_cast<int>(len));
+    return 1;  // CCL doesn't report per-packet counts via this entry point
 }
 
 }  // namespace cigi_session
