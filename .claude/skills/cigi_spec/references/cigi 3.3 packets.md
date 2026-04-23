@@ -1385,7 +1385,126 @@ surface, terrestrial surface, weather, and aerosol responses in one go.
 *TODO*
 
 ### 0x1D — Symbol Surface Definition
-*TODO*
+
+- **Direction**: Host → IG
+- **Opcode**: 29 / 0x1D
+- **Total size**: 56 bytes
+- **ICD section**: §4.1.29 (PDF page 187)
+- **Mandatory each frame**: no
+
+Creates or modifies a symbol surface — a 2D rectangle in the scene on which
+text/circle/line symbols are drawn. Surface attaches to either an entity
+(non-billboard or billboard) or a view (HUD-style overlay). Surface stacking
+within a view is by Surface ID (low → drawn first).
+
+**Fields**
+
+| Offset | Size | Name                          | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-------------------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID                     | unsigned int8   | 29                                              | fixed |
+| 1      | 1    | Packet Size                   | unsigned int8   | 56                                              | fixed |
+| 2      | 2    | Surface ID                    | unsigned int16  | unique within IG                                |       |
+| 4      | —    | Surface State (\*1)           | 1-bit           | 0 Active / 1 Destroyed                          | byte 4, bit 0 |
+| 4      | —    | Attach Type (\*2)             | 1-bit           | 0 Entity / 1 View                               | byte 4, bit 1 |
+| 4      | —    | Billboard (\*3)               | 1-bit           | 0 Non-Billboard / 1 Billboard                   | byte 4, bit 2; ignored when Attach Type = View |
+| 4      | —    | Perspective Growth Enable (\*4) | 1-bit         | 0 Disabled / 1 Enabled                          | byte 4, bit 3; only used for entity-attached billboards |
+| 4      | —    | Reserved                      | 4-bit           | 0                                               | byte 4, bits 7..4 |
+| 5      | 1    | Reserved                      | —               | 0                                               |       |
+| 6      | 2    | Entity ID / View ID           | unsigned int16  | per Attach Type                                 | packet ignored if target doesn't exist |
+| 8      | 4    | X Offset / Left               | single float    | metres (entity) or 0..1 viewport-width (view)   |       |
+| 12     | 4    | Y Offset / Right              | single float    | metres (entity) or 0..1 viewport-width (view)   |       |
+| 16     | 4    | Z Offset / Top                | single float    | metres (entity) or 0..1 viewport-height (view)  |       |
+| 20     | 4    | Yaw / Bottom                  | single float    | 0..360 deg (entity, ignored for billboard) or 0..1 viewport-height (view) |  |
+| 24     | 4    | Pitch                         | single float    | -90.0 .. +90.0 deg                              | non-billboard entity-attached only |
+| 28     | 4    | Roll                          | single float    | -180.0 .. +180.0 deg                            | non-billboard entity-attached only |
+| 32     | 4    | Width                         | single float    | metres or deg arc                               | meaning depends on Attach Type/Billboard/Perspective Growth |
+| 36     | 4    | Height                        | single float    | metres or deg arc                               | same |
+| 40     | 4    | Min U                         | single float    | < Max U, surface horizontal units               | UV viewable area |
+| 44     | 4    | Max U                         | single float    | > Min U                                         |       |
+| 48     | 4    | Min V                         | single float    | > Max V (note: V axis convention)               |       |
+| 52     | 4    | Max V                         | single float    | < Min V                                         |       |
+
+**Usage notes**
+- View-attached surfaces are coincident with the near clipping plane and draw
+  on top of all other objects in the view (HUD overlay).
+- Destroying the surface destroys all symbols on it. Destroying the parent
+  entity destroys all surfaces attached to it.
+
+### 0x1E — Symbol Text Definition
+
+- **Direction**: Host → IG
+- **Opcode**: 30 / 0x1E
+- **Total size**: 16..248 bytes (12 + text length, padded to multiple of 8)
+- **ICD section**: §4.1.30 (PDF page 194)
+- **Mandatory each frame**: no
+
+Creates a text symbol with alignment, orientation, font, and size. UTF-8
+string follows the header, NULL-terminated and zero-padded to the next 8-byte
+boundary.
+
+**Fields**
+
+| Offset | Size | Name              | Type            | Range / Values                                              | Notes |
+|-------:|-----:|-------------------|-----------------|-------------------------------------------------------------|-------|
+| 0      | 1    | Packet ID         | unsigned int8   | 30                                                          | fixed |
+| 1      | 1    | Packet Size       | unsigned int8   | 16..248 (= 12 + text length, multiple of 8)                 |       |
+| 2      | 2    | Symbol ID         | unsigned int16  | unique among all symbols                                    | reuse with different type → existing symbol destroyed first |
+| 4      | —    | Alignment         | unsigned 4-bit  | 0 Top Left, 1 Top Center, 2 Top Right, 3 Center Left, 4 Center, 5 Center Right, 6 Bottom Left, 7 Bottom Center, 8 Bottom Right | byte 4, bits 3..0 |
+| 4      | —    | Orientation (\*1) | unsigned 2-bit  | 0 Left→Right, 1 Top→Bottom, 2 Right→Left, 3 Bottom→Top      | byte 4, bits 5..4 |
+| 4      | —    | Reserved (\*2)    | 2-bit           | 0                                                           | byte 4, bits 7..6 |
+| 5      | 1    | Font ID           | unsigned int8   | 0 IG default; 1..16 standard styles (Sans Serif/Serif × Bold/Italic, monospace at 9..16); 17..255 IG-defined |  |
+| 6      | 2    | Reserved          | —               | 0                                                           |       |
+| 8      | 4    | Font Size         | single float    | symbol surface vertical units                               |       |
+| 12     | text_len | Text          | UTF-8 octets    | NULL-terminated; zero-pad to 8-byte boundary                | max 236 octets + NULL |
+
+**Usage notes**
+- New symbols are hidden by default — issue a `Symbol Control` (§4.1.34) with
+  `Symbol State` = Visible to display.
+- Text symbol type cannot be changed; sending a definition packet of a
+  different type with the same ID destroys and recreates.
+
+### 0x1F — Symbol Circle Definition
+
+- **Direction**: Host → IG
+- **Opcode**: 31 / 0x1F
+- **Total size**: 16..232 bytes (16 + 24 × n; 1 ≤ n ≤ 9)
+- **ICD section**: §4.1.31 (PDF page 198)
+- **Mandatory each frame**: no
+
+Creates a composite symbol of up to 9 circles or arcs. Drawing style applies
+globally (all line, or all fill). Each circle entry is 24 bytes appended after
+the 16-byte header.
+
+**Fields (header)**
+
+| Offset | Size | Name                  | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-----------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID             | unsigned int8   | 31                                              | fixed |
+| 1      | 1    | Packet Size           | unsigned int8   | 16 + 24×n, n ≤ 9 → max 232                      |       |
+| 2      | 2    | Symbol ID             | unsigned int16  | unique among all symbols                        |       |
+| 4      | —    | Drawing Style (\*1)   | 1-bit           | 0 Line / 1 Fill                                 | byte 4, bit 0 |
+| 4      | —    | Reserved              | 7-bit           | 0                                               | byte 4, bits 7..1 |
+| 5      | 1    | Reserved              | —               | 0                                               |       |
+| 6      | 2    | Stipple Pattern       | unsigned int16  | bitmask; 0xFFFF = solid                         | ignored if Fill |
+| 8      | 4    | Line Width            | single float    | scaled symbol surface units                     | ignored if Fill |
+| 12     | 4    | Stipple Pattern Length | single float   | scaled symbol surface units                     | one full pattern repeat; ignored if Fill |
+
+**Fields (per circle, repeats n times starting at offset 16)**
+
+| Offset (relative) | Size | Name        | Type         | Range / Values                                  | Notes |
+|------------------:|-----:|-------------|--------------|-------------------------------------------------|-------|
+| 0                 | 4    | Center U    | single float | scaled symbol surface units                     |       |
+| 4                 | 4    | Center V    | single float | scaled symbol surface units                     |       |
+| 8                 | 4    | Radius      | single float | ≥ 0.0                                           | line: centerline radius; fill: outer edge |
+| 12                | 4    | Inner Radius| single float | ≥ 0.0 to < Radius                               | fill only; ignored for line |
+| 16                | 4    | Start Angle | single float | 0..360 deg, CCW from +U axis                    |       |
+| 20                | 4    | End Angle   | single float | 0..360 deg, CCW from +U axis                    | If Start > End → arc crosses +U axis |
+
+**Usage notes**
+- Full circle: Start Angle = End Angle (recommend 0.0 = 0.0 to avoid FP error).
+- Inner Radius = 0.0 with Fill → completely filled disc.
+- Symbol type is locked once created; new definition with same Symbol ID but
+  different type destroys and recreates.
 
 ### 0x1E — Symbol Text Definition
 *TODO*
@@ -1394,7 +1513,162 @@ surface, terrestrial surface, weather, and aerosol responses in one go.
 *TODO*
 
 ### 0x20 — Symbol Line Definition
-*TODO*
+
+- **Direction**: Host → IG
+- **Opcode**: 32 / 0x20
+- **Total size**: 16..248 bytes (16 + 8 × n; n ≤ 29)
+- **ICD section**: §4.1.32 (PDF page 205)
+- **Mandatory each frame**: no
+
+Defines a points/lines/triangles primitive: zero or more vertices interpreted
+per `Primitive Type` (Point / Line / Line Strip / Line Loop / Triangle /
+Triangle Strip / Triangle Fan).
+
+**Fields (header)**
+
+| Offset | Size | Name              | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID         | unsigned int8   | 32                                              | fixed |
+| 1      | 1    | Packet Size       | unsigned int8   | 16 + 8×n, n ≤ 29 → max 248                      |       |
+| 2      | 2    | Symbol ID         | unsigned int16  | unique among all symbols                        |       |
+| 4      | —    | Primitive Type    | 4-bit field     | 0 Point, 1 Line, 2 Line Strip, 3 Line Loop, 4 Triangle, 5 Triangle Strip, 6 Triangle Fan | byte 4, bits 3..0 |
+| 4      | —    | Reserved          | 4-bit           | 0                                               | byte 4, bits 7..4 |
+| 5      | 1    | Reserved          | —               | 0                                               |       |
+| 6      | 2    | Stipple Pattern   | unsigned int16  | bitmask; 0xFFFF = solid                         | ignored for Point/Triangle/Strip/Fan |
+| 8      | 4    | Line Width        | single float    | scaled symbol surface units                     | for Point: point diameter; ignored for Triangle types |
+| 12     | 4    | Stipple Pattern Length | single float | scaled symbol surface units                    | one full pattern repeat |
+
+**Fields (per vertex, repeats n times starting at offset 16)**
+
+| Offset (relative) | Size | Name     | Type         | Range / Values                                  |
+|------------------:|-----:|----------|--------------|-------------------------------------------------|
+| 0                 | 4    | Vertex U | single float | scaled symbol surface units                     |
+| 4                 | 4    | Vertex V | single float | scaled symbol surface units                     |
+
+**Usage notes**
+- Triangle Strip: vertex order should give CCW winding from view eyepoint —
+  back-faces may be culled by the IG.
+- Triangle: dangling vertices (count not divisible by 3) are silently dropped.
+- Line: odd vertex count → last vertex dropped.
+
+### 0x21 — Symbol Clone
+
+- **Direction**: Host → IG
+- **Opcode**: 33 / 0x21
+- **Total size**: 8 bytes
+- **ICD section**: §4.1.33 (PDF page 210)
+- **Mandatory each frame**: no
+
+Creates a new symbol as an exact copy of an existing symbol or as an instance
+of an IG-defined symbol template. Subsequent operations on the copy do not
+affect the source unless via parent/child hierarchy.
+
+**Fields**
+
+| Offset | Size | Name              | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID         | unsigned int8   | 33                                              | fixed |
+| 1      | 1    | Packet Size       | unsigned int8   | 8                                               | fixed |
+| 2      | 2    | Symbol ID         | unsigned int16  | new symbol's identifier                         | reuse with different type → existing destroyed first |
+| 4      | —    | Source Type (\*1) | 1-bit           | 0 Symbol / 1 Symbol Template                    | byte 4, bit 0 |
+| 4      | —    | Reserved          | 7-bit           | 0                                               | byte 4, bits 7..1 |
+| 5      | 1    | Reserved          | —               | 0                                               |       |
+| 6      | 2    | Source ID         | unsigned int16  | symbol-to-copy or template ID                   | invalid → packet ignored |
+
+**Usage notes**
+- The clone is hidden by default; reveal with Symbol Control.
+
+### 0x22 — Symbol Control
+
+- **Direction**: Host → IG
+- **Opcode**: 34 / 0x22
+- **Total size**: 40 bytes
+- **ICD section**: §4.1.34 (PDF page 212)
+- **Mandatory each frame**: no
+
+Sets every dynamic attribute of a symbol in one packet — visibility, parent
+attachment, surface, layer, color, flash cycle, position/rotation, scale.
+
+**Fields**
+
+| Offset | Size | Name                          | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-------------------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID                     | unsigned int8   | 34                                              | fixed |
+| 1      | 1    | Packet Size                   | unsigned int8   | 40                                              | fixed |
+| 2      | 2    | Symbol ID                     | unsigned int16  | target symbol; invalid → packet ignored         |       |
+| 4      | —    | Symbol State (\*1)            | unsigned 2-bit  | 0 Hidden, 1 Visible, 2 Destroyed                | byte 4, bits 1..0 |
+| 4      | —    | Attach State (\*2)            | 1-bit           | 0 Detach / 1 Attach                             | byte 4, bit 2 |
+| 4      | —    | Flash Control (\*3)           | 1-bit           | 0 Continue / 1 Reset                            | byte 4, bit 3 |
+| 4      | —    | Inherit Color (\*4)           | 1-bit           | 0 Not Inherited / 1 Inherited                   | byte 4, bit 4 |
+| 4      | —    | Reserved (\*5)                | 3-bit           | 0                                               | byte 4, bits 7..5 |
+| 5      | 1    | Reserved                      | —               | 0                                               |       |
+| 6      | 2    | Parent Symbol ID              | unsigned int16  | only used if Attach State = Attach              |       |
+| 8      | 2    | Surface ID                    | unsigned int16  | symbol surface; ignored for child symbols       |       |
+| 10     | 1    | Layer                         | unsigned int8   | 0..255; higher → drawn later                    |       |
+| 11     | 1    | Flash Duty Cycle Percentage   | unsigned int8   | 0..100 % visible                                | 0 → always invisible; 100 → always visible |
+| 12     | 4    | Flash Period                  | single float    | seconds                                         | ignored if duty cycle 0 or 100 |
+| 16     | 4    | Position U                    | single float    | scaled symbol surface units                     |       |
+| 20     | 4    | Position V                    | single float    | scaled symbol surface units                     |       |
+| 24     | 4    | Rotation                      | single float    | 0..360 deg, CCW about local origin              |       |
+| 28     | 1    | Red                           | unsigned int8   | 0..255                                          | ignored if Inherit Color |
+| 29     | 1    | Green                         | unsigned int8   | 0..255                                          |       |
+| 30     | 1    | Blue                          | unsigned int8   | 0..255                                          |       |
+| 31     | 1    | Alpha                         | unsigned int8   | 0 transparent .. 255 opaque                     |       |
+| 32     | 4    | Scale U                       | single float    | > 0.0                                           |       |
+| 36     | 4    | Scale V                       | single float    | > 0.0                                           |       |
+
+**Usage notes**
+- Use Short Symbol Control (§4.1.35) to update one or two attributes — saves
+  24 bytes per packet.
+- Destroying a parent destroys all children. A flashing parent forces children
+  to inherit its duty cycle and period.
+
+### 0x23 — Short Symbol Control
+
+- **Direction**: Host → IG
+- **Opcode**: 35 / 0x23
+- **Total size**: 32 bytes
+- **ICD section**: §4.1.35 (PDF page 220)
+- **Mandatory each frame**: no
+
+Lower-bandwidth alternative to Symbol Control for changing 1 or 2 attributes
+of a symbol. Each `Attribute Value` field is interpreted per the matching
+`Attribute Select` enum. Use this for high-rate single-attribute updates
+(needle position, layer toggle).
+
+**Fields**
+
+| Offset | Size | Name                  | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-----------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID             | unsigned int8   | 35                                              | fixed |
+| 1      | 1    | Packet Size           | unsigned int8   | 32                                              | fixed (matches Figure 108) |
+| 2      | 2    | Symbol ID             | unsigned int16  | target symbol                                   |       |
+| 4      | —    | Symbol State (\*1)    | 2-bit           | 0 Hidden, 1 Visible, 2 Destroyed                | byte 4, bits 1..0 |
+| 4      | —    | Attach State (\*2)    | 1-bit           | 0 Detach / 1 Attach                             | byte 4, bit 2 |
+| 4      | —    | Flash Control (\*3)   | 1-bit           | 0 Continue / 1 Reset                            | byte 4, bit 3 |
+| 4      | —    | Inherit Color (\*4)   | 1-bit           | 0 Not Inherited / 1 Inherited                   | byte 4, bit 4 |
+| 4      | —    | Reserved (\*5)        | 3-bit           | 0                                               | byte 4, bits 7..5 |
+| 5      | 1    | Reserved              | —               | 0                                               |       |
+| 6      | 1    | Attribute Select 1    | unsigned 8-bit  | 0 None, 1 Surface ID, 2 Parent Symbol ID, 3 Layer, 4 Flash Duty Cycle %, 5 Flash Period, 6 Position U, 7 Position V, 8 Rotation, 9 Color, 10 Scale U, 11 Scale V | spec calls it 2-bit but enum requires 4 — treat byte as a small int |
+| 7      | 1    | Attribute Select 2    | unsigned 8-bit  | same enum as Select 1                           |       |
+| 8      | 4    | Attribute Value 1     | word            | int32 / float / 4×uint8 (Color) per Attribute Select 1 | byte-swapped as 32-bit |
+| 12     | 4    | Attribute Value 2     | word            | per Attribute Select 2                          |       |
+| 16     | 16   | Reserved              | —               | 0                                               | padding to 32-byte total / 8-byte boundary |
+
+> **Note on Packet Size and bit-field width** — Table 43 in the published
+> ICD claims `Value: 16` for Packet Size while Figure 108 shows
+> `Packet Size = 32`. The figure layout is the binding one (it has space for
+> the two 32-bit Attribute Value words plus header), so 32 bytes is the
+> correct wire size. Similarly the prose calls Attribute Select 1/2 a
+> "2-bit field", but the enum has 12 values (needs ≥4 bits) — implementations
+> consistently treat each Attribute Select as a full octet at byte offsets
+> 6 and 7. Verify against your CCL build before relying on either.
+
+**Usage notes**
+- Color value must be packed MSB→LSB as R / G / B / A (so that 32-bit byte
+  swap on the receiver still recovers the components in the right order).
+- Cannot detach by leaving Parent Symbol ID 0 — explicitly send Attach State
+  = Detach with one of the Attribute Selects = None.
 
 ### 0x21 — Symbol Clone
 *TODO*
