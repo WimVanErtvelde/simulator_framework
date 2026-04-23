@@ -48,9 +48,18 @@ static char     g_host_ip[64] = "127.0.0.1";
 static uint16_t g_ig_port     = 8002;
 static uint16_t g_host_port   = 8001;
 
-// regen_weather gating: "always" | "ground_only" | "never"
-enum class RegenMode { Always, GroundOnly, Never };
+// regen_weather gating: "always" | "ground_only" | "ground_or_frozen" | "never"
+enum class RegenMode { Always, GroundOnly, GroundOrFrozen, Never };
 static RegenMode g_regen_mode = RegenMode::GroundOnly;
+
+// Regional weather application mode. blend_at_ownship works around the
+// XPLMSetWeatherAtLocation visible-rendering limitation (DECISIONS.md
+// 2026-04-20) by computing the effective weather at ownship from global +
+// active patches and writing the result to sim/weather/region/* datarefs.
+// sdk_regional retains the spec-compliant per-patch SetWeatherAtLocation
+// path for future SDK fix or non-XP IG integration.
+enum class PluginWeatherMode { SdkRegional, BlendAtOwnship };
+static PluginWeatherMode g_plugin_weather_mode = PluginWeatherMode::BlendAtOwnship;
 
 // Host sim freeze state, driven by OnCompCtrl(class=System, id=SimFreezeState).
 // True whenever the host isn't advancing the scene (instructor freeze or
@@ -62,9 +71,19 @@ static bool g_sim_frozen = false;
 static const char * regen_mode_name(RegenMode m)
 {
     switch (m) {
-        case RegenMode::Always:     return "always";
-        case RegenMode::GroundOnly: return "ground_only";
-        case RegenMode::Never:      return "never";
+        case RegenMode::Always:         return "always";
+        case RegenMode::GroundOnly:     return "ground_only";
+        case RegenMode::GroundOrFrozen: return "ground_or_frozen";
+        case RegenMode::Never:          return "never";
+    }
+    return "unknown";
+}
+
+static const char * plugin_weather_mode_name(PluginWeatherMode m)
+{
+    switch (m) {
+        case PluginWeatherMode::SdkRegional:    return "sdk_regional";
+        case PluginWeatherMode::BlendAtOwnship: return "blend_at_ownship";
     }
     return "unknown";
 }
@@ -74,7 +93,8 @@ static const char * regen_mode_name(RegenMode m)
 //   host_ip=192.168.1.100
 //   ig_port=8002
 //   host_port=8001
-//   regen_weather=ground_only   (always | ground_only | never)
+//   regen_weather=ground_or_frozen   (always | ground_only | ground_or_frozen | never)
+//   plugin_weather_mode=blend_at_ownship  (blend_at_ownship | sdk_regional)
 static void load_config()
 {
     char plugin_path[512] = {};
@@ -88,9 +108,14 @@ static void load_config()
     std::string config_path = std::string(plugin_path) + "xplanecigi.ini";
     std::ifstream f(config_path);
     if (!f.is_open()) {
-        std::string msg = "xplanecigi: config not found at " + config_path
-                        + " — using defaults (127.0.0.1:" + std::to_string(g_ig_port) + ")\n";
-        XPLMDebugString(msg.c_str());
+        char msg[384];
+        std::snprintf(msg, sizeof(msg),
+            "xplanecigi: config not found at %s — using defaults "
+            "(127.0.0.1:%u, regen_weather=%s, plugin_weather_mode=%s)\n",
+            config_path.c_str(), g_ig_port,
+            regen_mode_name(g_regen_mode),
+            plugin_weather_mode_name(g_plugin_weather_mode));
+        XPLMDebugString(msg);
         return;
     }
 
@@ -105,16 +130,22 @@ static void load_config()
         else if (key == "ig_port")   { g_ig_port   = (uint16_t)std::stoi(val); }
         else if (key == "host_port") { g_host_port = (uint16_t)std::stoi(val); }
         else if (key == "regen_weather") {
-            if      (val == "always")      g_regen_mode = RegenMode::Always;
-            else if (val == "ground_only") g_regen_mode = RegenMode::GroundOnly;
-            else if (val == "never")       g_regen_mode = RegenMode::Never;
+            if      (val == "always")           g_regen_mode = RegenMode::Always;
+            else if (val == "ground_only")      g_regen_mode = RegenMode::GroundOnly;
+            else if (val == "ground_or_frozen") g_regen_mode = RegenMode::GroundOrFrozen;
+            else if (val == "never")            g_regen_mode = RegenMode::Never;
+        }
+        else if (key == "plugin_weather_mode") {
+            if      (val == "blend_at_ownship") g_plugin_weather_mode = PluginWeatherMode::BlendAtOwnship;
+            else if (val == "sdk_regional")     g_plugin_weather_mode = PluginWeatherMode::SdkRegional;
         }
     }
 
     char msg[256];
     std::snprintf(msg, sizeof(msg),
-        "xplanecigi: config loaded from %s (regen_weather=%s)\n",
-        config_path.c_str(), regen_mode_name(g_regen_mode));
+        "xplanecigi: config loaded from %s (regen_weather=%s, plugin_weather_mode=%s)\n",
+        config_path.c_str(), regen_mode_name(g_regen_mode),
+        plugin_weather_mode_name(g_plugin_weather_mode));
     XPLMDebugString(msg);
 }
 
