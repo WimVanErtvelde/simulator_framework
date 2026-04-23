@@ -16,6 +16,7 @@
 #include <CigiBaseSOF.h>
 #include <CigiHatHotXRespV3_2.h>
 #include <CigiBaseHatHotResp.h>
+#include <CigiAtmosCtrl.h>
 
 namespace cigi_session {
 
@@ -139,6 +140,19 @@ void HostSession::AppendHatHotRequest(std::uint16_t request_id,
     pkt.SetLat(lat_deg);
     pkt.SetLon(lon_deg);
     pkt.SetAlt(0.0);
+    impl_->ccl.GetOutgoingMsgMgr() << pkt;
+}
+
+void HostSession::AppendAtmosphereControl(const AtmosphereFields & f) {
+    CigiAtmosCtrlV3 pkt;
+    pkt.SetAtmosEn(false);
+    pkt.SetHumidity(f.humidity_pct);
+    pkt.SetAirTemp(f.temperature_c);
+    pkt.SetVisibility(f.visibility_m);
+    pkt.SetHorizWindSp(f.horiz_wind_ms);
+    pkt.SetVertWindSp(f.vert_wind_ms);
+    pkt.SetWindDir(f.wind_direction_deg);
+    pkt.SetBaroPress(f.barometric_pressure_hpa);
     impl_->ccl.GetOutgoingMsgMgr() << pkt;
 }
 

@@ -2,6 +2,7 @@
 
 #include "cigi_session/HostSession.h"
 
+#include <CigiAtmosCtrl.h>
 #include <CigiIGCtrlV3_3.h>
 #include <CigiBaseIGCtrl.h>
 #include <CigiEntityCtrlV3_3.h>
@@ -160,6 +161,37 @@ TEST(CigiSession, HatHotRespDispatchesToTarget) {
     EXPECT_DOUBLE_EQ(spy.got->hat_m, 123.456);
     EXPECT_DOUBLE_EQ(spy.got->hot_m, 78.901);
     EXPECT_EQ(spy.got->material_code, 0xABu);
+}
+
+TEST(CigiSession, AtmosphereControlRoundTrip) {
+    cigi_session::HostSession sess;
+    sess.BeginFrame(1, 1, 0.0);
+    cigi_session::HostSession::AtmosphereFields f{
+        /*humidity_pct=*/75,
+        /*temperature_c=*/15.0f,
+        /*visibility_m=*/10000.0f,
+        /*horiz_wind_ms=*/5.0f,
+        /*vert_wind_ms=*/0.0f,
+        /*wind_direction_deg=*/270.0f,
+        /*barometric_pressure_hpa=*/1013.25f,
+    };
+    sess.AppendAtmosphereControl(f);
+    auto [buf, len] = sess.FinishFrame();
+    ASSERT_NE(buf, nullptr);
+    ASSERT_GE(len, kIgCtrlSize + 32u);
+
+    const std::uint8_t * a = buf + kIgCtrlSize;
+
+    CigiAtmosCtrlV3 cigi;
+    ASSERT_GE(cigi.Unpack(const_cast<std::uint8_t *>(a), kSameEndianSwap, nullptr), 0);
+    EXPECT_FALSE(cigi.GetAtmosEn());
+    EXPECT_EQ(cigi.GetHumidity(), 75);
+    EXPECT_FLOAT_EQ(cigi.GetAirTemp(), 15.0f);
+    EXPECT_FLOAT_EQ(cigi.GetVisibility(), 10000.0f);
+    EXPECT_FLOAT_EQ(cigi.GetHorizWindSp(), 5.0f);
+    EXPECT_FLOAT_EQ(cigi.GetVertWindSp(), 0.0f);
+    EXPECT_FLOAT_EQ(cigi.GetWindDir(), 270.0f);
+    EXPECT_FLOAT_EQ(cigi.GetBaroPress(), 1013.25f);
 }
 
 TEST(CigiSession, HatHotRequestRoundTrip) {

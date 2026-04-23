@@ -46,6 +46,19 @@ public:
     void AppendHatHotRequest(std::uint16_t request_id,
                               double lat_deg, double lon_deg);
 
+    // Append an Atmosphere Control (§4.1.10). AtmosphericModelEnable is
+    // always false — the host supplies explicit values.
+    struct AtmosphereFields {
+        std::uint8_t humidity_pct;
+        float        temperature_c;
+        float        visibility_m;
+        float        horiz_wind_ms;
+        float        vert_wind_ms;
+        float        wind_direction_deg;
+        float        barometric_pressure_hpa;
+    };
+    void AppendAtmosphereControl(const AtmosphereFields & f);
+
     // Finalise the current frame and return a pointer to the wire-format
     // datagram and its length. The buffer is owned by this session and
     // remains valid until the next BeginFrame call.
