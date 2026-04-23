@@ -1091,15 +1091,6 @@ view group assignment.
   the *last* one in the message wins.
 - View Type lets the host switch a channel between e.g. out-the-window and IR.
 
-### 0x13 — Earth Reference Model Definition
-*TODO*
-
-### 0x14 — Trajectory Definition
-*TODO*
-
-### 0x15 — View Definition
-*TODO*
-
 ### 0x16 — Collision Detection Segment Definition
 
 - **Direction**: Host → IG
@@ -1264,15 +1255,6 @@ namespace is shared with `LOS Vector Request` (§4.1.26).
 - Don't share LOS IDs with `LOS Vector Request` — both use the same response
   packet types and the IG can't tell them apart.
 
-### 0x17 — Collision Detection Volume Definition
-*TODO*
-
-### 0x18 — HAT/HOT Request
-*TODO*
-
-### 0x19 — Line of Sight Segment Request
-*TODO*
-
 ### 0x1A — Line of Sight Vector Request
 
 - **Direction**: Host → IG
@@ -1377,12 +1359,6 @@ surface, terrestrial surface, weather, and aerosol responses in one go.
   (§4.2.9) packet per request. It returns one Terrestrial Surface (§4.2.12)
   packet per surface condition type at the point, and one Aerosol Concentration
   (§4.2.10) packet per weather layer (per `Layer ID`) the point falls inside.
-
-### 0x1B — Position Request
-*TODO*
-
-### 0x1C — Environmental Conditions Request
-*TODO*
 
 ### 0x1D — Symbol Surface Definition
 
@@ -1505,12 +1481,6 @@ the 16-byte header.
 - Inner Radius = 0.0 with Fill → completely filled disc.
 - Symbol type is locked once created; new definition with same Symbol ID but
   different type destroys and recreates.
-
-### 0x1E — Symbol Text Definition
-*TODO*
-
-### 0x1F — Symbol Circle Definition
-*TODO*
 
 ### 0x20 — Symbol Line Definition
 
@@ -1669,15 +1639,6 @@ of a symbol. Each `Attribute Value` field is interpreted per the matching
   swap on the receiver still recovers the components in the right order).
 - Cannot detach by leaving Parent Symbol ID 0 — explicitly send Attach State
   = Detach with one of the Attribute Selects = None.
-
-### 0x21 — Symbol Clone
-*TODO*
-
-### 0x22 — Symbol Control
-*TODO*
-
-### 0x23 — Short Symbol Control
-*TODO*
 
 ---
 
@@ -1845,18 +1806,6 @@ code, and surface-normal vector to the basic LOS response.
 | 48     | 4    | Normal Vector Azimuth             | single float    | -180.0 .. +180.0 deg from True North            |       |
 | 52     | 4    | Normal Vector Elevation           | single float    | -90.0 .. +90.0 deg from geodetic ref plane      |       |
 
-### 0x66 — HAT/HOT Response
-*TODO*
-
-### 0x67 — HAT/HOT Extended Response
-*TODO*
-
-### 0x68 — Line of Sight Response
-*TODO*
-
-### 0x69 — Line of Sight Extended Response
-*TODO*
-
 ### 0x6A — Sensor Response
 
 - **Direction**: IG → Host
@@ -1981,51 +1930,318 @@ at the requested geodetic point.
 | 24     | 4    | Barometric Pressure   | single float    | mb / hPa, ≥ 0                                   |       |
 | 28     | 4    | Reserved              | —               | 0                                               |       |
 
-### 0x6B — Sensor Extended Response
-*TODO*
-
-### 0x6C — Position Response
-*TODO*
-
-### 0x6D — Weather Conditions Response
-*TODO*
-
 ### 0x6E — Aerosol Concentration Response
-*TODO*
+
+- **Direction**: IG → Host
+- **Opcode**: 110 / 0x6E
+- **Total size**: 8 bytes
+- **ICD section**: §4.2.10 (PDF page 258)
+- **Mandatory each frame**: no — response to `Environmental Conditions Request` with Request Type bit 8 (Aerosol = 8) set; one packet per weather layer Layer ID at the test point
+
+Reports the airborne particle concentration at the requested point. Aerosol
+type is implicit in `Layer ID` (Ground Fog 0, Cloud 1..3, Rain 4, Snow 5,
+Sleet 6, Hail 7, Sand 8, Dust 9, IG-defined 10..255).
+
+**Fields**
+
+| Offset | Size | Name                  | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-----------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID             | unsigned int8   | 110                                             | fixed |
+| 1      | 1    | Packet Size           | unsigned int8   | 8                                               | fixed |
+| 2      | 1    | Request ID            | unsigned int8   | echo of request                                 |       |
+| 3      | 1    | Layer ID              | unsigned int8   | weather-layer ID (also implies aerosol type)    |       |
+| 4      | 4    | Aerosol Concentration | single float    | g/m³, ≥ 0                                       |       |
+
+**Usage notes**
+- Two overlapping layers with the same Layer ID → one response with the
+  *averaged* concentration. Two overlapping layers with different Layer IDs
+  → two response packets.
 
 ### 0x6F — Maritime Surface Conditions Response
-*TODO*
+
+- **Direction**: IG → Host
+- **Opcode**: 111 / 0x6F
+- **Total size**: 16 bytes
+- **ICD section**: §4.2.11 (PDF page 260)
+- **Mandatory each frame**: no — response to `Environmental Conditions Request` with Request Type bit 1 (Maritime Surface = 1) set
+
+Reports sea surface state at the requested geodetic point — equilibrium height
+(no waves), water temperature, surface clarity. For instantaneous wave-driven
+elevation, use HOT request instead.
+
+**Fields**
+
+| Offset | Size | Name                      | Type            | Range / Values                                  | Notes |
+|-------:|-----:|---------------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID                 | unsigned int8   | 111                                             | fixed |
+| 1      | 1    | Packet Size               | unsigned int8   | 16                                              | fixed |
+| 2      | 1    | Request ID                | unsigned int8   | echo of request                                 |       |
+| 3      | 1    | Reserved                  | —               | 0                                               |       |
+| 4      | 4    | Sea Surface Height        | single float    | metres MSL                                      | equilibrium (no wave displacement) |
+| 8      | 4    | Surface Water Temperature | single float    | °C                                              |       |
+| 12     | 4    | Surface Clarity           | single float    | 0..100 % (0 turbid, 100 pristine)               |       |
 
 ### 0x70 — Terrestrial Surface Conditions Response
-*TODO*
+
+- **Direction**: IG → Host
+- **Opcode**: 112 / 0x70
+- **Total size**: 8 bytes
+- **ICD section**: §4.2.12 (PDF page 262)
+- **Mandatory each frame**: no — response to `Environmental Conditions Request` with Request Type bit 2 (Terrestrial Surface = 2) set; one packet per surface condition active at the point
+
+Reports a surface condition / contaminant at the requested geodetic point. IG
+sends one packet per active condition.
+
+**Fields**
+
+| Offset | Size | Name                  | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-----------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID             | unsigned int8   | 112                                             | fixed |
+| 1      | 1    | Packet Size           | unsigned int8   | 8                                               | fixed |
+| 2      | 1    | Request ID            | unsigned int8   | echo of request                                 |       |
+| 3      | 1    | Reserved              | —               | 0                                               |       |
+| 4      | 4    | Surface Condition ID  | unsigned int32  | 0..65535 (IG-defined; 0 = Dry)                  |       |
 
 ### 0x71 — Collision Detection Segment Notification
-*TODO*
+
+- **Direction**: IG → Host
+- **Opcode**: 113 / 0x71
+- **Total size**: 16 bytes
+- **ICD section**: §4.2.13 (PDF page 264)
+- **Mandatory each frame**: no — sent each frame a defined collision detection segment (§4.1.22) intersects a polygon
+
+Reports a segment-vs-polygon collision: which segment, which entity owns it,
+which entity (if any) was hit, the surface material code, and the distance
+along the segment to the intersection.
+
+**Fields**
+
+| Offset | Size | Name                  | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-----------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID             | unsigned int8   | 113                                             | fixed |
+| 1      | 1    | Packet Size           | unsigned int8   | 16                                              | fixed |
+| 2      | 2    | Entity ID             | unsigned int16  | entity owning the segment                       |       |
+| 4      | 1    | Segment ID            | unsigned int8   | segment-within-entity                           |       |
+| 5      | —    | Collision Type (\*1)  | 1-bit           | 0 Non-entity (terrain etc.) / 1 Entity          | byte 5, bit 0 |
+| 5      | —    | Reserved              | 7-bit           | 0                                               | byte 5, bits 7..1 |
+| 6      | 2    | Contacted Entity ID   | unsigned int16  | other entity hit                                | ignored if Collision Type = Non-entity |
+| 8      | 4    | Material Code         | unsigned int32  | IG-defined                                      |       |
+| 12     | 4    | Intersection Distance | single float    | metres along segment from (X1,Y1,Z1) endpoint   |       |
+
+**Usage notes**
+- If the segment passes through multiple polygons the IG returns only the
+  closest intersection.
+- Polygons belonging to the same entity as the segment are not tested.
 
 ### 0x72 — Collision Detection Volume Notification
-*TODO*
+
+- **Direction**: IG → Host
+- **Opcode**: 114 / 0x72
+- **Total size**: 16 bytes
+- **ICD section**: §4.2.14 (PDF page 266)
+- **Mandatory each frame**: no — sent each frame two collision detection volumes (§4.1.23) intersect
+
+Reports a volume-vs-volume collision. One packet *per volume involved* — two
+volumes colliding generates two notifications (one from each side's
+perspective). Volumes on the same entity are not tested against each other.
+
+**Fields**
+
+| Offset | Size | Name                  | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-----------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID             | unsigned int8   | 114                                             | fixed |
+| 1      | 1    | Packet Size           | unsigned int8   | 16                                              | fixed |
+| 2      | 2    | Entity ID             | unsigned int16  | entity owning the source volume                 |       |
+| 4      | 1    | Volume ID             | unsigned int8   | source volume index                             |       |
+| 5      | —    | Collision Type (\*1)  | 1-bit           | 0 Non-entity / 1 Entity                         | byte 5, bit 0 |
+| 5      | —    | Reserved              | 7-bit           | 0                                               | byte 5, bits 7..1 |
+| 6      | 2    | Contacted Entity ID   | unsigned int16  | hit entity                                      | ignored if Collision Type = Non-entity |
+| 8      | 1    | Contacted Volume ID   | unsigned int8   | hit volume index on contacted entity            |       |
+| 9      | 7    | Reserved              | —               | 0                                               | 8-byte alignment |
+
+**Usage notes**
+- No spatial intersection data — volume-volume hits typically cover an
+  irregular region, so only volume IDs and entity IDs are returned.
+- No material code (volumes don't have polygon surfaces).
 
 ### 0x73 — Animation Stop Notification
-*TODO*
+
+- **Direction**: IG → Host
+- **Opcode**: 115 / 0x73
+- **Total size**: 8 bytes
+- **ICD section**: §4.2.15 (PDF page 268)
+- **Mandatory each frame**: no — sent once when an entity's animation reaches the end of its sequence
+
+Tells the Host that a non-continuous animation has finished. Continuous
+animations never emit this packet.
+
+**Fields**
+
+| Offset | Size | Name              | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID         | unsigned int8   | 115                                             | fixed |
+| 1      | 1    | Packet Size       | unsigned int8   | 8                                               | fixed |
+| 2      | 2    | Entity ID         | unsigned int16  | entity whose animation stopped                  |       |
+| 4      | 4    | Reserved          | —               | 0                                               |       |
 
 ### 0x74 — Event Notification
-*TODO*
+
+- **Direction**: IG → Host
+- **Opcode**: 116 / 0x74
+- **Total size**: 16 bytes
+- **ICD section**: §4.2.16 (PDF page 269)
+- **Mandatory each frame**: no — sent when an IG-defined event fires
+
+Carries an Event ID plus three 32-bit user-defined data words. Host enables/
+disables individual events through Component Control with Component Class =
+Event (12).
+
+**Fields**
+
+| Offset | Size | Name              | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID         | unsigned int8   | 116                                             | fixed |
+| 1      | 1    | Packet Size       | unsigned int8   | 16                                              | fixed |
+| 2      | 2    | Event ID          | unsigned int16  | IG-defined                                      |       |
+| 4      | 4    | Event Data 1      | word            | event-specific 32-bit datum                     | byte-swapped as 32-bit |
+| 8      | 4    | Event Data 2      | word            | event-specific                                  |       |
+| 12     | 4    | Event Data 3      | word            | event-specific                                  |       |
 
 ### 0x75 — Image Generator Message
-*TODO*
+
+- **Direction**: IG → Host
+- **Opcode**: 117 / 0x75
+- **Total size**: 8..104 bytes (4 + message length, padded to multiple of 8)
+- **ICD section**: §4.2.17 (PDF page 271)
+- **Mandatory each frame**: no — recommended only in Debug mode
+
+Carries an error/debug/log text message from the IG to the Host. UTF-8 string,
+NULL-terminated, zero-padded to the next 8-byte boundary.
+
+**Fields**
+
+| Offset | Size | Name              | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID         | unsigned int8   | 117                                             | fixed |
+| 1      | 1    | Packet Size       | unsigned int8   | 8..104 (= 4 + message length, multiple of 8)    |       |
+| 2      | 2    | Message ID        | unsigned int16  | IG-defined message identifier                   |       |
+| 4      | msg_len | Message        | UTF-8 octets    | NULL-terminated; zero-pad to 8-byte boundary    | max 100 octets including NULL |
+
+**Usage notes**
+- Real-time IGs should restrict use to Debug mode (file/console I/O is rarely
+  hard real-time).
 
 ---
 
 ## CIGI 3.x change history
 
-*Populated from Appendix B of the ICD (PDF pages 276–278).*
+Extracted verbatim from Appendix B of the ICD (doc pages 264–266 = PDF pages
+276–278). Use this to know which fields a given CIGI 3.x version supports.
 
-*TODO*
+### Version 3.0
+
+Numerous changes from CIGI 2 (no further detail in the ICD).
+
+### Version 3.1
+
+No data format changes from CIGI 3.0.
+
+### Version 3.2
+
+**General changes**
+- Added a Minor Version number to the interface. Minor version changes can
+  now contain data format changes.
+- Modified the use of the Frame Counter mechanism.
+- Added capabilities for continuous, periodic HAT/HOT and LOS responses from
+  a single request.
+
+**IG Control (0x01)**
+- Renamed `CIGI Version` → `Major Version`.
+- Added `Minor Version`.
+- Renamed `Byte Swap` → `Byte Swap Magic Number`.
+- Modified the use of the Frame Counter parameter and renamed it to
+  `Host Frame Number`.
+- Added `Last IG Frame Number`.
+
+**Rate Control (0x08)**
+- Added `Coordinate System` parameter and modified reference data for linear
+  and angular rates.
+
+**HAT/HOT Request (0x18)**
+- Added `Update Period`.
+
+**LOS Segment Request (0x19)**
+- Added `Update Period`.
+- Added `Destination Entity ID` and `Destination Entity ID Valid`.
+
+**LOS Vector Request (0x1A)**
+- Added `Update Period`.
+
+**Start of Frame (0x65)**
+- Renamed `CIGI Version` → `Major Version`; added `Minor Version`.
+- Renamed `Byte Swap` → `Byte Swap Magic Number`.
+- Modified the use of the Frame Counter parameter and renamed it to
+  `IG Frame Number`.
+- Added `Last Host Frame Number`.
+
+**HAT/HOT Response (0x66) / HAT/HOT Extended Response (0x67) /
+LOS Response (0x68)**
+- Added `Host Frame Number LSN`.
+
+**LOS Extended Response (0x69)**
+- Removed `Intersection Point Coordinate System`.
+- Added `Host Frame Number LSN`.
+
+**Sensor Response (0x6A) / Sensor Extended Response (0x6B)**
+- Renamed `Frame Counter` → `Host Frame Number` and changed its usage to
+  reflect the Host frame number.
+
+### Version 3.3
+
+**General changes**
+- Added support for 2D symbology.
+- Changed text representation from ANSI to UTF-8.
+
+**IG Control (0x01)**
+- Added `Extrapolation/Interpolation Enable` flag (global entity smoothing).
+
+**Entity Control (0x02)**
+- Added `Linear Extrapolation/Interpolation Enable` flag (per-entity smoothing).
+
+**Component Control (0x04) / Short Component Control (0x05)**
+- Added `Symbol Surface` and `Symbol` component classes.
+
+**Celestial Sphere Control (0x09)**
+- Changed the time specified by `Hour` and `Minute` from local time to UTC.
+
+**New packets in 3.3**
+- `Symbol Surface Definition` (0x1D)
+- `Symbol Text Definition` (0x1E)
+- `Symbol Circle Definition` (0x1F)
+- `Symbol Line Definition` (0x20)
+- `Symbol Clone` (0x21)
+- `Symbol Control` (0x22)
+- `Short Symbol Control` (0x23)
 
 ## Errata applied
 
-*Populated from Appendix C (PDF page 279) and the standalone Appendix C
-errata PDF (`source/CIGI_3_3_Appendix_C.pdf`). Each erratum is also
-noted under the affected packet entry.*
+Sourced from Appendix C of `CIGI_ICD_3_3.pdf` (doc page 267 = PDF page 279)
+and the standalone `CIGI_3_3_Appendix_C.pdf` errata supplement. Each
+erratum below is also annotated as `**Errata applied**: ...` under the
+relevant packet entry where applicable.
 
-*TODO*
+**Status as shipped:** the in-document Appendix C table (page 267) is
+**empty** — the originally-published ICD records no in-band corrections.
+The standalone `CIGI_3_3_Appendix_C.pdf` is also empty: no superseding
+sheets have been issued by the CIGI working group as of the version of
+the appendix in this repository.
+
+If the SISO CIGI working group publishes errata for 3.3 in the future,
+add them here in the form:
+
+```
+- YYYY-MM-DD — §4.x.N (page Y) — <description of change>.
+```
+
+…and add a matching `**Errata applied**: ...` line under the affected
+packet entry above.
