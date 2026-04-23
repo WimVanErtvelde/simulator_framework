@@ -106,6 +106,17 @@ CallbackReturn CigiHostNode::on_activate(const rclcpp_lifecycle::State &)
             sim_state_ = msg->state;
             bool prev = reposition_active_;
             reposition_active_ = msg->reposition_active;
+            // Sim is "frozen" for the IG whenever the host isn't advancing
+            // the scene: instructor freeze OR reposition-pending. The IG
+            // keeps rendering; this flag just tells the plugin it may do
+            // work that would otherwise be visible (e.g. regen_weather).
+            bool new_frozen = (sim_state_ == sim_msgs::msg::SimState::STATE_FROZEN)
+                              || reposition_active_;
+            if (new_frozen != sim_frozen_) {
+                sim_frozen_ = new_frozen;
+                RCLCPP_INFO(get_logger(), "Sim freeze state → %s",
+                            sim_frozen_ ? "FROZEN" : "RUNNING");
+            }
             if (reposition_active_ && !prev) {
                 sent_reset_ = false;            // arm: send Reset on next frame
                 hot_frame_counter_ = 0;         // fire HOT immediately on first reposition frame
@@ -519,6 +530,15 @@ void CigiHostNode::send_cigi_frame()
     session_.AppendEntityCtrl(static_cast<uint16_t>(entity_id_),
                               roll_deg, pitch_deg, yaw_deg,
                               lat_deg, lon_deg, alt_m);
+
+    // Sim freeze state → IG, every frame (idempotent). Under UDP a CompCtrl
+    // emitted only on state transitions can be lost; re-asserting every
+    // frame costs 32 bytes and guarantees the plugin converges.
+    session_.AppendComponentControl(
+        cigi_session::HostSession::ComponentClass::System,
+        /*instance_id=*/0,
+        static_cast<std::uint16_t>(cigi_session::SystemComponentId::SimFreezeState),
+        /*component_state=*/sim_frozen_ ? 1 : 0);
 
     if (weather_dirty_) {
         append_global_weather(latest_weather_);

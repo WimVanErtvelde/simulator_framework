@@ -114,6 +114,9 @@ private:
     uint8_t    ig_status_     = 0;   // SOF IG Mode from IG: 0=Standby, 1=Operate, 2=Debug
     uint8_t    sim_state_     = 0;   // from /sim/state
     bool       reposition_active_ = false;  // from SimState.reposition_active
+    bool       sim_frozen_    = false;      // derived: STATE_FROZEN || reposition_active_.
+                                            // Emitted to IG as Component Control
+                                            // (System, SimFreezeState) every frame.
     bool       sent_reset_    = false;      // true after Reset sent, cleared on next frame
     bool       startup_reset_pending_ = false;  // send IG Mode=Reset once on first frame after activate
 
