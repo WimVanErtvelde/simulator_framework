@@ -302,6 +302,47 @@ struct XpAppliedRegion {
 
 static std::map<uint16_t, XpAppliedRegion> g_xp_applied;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Blend-at-ownship state (PluginWeatherMode::BlendAtOwnship).
+// See README / DECISIONS.md 2026-04-23 for rationale. The blend fires when
+// any of these conditions become true:
+//   1. g_blend_dirty — set by region/weather-ctrl decoders on patch mutation,
+//      by global pending_wx.dirty, or by OnCompCtrl (freeze transitions,
+//      which affect regen gating, not the blend itself but we re-evaluate
+//      anyway since it's cheap).
+//   2. Ownship crossed a patch zone boundary (inside / transition / outside),
+//      detected via per-patch g_patch_last_zone.
+//   3. ≥5s since last blend AND moved >100m AND at least one patch has
+//      weight > 0 — catches smooth in-transition updates when the aircraft
+//      is crossing a transition zone slowly and coverage is changing
+//      continuously.
+//   4. Regen debounce timer expired (separate fire path, handled in the
+//      flight loop; not a blend trigger).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Per-patch classification vs ownship.
+enum class PatchZone : uint8_t { Outside = 0, Transition = 1, Inside = 2 };
+static std::map<uint16_t, PatchZone> g_patch_last_zone;
+
+// Set by patch mutations / global weather mutations. Cleared when the blend
+// runs. "Dirty" does not guarantee the blend will actually fire — the 2s
+// rate limit may defer it — but it guarantees the blend will run on the next
+// permitted tick.
+static bool   g_blend_dirty       = true;   // true on startup so first tick runs the blend
+static double g_last_blend_time   = -1e9;   // wall time
+static double g_last_blend_lat    = 0.0;
+static double g_last_blend_lon    = 0.0;
+
+// Rate limits. The blend cap prevents thrashing during fast transitions; the
+// regen debounce is only to coalesce multiple cloud-layer mutations into one
+// regen fire when the gate flips (e.g. instant of ground contact).
+static constexpr double BLEND_MIN_INTERVAL_S       = 2.0;
+static constexpr double REGEN_DEBOUNCE_S           = 2.0;
+static constexpr double BLEND_SMOOTH_RECOMPUTE_S   = 5.0;
+static constexpr double BLEND_SMOOTH_MIN_MOVE_M    = 100.0;
+
+static double g_last_regen_time = -1e9;
+
 // Forward declaration — defined below near build_weather_info.
 static void cleanup_regional_weather();
 
@@ -569,6 +610,7 @@ public:
         pending_wx.humidity_pct = f.humidity_pct;
 
         pending_wx.dirty = true;
+        g_blend_dirty    = true;   // global changed → blend at ownship must re-evaluate
     }
 
     // ── Environmental Region Control (host → IG) ────────────────────────
@@ -584,6 +626,8 @@ public:
             auto it = g_pending_patches.find(f.region_id);
             if (it != g_pending_patches.end()) {
                 g_pending_patches.erase(it);
+                g_patch_last_zone.erase(f.region_id);
+                g_blend_dirty = true;
                 char msg[128];
                 snprintf(msg, sizeof msg,
                     "xplanecigi: Region %u destroyed (pending erase)\n", f.region_id);
@@ -603,6 +647,7 @@ public:
             p.rotation_deg           = f.rotation_deg;
             p.transition_perimeter_m = f.transition_perimeter_m;
             p.dirty = true;
+            g_blend_dirty = true;
 
             char msg[192];
             snprintf(msg, sizeof msg,
@@ -629,6 +674,7 @@ public:
             PendingPatch & p = g_pending_patches[f.region_id];
             p.region_id = f.region_id;
             p.dirty = true;
+            g_blend_dirty = true;
 
             if (f.layer_id >= 1 && f.layer_id <= 3) {
                 // Cloud layer slot
@@ -752,6 +798,7 @@ public:
                 }
             }
             pending_wx.dirty = true;
+            g_blend_dirty    = true;
             return;
         }
 
@@ -785,6 +832,7 @@ public:
         {
             pending_wx.runway_condition_idx = f.component_state;
             pending_wx.dirty = true;
+            g_blend_dirty    = true;
             return;
         }
 
@@ -794,7 +842,8 @@ public:
         {
             bool new_frozen = (f.component_state != 0);
             if (new_frozen != g_sim_frozen) {
-                g_sim_frozen = new_frozen;
+                g_sim_frozen  = new_frozen;
+                g_blend_dirty = true;   // freeze flip can flush a deferred regen
                 XPLMDebugString(g_sim_frozen
                     ? "xplanecigi: sim freeze → FROZEN\n"
                     : "xplanecigi: sim freeze → RUNNING\n");
@@ -975,6 +1024,221 @@ static XPLMWeatherInfo_t build_weather_info(const PendingPatch & p)
     }
 
     return info;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Blend-at-ownship — compute effective PendingWeather from the global
+// pending_wx and active patches at the ownship lat/lon.
+// See DECISIONS.md 2026-04-23 for the rationale (X-Plane SDK regional-
+// weather rendering limitation workaround).
+//
+// Algorithm:
+//   For each patch, compute great-circle distance from ownship to patch
+//   centre (equirectangular approximation, error < 1% at 50 NM):
+//     - distance ≤ corner_radius_m            → weight = 1.0 (Inside)
+//     - distance ≤ corner_radius_m + transition_perimeter_m
+//           → weight = 1 - (d - corner_radius_m) / transition_perimeter_m
+//             (Transition)
+//     - else                                  → weight = 0   (Outside)
+//   Multi-patch overlap: highest-weight patch wins (deterministic).
+//
+// Blended fields (lerp by weight): visibility, cloud layers 1-3, precip rate.
+// Global-only on the visual path: temperature, pressure, wind, humidity,
+// runway condition (X-Plane runway_friction is a single global dataref;
+// patch override is handled host-side for the FDM via AtmosphereState).
+// ─────────────────────────────────────────────────────────────────────────────
+
+static double approx_distance_m(double lat1, double lon1, double lat2, double lon2)
+{
+    constexpr double DEG_TO_RAD = 3.141592653589793 / 180.0;
+    constexpr double R_EARTH_M  = 6371000.0;
+    const double mean_lat_rad = ((lat1 + lat2) * 0.5) * DEG_TO_RAD;
+    const double dlat = (lat2 - lat1) * DEG_TO_RAD;
+    const double dlon = (lon2 - lon1) * DEG_TO_RAD * std::cos(mean_lat_rad);
+    return std::sqrt(dlat * dlat + dlon * dlon) * R_EARTH_M;
+}
+
+// Returns weight in [0, 1] and zone classification for one patch vs ownship.
+struct PatchInfluence { float weight; PatchZone zone; };
+
+static PatchInfluence patch_influence(const PendingPatch & p,
+                                       double lat, double lon)
+{
+    const double d = approx_distance_m(p.lat_deg, p.lon_deg, lat, lon);
+    if (d <= p.corner_radius_m) {
+        return { 1.0f, PatchZone::Inside };
+    }
+    const double transition_end = p.corner_radius_m + p.transition_perimeter_m;
+    if (d <= transition_end && p.transition_perimeter_m > 1e-3) {
+        const float w = static_cast<float>(
+            1.0 - (d - p.corner_radius_m) / p.transition_perimeter_m);
+        return { std::clamp(w, 0.0f, 1.0f), PatchZone::Transition };
+    }
+    return { 0.0f, PatchZone::Outside };
+}
+
+// Cheap zone-state check vs g_patch_last_zone; does not run the full blend.
+// Returns true if any active patch has changed inside/transition/outside
+// state since the last blend, OR if a known patch is now missing from the
+// last-zone map (newly added).
+static bool ownship_crossed_zone_boundary()
+{
+    for (const auto & kv : g_pending_patches) {
+        const auto inf = patch_influence(kv.second, g_ownship_lat, g_ownship_lon);
+        const auto it  = g_patch_last_zone.find(kv.first);
+        if (it == g_patch_last_zone.end()) return true;
+        if (it->second != inf.zone)        return true;
+    }
+    return false;
+}
+
+// True if at least one patch currently exerts non-zero influence at ownship.
+static bool any_patch_active_at_ownship()
+{
+    for (const auto & kv : g_pending_patches) {
+        if (patch_influence(kv.second, g_ownship_lat, g_ownship_lon).weight > 0.0f)
+            return true;
+    }
+    return false;
+}
+
+// Pick the patch (and its weight) with the largest influence at ownship.
+// Returns nullptr if no patch is active. Deterministic on overlap because
+// std::map iterates in sorted region_id order — equal-weight ties resolve to
+// the lowest region_id.
+static const PendingPatch * dominant_patch_at_ownship(float & out_weight)
+{
+    const PendingPatch * best = nullptr;
+    float best_w = 0.0f;
+    for (const auto & kv : g_pending_patches) {
+        const auto inf = patch_influence(kv.second, g_ownship_lat, g_ownship_lon);
+        if (inf.weight > best_w) {
+            best_w = inf.weight;
+            best   = &kv.second;
+        }
+    }
+    out_weight = best_w;
+    return best;
+}
+
+// Pull a per-patch scalar override layer. Returns nullptr if the patch
+// doesn't author it.
+static const PendingScalarOverride * find_scalar_override(const PendingPatch & p,
+                                                          uint8_t layer_id)
+{
+    for (const auto & ov : p.scalar_overrides) {
+        if (ov.layer_id == layer_id && ov.weather_enable) return &ov;
+    }
+    return nullptr;
+}
+
+// Compute the effective PendingWeather at ownship by lerping the dominant
+// patch's overrides into the global state. Updates g_patch_last_zone and
+// g_last_blend_{lat,lon,time} as a side effect.
+//
+// Returns the result by value; the caller is responsible for stamping
+// pending_wx and the cloud_changed flag where appropriate.
+static PendingWeather blend_weather_at_ownship()
+{
+    // Refresh per-patch zone tracking unconditionally (needed by
+    // ownship_crossed_zone_boundary on the next tick).
+    g_patch_last_zone.clear();
+    for (const auto & kv : g_pending_patches) {
+        g_patch_last_zone[kv.first] =
+            patch_influence(kv.second, g_ownship_lat, g_ownship_lon).zone;
+    }
+
+    PendingWeather eff = pending_wx;   // start from global
+
+    float w = 0.0f;
+    const PendingPatch * patch = dominant_patch_at_ownship(w);
+    if (patch == nullptr || w <= 0.0f) {
+        // Outside all patches — global state is the answer.
+        g_last_blend_lat  = g_ownship_lat;
+        g_last_blend_lon  = g_ownship_lon;
+        g_last_blend_time = XPLMGetElapsedTime();
+        return eff;
+    }
+
+    // ── Visibility (scalar override, layer 20) ────────────────────────────
+    if (const auto * ov = find_scalar_override(*patch, 20)) {
+        // Wire convention: visibility_m == 0 means "not overridden"
+        if (ov->visibility_m > 0.0f) {
+            eff.visibility_m =
+                eff.visibility_m * (1.0f - w) + ov->visibility_m * w;
+        }
+    }
+
+    // ── Precipitation rate (scalar override, layer 21) ────────────────────
+    // Wire-side carries rate as coverage_pct/100 in OnWeatherCtrl, but the
+    // current decoder doesn't store it on the patch struct — left as a
+    // known limitation; if/when the decoder propagates precip per-patch
+    // this branch will start picking it up.
+    if (const auto * ov = find_scalar_override(*patch, 21)) {
+        if (!std::isnan(ov->precipitation_rate)) {
+            const float pct = ov->precipitation_rate * 100.0f;
+            const float new_rain =
+                eff.rain_pct * (1.0f - w) + pct * w;
+            if (new_rain != eff.rain_pct) eff.cloud_changed = true;
+            eff.rain_pct = new_rain;
+        }
+    }
+
+    // ── Cloud layers 1-3 ──────────────────────────────────────────────────
+    // Inside the patch (w >= 0.9): use patch layers wholesale.
+    // Transition (w in [0.1, 0.9]): keep patch base/top/type, fade coverage
+    //   from patch toward global so coverage % moves smoothly while the
+    //   silhouette doesn't morph mid-frame.
+    // Far-outside (w < 0.1): fall back to global layers; this is the cutover
+    //   that prevents lingering wisps of patch cloud type far from the patch.
+    constexpr float CLOUD_PATCH_FULL_W = 0.9f;
+    constexpr float CLOUD_PATCH_MIN_W  = 0.1f;
+    const auto & pcl = patch->cloud_layers;
+    for (size_t i = 0; i < 3 && i < pcl.size(); ++i) {
+        const auto & src = pcl[i];
+        if (!src.weather_enable) continue;
+        auto & dst = eff.cloud[i];
+
+        const float patch_type_xp = remap_cloud_type(src.cloud_type);
+        const float patch_cov     = src.coverage_pct / 100.0f;
+        const float patch_base_m  = src.base_elevation_m;
+        const float patch_top_m   = src.base_elevation_m + src.thickness_m;
+
+        bool prev_valid = dst.valid;
+        float prev_type = dst.type_xp;
+        float prev_cov  = dst.coverage;
+        float prev_base = dst.base_m;
+        float prev_top  = dst.top_m;
+
+        if (w >= CLOUD_PATCH_FULL_W) {
+            dst.type_xp  = patch_type_xp;
+            dst.coverage = patch_cov;
+            dst.base_m   = patch_base_m;
+            dst.top_m    = patch_top_m;
+            dst.valid    = true;
+        } else if (w >= CLOUD_PATCH_MIN_W) {
+            // Coverage fades; base/top/type pinned to patch to avoid morph.
+            const float global_cov = eff.cloud[i].valid ? eff.cloud[i].coverage : 0.0f;
+            dst.type_xp  = patch_type_xp;
+            dst.coverage = global_cov * (1.0f - w) + patch_cov * w;
+            dst.base_m   = patch_base_m;
+            dst.top_m    = patch_top_m;
+            dst.valid    = true;
+        }
+        // else (w < CLOUD_PATCH_MIN_W): leave eff.cloud[i] as-copied-from-global
+
+        const bool changed = (dst.valid != prev_valid)
+            || dst.type_xp  != prev_type
+            || dst.coverage != prev_cov
+            || dst.base_m   != prev_base
+            || dst.top_m    != prev_top;
+        if (changed) eff.cloud_changed = true;
+    }
+
+    g_last_blend_lat  = g_ownship_lat;
+    g_last_blend_lon  = g_ownship_lon;
+    g_last_blend_time = XPLMGetElapsedTime();
+    return eff;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
