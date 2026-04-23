@@ -4,6 +4,9 @@
 
 #include <CigiIGCtrlV3_3.h>
 #include <CigiBaseIGCtrl.h>
+#include <CigiEntityCtrlV3_3.h>
+#include <CigiBaseEntityCtrl.h>
+#include <CigiAnimationTable.h>
 #include <CigiHatHotReqV3_2.h>
 #include <CigiBaseHatHotReq.h>
 
@@ -30,6 +33,31 @@ TEST(CigiSession, BeginFrameEmitsIgControl) {
     ASSERT_GE(cigi.Unpack(const_cast<std::uint8_t *>(buf), kSameEndianSwap, nullptr), 0);
     EXPECT_EQ(cigi.GetIGMode(), CigiBaseIGCtrl::Operate);
     EXPECT_EQ(cigi.GetFrameCntr(), 7u);
+}
+
+TEST(CigiSession, EntityCtrlRoundTrip) {
+    cigi_session::HostSession sess;
+    sess.BeginFrame(1, 1, 0.0);
+    sess.AppendEntityCtrl(/*id=*/0, -1.5f, 2.5f, 123.4f,
+                          50.901389, 4.484444, 56.0);
+    auto [buf, len] = sess.FinishFrame();
+    ASSERT_NE(buf, nullptr);
+    ASSERT_GE(len, kIgCtrlSize + 48u);
+
+    const std::uint8_t * ent_bytes = buf + kIgCtrlSize;
+
+    CigiEntityCtrlV3_3 cigi;
+    CigiAnimationTable tbl;
+    ASSERT_GE(cigi.Unpack(const_cast<std::uint8_t *>(ent_bytes), kSameEndianSwap, &tbl), 0);
+
+    EXPECT_EQ(cigi.GetEntityID(), 0);
+    EXPECT_EQ(cigi.GetEntityState(), CigiBaseEntityCtrl::Active);
+    EXPECT_FLOAT_EQ(cigi.GetRoll(), -1.5f);
+    EXPECT_FLOAT_EQ(cigi.GetPitch(), 2.5f);
+    EXPECT_FLOAT_EQ(cigi.GetYaw(), 123.4f);
+    EXPECT_DOUBLE_EQ(cigi.GetLat(), 50.901389);
+    EXPECT_DOUBLE_EQ(cigi.GetLon(), 4.484444);
+    EXPECT_DOUBLE_EQ(cigi.GetAlt(), 56.0);
 }
 
 TEST(CigiSession, HatHotRequestRoundTrip) {

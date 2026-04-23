@@ -36,6 +36,12 @@ public:
     void BeginFrame(std::uint32_t frame_cntr, std::uint8_t ig_mode,
                     double timestamp_s);
 
+    // Append an Entity Control (state=Active, attach=Detach, alpha=255).
+    // Must follow BeginFrame.
+    void AppendEntityCtrl(std::uint16_t entity_id,
+                           float roll_deg, float pitch_deg, float yaw_deg,
+                           double lat_deg, double lon_deg, double alt_m);
+
     // Append a HAT/HOT Request (Extended, Geodetic). Must follow BeginFrame.
     void AppendHatHotRequest(std::uint16_t request_id,
                               double lat_deg, double lon_deg);

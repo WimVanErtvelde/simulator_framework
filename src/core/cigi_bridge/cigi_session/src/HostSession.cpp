@@ -4,6 +4,8 @@
 #include <CigiOutgoingMsg.h>
 #include <CigiIGCtrlV3_3.h>
 #include <CigiBaseIGCtrl.h>
+#include <CigiEntityCtrlV3_3.h>
+#include <CigiBaseEntityCtrl.h>
 #include <CigiHatHotReqV3_2.h>
 #include <CigiBaseHatHotReq.h>
 
@@ -34,6 +36,23 @@ void HostSession::BeginFrame(std::uint32_t frame_cntr, std::uint8_t ig_mode,
     ig.SetFrameCntr(frame_cntr);
     ig.SetTimeStamp(static_cast<Cigi_uint32>(timestamp_s * 1e6));  // µs
     out << ig;
+}
+
+void HostSession::AppendEntityCtrl(std::uint16_t entity_id,
+                                     float roll_deg, float pitch_deg, float yaw_deg,
+                                     double lat_deg, double lon_deg, double alt_m) {
+    CigiEntityCtrlV3_3 pkt;
+    pkt.SetEntityID(entity_id);
+    pkt.SetEntityState(CigiBaseEntityCtrl::Active);
+    pkt.SetAttachState(CigiBaseEntityCtrl::Detach);
+    pkt.SetAlpha(255);
+    pkt.SetRoll(roll_deg);
+    pkt.SetPitch(pitch_deg);
+    pkt.SetYaw(yaw_deg);
+    pkt.SetLat(lat_deg);
+    pkt.SetLon(lon_deg);
+    pkt.SetAlt(alt_m);
+    impl_->ccl.GetOutgoingMsgMgr() << pkt;
 }
 
 void HostSession::AppendHatHotRequest(std::uint16_t request_id,
