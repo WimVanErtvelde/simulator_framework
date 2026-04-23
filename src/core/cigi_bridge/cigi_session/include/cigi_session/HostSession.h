@@ -59,6 +59,38 @@ public:
     };
     void AppendAtmosphereControl(const AtmosphereFields & f);
 
+    // Append a Weather Control (§4.1.8). Scope controls whether the entry
+    // is global (region_id ignored), regional (region_id indexes an
+    // Environmental Region), or entity-attached.
+    enum class WeatherScope : std::uint8_t {
+        Global   = 0,
+        Regional = 1,
+        Entity   = 2,
+    };
+    struct WeatherCtrlFields {
+        std::uint16_t region_id;
+        std::uint8_t  layer_id;
+        std::uint8_t  humidity_pct;
+        bool          weather_enable;
+        bool          scud_enable;
+        std::uint8_t  cloud_type;
+        WeatherScope  scope;
+        std::uint8_t  severity;
+        float         air_temp_c;
+        float         visibility_m;
+        float         scud_frequency_pct;
+        float         coverage_pct;
+        float         base_elevation_m;
+        float         thickness_m;
+        float         transition_band_m;
+        float         horiz_wind_ms;
+        float         vert_wind_ms;
+        float         wind_direction_deg;
+        float         barometric_pressure_hpa;
+        float         aerosol_concentration_gm3;
+    };
+    void AppendWeatherControl(const WeatherCtrlFields & f);
+
     // Finalise the current frame and return a pointer to the wire-format
     // datagram and its length. The buffer is owned by this session and
     // remains valid until the next BeginFrame call.

@@ -17,6 +17,8 @@
 #include <CigiHatHotXRespV3_2.h>
 #include <CigiBaseHatHotResp.h>
 #include <CigiAtmosCtrl.h>
+#include <CigiWeatherCtrlV3.h>
+#include <CigiBaseWeatherCtrl.h>
 
 namespace cigi_session {
 
@@ -153,6 +155,39 @@ void HostSession::AppendAtmosphereControl(const AtmosphereFields & f) {
     pkt.SetVertWindSp(f.vert_wind_ms);
     pkt.SetWindDir(f.wind_direction_deg);
     pkt.SetBaroPress(f.barometric_pressure_hpa);
+    impl_->ccl.GetOutgoingMsgMgr() << pkt;
+}
+
+void HostSession::AppendWeatherControl(const WeatherCtrlFields & f) {
+    CigiWeatherCtrlV3 pkt;
+    pkt.SetRegionID(f.region_id);
+    pkt.SetLayerID(f.layer_id);
+    pkt.SetHumidity(f.humidity_pct);
+    pkt.SetWeatherEn(f.weather_enable);
+    pkt.SetScudEn(f.scud_enable);
+    pkt.SetRandomWindsEn(false);
+    pkt.SetRandomLightningEn(false);
+    pkt.SetCloudType(static_cast<CigiBaseWeatherCtrl::CloudTypeGrp>(f.cloud_type));
+    pkt.SetScope(static_cast<CigiBaseWeatherCtrl::ScopeGrp>(f.scope));
+    pkt.SetSeverity(f.severity);
+    pkt.SetAirTemp(f.air_temp_c);
+    pkt.SetVisibilityRng(f.visibility_m);
+    pkt.SetScudFreq(f.scud_frequency_pct);
+    pkt.SetCoverage(f.coverage_pct);
+    pkt.SetBaseElev(f.base_elevation_m);
+    pkt.SetThickness(f.thickness_m);
+    pkt.SetTransition(f.transition_band_m);
+    pkt.SetHorizWindSp(f.horiz_wind_ms);
+    pkt.SetVertWindSp(f.vert_wind_ms);
+    // CCL's CigiWeatherCtrlV3 restricts WindDir to [-180,180]; framework
+    // carries wind direction in [0,360]. Normalize so callers can pass
+    // either convention.
+    float wd = f.wind_direction_deg;
+    while (wd >  180.0f) wd -= 360.0f;
+    while (wd < -180.0f) wd += 360.0f;
+    pkt.SetWindDir(wd);
+    pkt.SetBaroPress(f.barometric_pressure_hpa);
+    pkt.SetAerosol(f.aerosol_concentration_gm3);
     impl_->ccl.GetOutgoingMsgMgr() << pkt;
 }
 

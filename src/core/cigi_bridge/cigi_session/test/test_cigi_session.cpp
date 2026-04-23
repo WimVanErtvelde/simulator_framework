@@ -3,6 +3,8 @@
 #include "cigi_session/HostSession.h"
 
 #include <CigiAtmosCtrl.h>
+#include <CigiWeatherCtrlV3.h>
+#include <CigiBaseWeatherCtrl.h>
 #include <CigiIGCtrlV3_3.h>
 #include <CigiBaseIGCtrl.h>
 #include <CigiEntityCtrlV3_3.h>
@@ -192,6 +194,55 @@ TEST(CigiSession, AtmosphereControlRoundTrip) {
     EXPECT_FLOAT_EQ(cigi.GetVertWindSp(), 0.0f);
     EXPECT_FLOAT_EQ(cigi.GetWindDir(), 270.0f);
     EXPECT_FLOAT_EQ(cigi.GetBaroPress(), 1013.25f);
+}
+
+TEST(CigiSession, WeatherControlRoundTrip) {
+    cigi_session::HostSession sess;
+    sess.BeginFrame(1, 1, 0.0);
+    cigi_session::HostSession::WeatherCtrlFields w{};
+    w.region_id               = 0;
+    w.layer_id                = 2;   // low cumulus
+    w.humidity_pct            = 70;
+    w.weather_enable          = true;
+    w.scud_enable             = false;
+    w.cloud_type              = 1;   // Altocumulus per CCL enum
+    w.scope                   = cigi_session::HostSession::WeatherScope::Global;
+    w.severity                = 1;
+    w.air_temp_c              = 12.0f;
+    w.visibility_m            = 8000.0f;
+    w.scud_frequency_pct      = 0.0f;
+    w.coverage_pct            = 0.6f;
+    w.base_elevation_m        = 1500.0f;
+    w.thickness_m             = 500.0f;
+    w.transition_band_m       = 50.0f;
+    w.horiz_wind_ms           = 3.0f;
+    w.vert_wind_ms            = 0.0f;
+    w.wind_direction_deg      = 220.0f;
+    w.barometric_pressure_hpa = 1010.0f;
+    w.aerosol_concentration_gm3 = 0.0f;
+    sess.AppendWeatherControl(w);
+    auto [buf, len] = sess.FinishFrame();
+    ASSERT_NE(buf, nullptr);
+    ASSERT_GE(len, kIgCtrlSize + 56u);
+
+    CigiWeatherCtrlV3 cigi;
+    ASSERT_GE(cigi.Unpack(const_cast<std::uint8_t *>(buf + kIgCtrlSize),
+                          kSameEndianSwap, nullptr), 0);
+    EXPECT_EQ(cigi.GetLayerID(), 2);
+    EXPECT_EQ(cigi.GetHumidity(), 70);
+    EXPECT_TRUE(cigi.GetWeatherEn());
+    EXPECT_EQ(cigi.GetCloudType(), CigiBaseWeatherCtrl::Altocumulus);
+    EXPECT_EQ(cigi.GetScope(), CigiBaseWeatherCtrl::Global);
+    EXPECT_EQ(cigi.GetSeverity(), 1);
+    EXPECT_FLOAT_EQ(cigi.GetAirTemp(), 12.0f);
+    EXPECT_FLOAT_EQ(cigi.GetVisibilityRng(), 8000.0f);
+    EXPECT_FLOAT_EQ(cigi.GetCoverage(), 0.6f);
+    EXPECT_FLOAT_EQ(cigi.GetBaseElev(), 1500.0f);
+    EXPECT_FLOAT_EQ(cigi.GetThickness(), 500.0f);
+    EXPECT_FLOAT_EQ(cigi.GetTransition(), 50.0f);
+    EXPECT_FLOAT_EQ(cigi.GetHorizWindSp(), 3.0f);
+    EXPECT_FLOAT_EQ(cigi.GetWindDir(), -140.0f);  // 220° normalized to CCL's [-180,180]
+    EXPECT_FLOAT_EQ(cigi.GetBaroPress(), 1010.0f);
 }
 
 TEST(CigiSession, HatHotRequestRoundTrip) {
