@@ -25,8 +25,35 @@ endif()
 
 message(STATUS "X-Plane SDK: ${XPLANE_SDK_DIR}")
 
+# ── cigi_session library (cross-compiled for mingw64 alongside the plugin)
+# The library itself lives under src/core/cigi_bridge/cigi_session/ and is
+# shared with the ROS2 host node. Here we compile its sources into the plugin
+# build using the mingw64 toolchain. CCL is linked as a static archive
+# produced by the matching cross-build at references/CIGI/cigi3.3/ccl/install-mingw.
+set(CCL_ROOT_MINGW "${CMAKE_SOURCE_DIR}/../../references/CIGI/cigi3.3/ccl/install-mingw")
+set(CCL_INCLUDE_DIR "${CCL_ROOT_MINGW}/include/cigicl")
+find_library(CCL_LIBRARY
+  NAMES cigicl_static cigicl
+  PATHS "${CCL_ROOT_MINGW}/lib"
+  NO_DEFAULT_PATH
+  NO_CMAKE_FIND_ROOT_PATH
+)
+if(NOT CCL_LIBRARY)
+  message(FATAL_ERROR
+    "CCL cross-build not found at ${CCL_ROOT_MINGW}/lib.\n"
+    "Run Task 0.1: cmake -B build-mingw -DCMAKE_TOOLCHAIN_FILE=${CMAKE_CURRENT_SOURCE_DIR}/toolchain-mingw64.cmake \\\n"
+    "              && cmake --build build-mingw -j4 \\\n"
+    "              && cmake --install build-mingw --prefix \"\$(pwd)/install-mingw\"\n"
+    "in references/CIGI/cigi3.3/ccl/")
+endif()
+add_subdirectory(
+  "${CMAKE_SOURCE_DIR}/../../src/core/cigi_bridge/cigi_session"
+  "${CMAKE_BINARY_DIR}/cigi_session")
+
 # ── Target ────────────────────────────────────────────────────────────────────
 add_library(xplanecigi SHARED XPluginMain.cpp)
+
+target_link_libraries(xplanecigi PRIVATE cigi_session)
 
 # X-Plane plugin defines (Windows 64-bit).
 # XPLM400: XPLMWeatherInfo_t / Winds / Clouds structs (Slice 3b regional weather)
