@@ -2,9 +2,9 @@
 #define CIGI_BRIDGE__WEATHER_SYNC_HPP_
 
 // WeatherSync — tracks WeatherPatches sent to the IG, diffs incoming
-// WeatherState against sent state, and emits Environmental Region Control
-// (0x0B) + Weather Control (0x0C) Scope=Regional packets for additions and
-// removals.
+// WeatherState against sent state, and appends Environmental Region Control
+// + Weather Control (Scope=Regional) packets to a HostSession for additions
+// and removals.
 //
 // Event-driven only: no periodic re-assertion, no destroy retry. On a
 // dedicated Host↔IG LAN, UDP packet loss is negligible; adding retry
@@ -34,6 +34,8 @@
 #include <sim_msgs/msg/weather_state.hpp>
 #include <sim_msgs/msg/weather_patch.hpp>
 
+#include "cigi_session/HostSession.h"
+
 namespace cigi_bridge
 {
 
@@ -49,16 +51,15 @@ public:
     WeatherSync() = default;
     explicit WeatherSync(Logger logger) : logger_(std::move(logger)) {}
 
-    // Diff incoming WeatherState against sent_patches_. Emit:
-    //   - Region(Destroyed) once for each sent patch not in weather.patches
-    //   - Region(Active) + layers for each patch in weather.patches whose
-    //     content differs from what was last sent (short-circuit on match)
-    //
-    // Returns bytes written.
-    size_t process_update(
+    // Diff incoming WeatherState against sent_patches_ and append packets to
+    // the provided HostSession (must have an active BeginFrame context):
+    //   - Env Region (Destroyed) once for each sent patch not in weather.patches
+    //   - Env Region (Active) + Weather Control (Scope=Regional) layers for
+    //     each patch in weather.patches whose content differs from what was
+    //     last sent (short-circuit on match)
+    void process_update(
         const sim_msgs::msg::WeatherState & weather,
-        uint8_t * buffer,
-        size_t capacity);
+        cigi_session::HostSession & session);
 
     // Clear sent-state. Call on reposition rising edge — IG is being reset.
     void flush_on_reposition();
@@ -67,13 +68,13 @@ public:
     size_t sent_count() const { return sent_patches_.size(); }
 
 private:
-    // Internal helpers — emit into buffer, return bytes or 0 on insufficient capacity
-    size_t emit_patch_active(
+    // Internal helpers — append packets for one patch to the session.
+    void emit_patch_active(
         const sim_msgs::msg::WeatherPatch & patch,
-        uint8_t * buffer, size_t capacity) const;
-    size_t emit_patch_destroyed(
+        cigi_session::HostSession & session) const;
+    void emit_patch_destroyed(
         uint16_t patch_id,
-        uint8_t * buffer, size_t capacity) const;
+        cigi_session::HostSession & session) const;
 
     std::map<uint16_t, sim_msgs::msg::WeatherPatch> sent_patches_;
     Logger logger_;

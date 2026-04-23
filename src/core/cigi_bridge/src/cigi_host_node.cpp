@@ -1,60 +1,22 @@
 #include "cigi_bridge/cigi_host_node.hpp"
-#include "cigi_bridge/weather_encoder.hpp"
+#include "cigi_session/ComponentIds.h"
 #include <lifecycle_msgs/msg/state.hpp>
 
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <algorithm>
 #include <cstring>
 #include <cmath>
 #include <fstream>
 #include <lifecycle_msgs/msg/transition.hpp>
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Big-endian write helpers (CIGI 3.3 wire format is big-endian)
-// ─────────────────────────────────────────────────────────────────────────────
-static void write_be16(uint8_t * p, uint16_t v)
-{
-    p[0] = (v >> 8) & 0xFF;
-    p[1] =  v       & 0xFF;
-}
-
-static void write_be32(uint8_t * p, uint32_t v)
-{
-    p[0] = (v >> 24) & 0xFF;
-    p[1] = (v >> 16) & 0xFF;
-    p[2] = (v >>  8) & 0xFF;
-    p[3] =  v        & 0xFF;
-}
-
-static void write_be_float(uint8_t * p, float v)
-{
-    uint32_t u;
-    memcpy(&u, &v, sizeof u);
-    write_be32(p, u);
-}
-
-static void write_be_double(uint8_t * p, double v)
-{
-    uint64_t u;
-    memcpy(&u, &v, sizeof u);
-    p[0] = (u >> 56) & 0xFF; p[1] = (u >> 48) & 0xFF;
-    p[2] = (u >> 40) & 0xFF; p[3] = (u >> 32) & 0xFF;
-    p[4] = (u >> 24) & 0xFF; p[5] = (u >> 16) & 0xFF;
-    p[6] = (u >>  8) & 0xFF; p[7] =  u         & 0xFF;
-}
 
 static constexpr double RAD_TO_DEG = 180.0 / M_PI;
 static constexpr double DEG_TO_RAD = M_PI / 180.0;
 
 // WGS-84 semi-major axis
 static constexpr double EARTH_A = 6378137.0;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Minimal YAML value extractor (avoids full YAML dependency)
-// Extracts double/string values from simple YAML sequences like gear_points
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
 CigiHostNode::CigiHostNode()
@@ -114,6 +76,11 @@ CallbackReturn CigiHostNode::on_configure(const rclcpp_lifecycle::State &)
     }
 
     load_gear_points();
+
+    // Register inbound dispatch targets with the session. Packets arrive via
+    // session_.HandleDatagram(...) in recv_pending().
+    session_.SetSofProcessor(this);
+    session_.SetHatHotRespProcessor(this);
 
     RCLCPP_INFO(get_logger(), "cigi_bridge configured → IG %s:%d  host_port %d  rate %.0f Hz  gear_points %zu",
                 ig_address_.c_str(), ig_port_, host_port_, publish_rate_hz_, gear_points_.size());
@@ -359,84 +326,157 @@ void CigiHostNode::body_to_latlon(double ac_lat_rad, double ac_lon_rad,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Raw CIGI 3.3 packet encoding
+// Global weather packet emission — replaces the old weather_encoder. Appends
+// an Atmosphere Control plus one Weather Control per cloud layer (always 3
+// so removed layers are explicitly disabled on the IG), optional
+// precipitation Weather Control, a Runway Friction Component Control, and
+// wind-only Weather Controls (layer IDs 10+).
 // ─────────────────────────────────────────────────────────────────────────────
+namespace {
 
-// IG Control packet wire format (CIGI 3.3 §4.1.1, 24 bytes):
-//   Byte 0:    Packet ID = 0x01
-//   Byte 1:    Packet Size = 24
-//   Byte 2:    Major Version = 3
-//   Byte 3:    Database Number (int8; 0 = no load, 1..127 = load DB n,
-//              negative echo from IG indicates loading-in-progress)
-//   Byte 4:    bitfield — Minor Version (4 bits) | Ext/Interp (1 bit) |
-//              Timestamp Valid (1 bit) | IG Mode (2 bits, LSB)
-//   Byte 5:    Reserved (0)
-//   Byte 6-7:  Byte Swap Magic Number = 0x8000 (uint16, network order)
-//   Byte 8-11: Host Frame Number (uint32 BE)
-//   Byte 12-15:Timestamp (uint32 BE, 10 µs ticks)
-//   Byte 16-19:Last IG Frame Number (uint32 BE, echo of IG's last SOF frame)
-//   Byte 20-23:Reserved (0)
-// Verified against CCL CigiIGCtrlV3_3::Pack and Wireshark dissector.
-void CigiHostNode::encode_ig_ctrl(uint8_t * buf, uint32_t frame_cntr, double timestamp_s,
-                                   uint8_t ig_mode) const
+const sim_msgs::msg::WeatherWindLayer * find_nearest_wind(
+    const std::vector<sim_msgs::msg::WeatherWindLayer> & layers,
+    float altitude_m)
 {
-    memset(buf, 0, CIGI_IG_CTRL_SIZE);
-    buf[0] = CIGI_PKT_IG_CTRL;
-    buf[1] = CIGI_IG_CTRL_SIZE;
-    buf[2] = 3;                // Major Version
-    buf[3] = 0;                // Database Number — no DB load request
-    buf[4] = ig_mode;          // bitfield: see CIGI_IG_MODE_* in header
-    // buf[5] = 0 (Reserved, already zero from memset)
-    write_be16(&buf[6],  0x8000);                                  // Byte Swap Magic
-    write_be32(&buf[8],  frame_cntr);                              // Host Frame Number
-    write_be32(&buf[12], static_cast<uint32_t>(timestamp_s * 1e5)); // Timestamp (10 µs ticks)
-    write_be32(&buf[16], last_ig_frame_);                          // Last IG Frame Number
-    // buf[20..23] = 0 (Reserved, already zero from memset)
+    if (layers.empty()) return nullptr;
+    const sim_msgs::msg::WeatherWindLayer * best = &layers[0];
+    float best_dist = std::abs(layers[0].altitude_msl_m - altitude_m);
+    for (size_t i = 1; i < layers.size(); ++i) {
+        float d = std::abs(layers[i].altitude_msl_m - altitude_m);
+        if (d < best_dist) { best = &layers[i]; best_dist = d; }
+    }
+    return best;
 }
 
-void CigiHostNode::encode_entity_ctrl(uint8_t * buf, uint16_t entity_id,
-                                      float roll_deg, float pitch_deg, float yaw_deg,
-                                      double lat_deg, double lon_deg, double alt_m) const
-{
-    memset(buf, 0, CIGI_ENTITY_CTRL_SIZE);
-    buf[0] = CIGI_PKT_ENTITY_CTRL;
-    buf[1] = CIGI_ENTITY_CTRL_SIZE;
-    write_be16(&buf[2], entity_id);
-    buf[4]  = CIGI_ENTITY_ACTIVE;
-    buf[5]  = 0;
-    write_be_float(&buf[12], roll_deg);
-    write_be_float(&buf[16], pitch_deg);
-    write_be_float(&buf[20], yaw_deg);
-    write_be_double(&buf[24], lat_deg);
-    write_be_double(&buf[32], lon_deg);
-    write_be_double(&buf[40], alt_m);
-}
+}  // namespace
 
-// HAT/HOT Request (Host → IG), CIGI 3.3 §4.1.24, 32 bytes
-//   Byte 0:    Packet ID = 0x18
-//   Byte 1:    Packet Size = 32
-//   Byte 2-3:  HAT/HOT ID (uint16 BE) — host-assigned correlation ID
-//   Byte 4:    bitfield [1:0] Request Type (0=HAT, 1=HOT, 2=Extended),
-//              [2] Coordinate System (0=Geodetic, 1=Entity), [7:3] Reserved
-//   Byte 5:    Update Period (uint8, 0 = one-shot)
-//   Byte 6-7:  Entity ID (uint16 BE, used only when Coordinate System = Entity)
-//   Byte 8-15: Latitude / X Offset  (double BE, deg or metres)
-//   Byte 16-23:Longitude / Y Offset (double BE, deg or metres)
-//   Byte 24-31:Altitude / Z Offset  (double BE, metres MSL — ignored for HOT)
-// Verified against CCL CigiHatHotReqV3_2::Pack and Wireshark dissector.
-void CigiHostNode::encode_hot_request(uint8_t * buf, uint16_t request_id,
-                                      double lat_deg, double lon_deg) const
+void CigiHostNode::append_global_weather(const sim_msgs::msg::WeatherState & weather)
 {
-    memset(buf, 0, CIGI_HOT_REQUEST_SIZE);
-    buf[0] = CIGI_PKT_HOT_REQUEST;
-    buf[1] = CIGI_HOT_REQUEST_SIZE;
-    write_be16(&buf[2], request_id);
-    buf[4] = 0x02;  // Request Type = Extended (2), Coordinate System = Geodetic (0)
-    // buf[5] = 0 (Update Period = one-shot, already zero)
-    // buf[6..7] = 0 (Entity ID ignored in Geodetic mode, already zero)
-    write_be_double(&buf[8],  lat_deg);
-    write_be_double(&buf[16], lon_deg);
-    write_be_double(&buf[24], 0.0);   // Altitude — unused for Extended/HOT
+    const float global_temp_c = static_cast<float>(weather.temperature_sl_k - 273.15);
+    const float global_vis_m  = static_cast<float>(weather.visibility_m);
+    const float global_baro   = static_cast<float>(weather.pressure_sl_pa / 100.0);
+
+    // Surface wind from first wind layer (matches previous atmosphere encoder)
+    float h_wind = 0.0f, v_wind = 0.0f, wind_dir = 0.0f;
+    if (!weather.wind_layers.empty()) {
+        h_wind   = weather.wind_layers[0].wind_speed_ms;
+        v_wind   = weather.wind_layers[0].vertical_wind_ms;
+        wind_dir = weather.wind_layers[0].wind_direction_deg;
+    }
+
+    // ── 1. Atmosphere Control ────────────────────────────────────────────
+    cigi_session::HostSession::AtmosphereFields atm{};
+    atm.humidity_pct            = static_cast<uint8_t>(std::clamp<int>(weather.humidity_pct, 0, 100));
+    atm.temperature_c           = global_temp_c;
+    atm.visibility_m            = global_vis_m;
+    atm.horiz_wind_ms           = h_wind;
+    atm.vert_wind_ms            = v_wind;
+    atm.wind_direction_deg      = wind_dir;
+    atm.barometric_pressure_hpa = global_baro;
+    session_.AppendAtmosphereControl(atm);
+
+    // Helper to build a default global Weather Control with scope=Global.
+    auto make_global_wc = [&]() {
+        cigi_session::HostSession::WeatherCtrlFields wc{};
+        wc.region_id           = 0;
+        wc.layer_id            = 0;
+        wc.humidity_pct        = 0;
+        wc.weather_enable      = true;
+        wc.scud_enable         = false;
+        wc.cloud_type          = 0;
+        wc.scope               = cigi_session::HostSession::WeatherScope::Global;
+        wc.severity            = 0;
+        wc.air_temp_c          = global_temp_c;
+        wc.visibility_m        = global_vis_m;
+        wc.scud_frequency_pct  = 0.0f;
+        wc.coverage_pct        = 0.0f;
+        wc.base_elevation_m    = 0.0f;
+        wc.thickness_m         = 0.0f;
+        wc.transition_band_m   = 0.0f;
+        wc.horiz_wind_ms       = 0.0f;
+        wc.vert_wind_ms        = 0.0f;
+        wc.wind_direction_deg  = 0.0f;
+        wc.barometric_pressure_hpa   = global_baro;
+        wc.aerosol_concentration_gm3 = 0.0f;
+        return wc;
+    };
+
+    // ── 2. Cloud layers → always emit 3 packets (layer_id 1-3) ───────────
+    const size_t num_clouds = std::min(weather.cloud_layers.size(), static_cast<size_t>(3));
+    for (size_t i = 0; i < 3; ++i) {
+        auto wc = make_global_wc();
+        wc.layer_id = static_cast<uint8_t>(i + 1);
+        if (i < num_clouds) {
+            const auto & cl = weather.cloud_layers[i];
+            const float center_alt = cl.base_elevation_m + cl.thickness_m * 0.5f;
+            float lh = 0.0f, lv = 0.0f, ld = 0.0f, lturb = 0.0f;
+            if (const auto * wl = find_nearest_wind(weather.wind_layers, center_alt)) {
+                lh    = wl->wind_speed_ms;
+                lv    = wl->vertical_wind_ms;
+                ld    = wl->wind_direction_deg;
+                lturb = wl->turbulence_severity;
+            }
+            wc.cloud_type          = cl.cloud_type;
+            wc.scud_enable         = cl.scud_enable;
+            wc.scud_frequency_pct  = cl.scud_frequency_pct;
+            wc.coverage_pct        = cl.coverage_pct;
+            wc.base_elevation_m    = cl.base_elevation_m;
+            wc.thickness_m         = cl.thickness_m;
+            wc.transition_band_m   = cl.transition_band_m;
+            wc.horiz_wind_ms       = lh;
+            wc.vert_wind_ms        = lv;
+            wc.wind_direction_deg  = ld;
+            wc.severity            = static_cast<uint8_t>(
+                std::clamp(lturb * 5.0f, 0.0f, 5.0f));
+            wc.weather_enable      = true;
+        } else {
+            // Explicit disable — layer not present
+            wc.weather_enable = false;
+        }
+        session_.AppendWeatherControl(wc);
+    }
+
+    // ── 3. Precipitation layer (layer_id 4=Rain, 5=Snow) ─────────────────
+    if (weather.precipitation_rate > 0.0f && weather.precipitation_type > 0) {
+        auto wc = make_global_wc();
+        wc.layer_id = (weather.precipitation_type == 2) ? 5 : 4;
+        wc.coverage_pct = weather.precipitation_rate * 100.0f;
+        float precip_thickness = 3000.0f;
+        if (!weather.cloud_layers.empty()) {
+            precip_thickness = weather.cloud_layers[0].base_elevation_m;
+            if (precip_thickness < 100.0f) precip_thickness = 3000.0f;
+        }
+        wc.base_elevation_m = 0.0f;
+        wc.thickness_m      = precip_thickness;
+        session_.AppendWeatherControl(wc);
+    }
+
+    // ── 4. Runway friction (Component Control → GlobalTerrainSurface) ────
+    // Previously a user-defined 0xCB packet; now a standard Component Control.
+    session_.AppendComponentControl(
+        cigi_session::HostSession::ComponentClass::GlobalTerrainSurface,
+        /*instance_id=*/0,
+        static_cast<std::uint16_t>(
+            cigi_session::GlobalTerrainComponentId::RunwayFriction),
+        /*component_state=*/weather.runway_friction);
+
+    // ── 5. Wind-only layers (layer_id 10+) ───────────────────────────────
+    const size_t max_winds = std::min(weather.wind_layers.size(), static_cast<size_t>(13));
+    for (size_t j = 0; j < max_winds; ++j) {
+        const auto & wl = weather.wind_layers[j];
+        auto wc = make_global_wc();
+        wc.layer_id            = static_cast<uint8_t>(10 + j);
+        wc.cloud_type          = 0;          // None
+        wc.coverage_pct        = 0.0f;       // no cloud, wind only
+        wc.base_elevation_m    = wl.altitude_msl_m;
+        wc.thickness_m         = 0.0f;
+        wc.horiz_wind_ms       = wl.wind_speed_ms;
+        wc.vert_wind_ms        = wl.vertical_wind_ms;
+        wc.wind_direction_deg  = wl.wind_direction_deg;
+        wc.severity            = static_cast<uint8_t>(
+            std::clamp(wl.turbulence_severity * 5.0f, 0.0f, 5.0f));
+        session_.AppendWeatherControl(wc);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -462,53 +502,33 @@ void CigiHostNode::send_cigi_frame()
         alt_m       = fms->altitude_msl_m;
     }
 
-    // IG Mode: send Reset for ONE frame when reposition starts, then Operate
-    uint8_t ig_mode = CIGI_IG_MODE_OPERATE;
+    // IG Mode: send Standby for ONE frame when reposition starts (CIGI 3.3
+    // collapses Reset and Standby to the same wire value), then Operate.
+    uint8_t ig_mode = IG_MODE_OPERATE;
     if (reposition_active_ && !sent_reset_) {
-        ig_mode = CIGI_IG_MODE_RESET;
+        ig_mode = IG_MODE_STANDBY;
         sent_reset_ = true;
         RCLCPP_INFO(get_logger(), "Sending IG Mode = Reset (one frame, reposition)");
     } else if (startup_reset_pending_) {
-        ig_mode = CIGI_IG_MODE_RESET;
+        ig_mode = IG_MODE_STANDBY;
         startup_reset_pending_ = false;
         RCLCPP_INFO(get_logger(), "Sending IG Mode = Reset (one frame, startup)");
     }
 
-    // Build a single UDP datagram: IG Control + Entity Control + optional Weather.
-    // Weather payload may include global (Atmo + global Weather Control) plus
-    // regional patches. Sized at 4096 bytes to fit:
-    //   24 (IG) + 48 (Entity) + 32 (Atmo) + 56*17 (global weather) +
-    //   5*(48 + 56*8) = 2480 (up to 5 patches with 3 cloud + 3 wind + 2 override)
-    //   = 3640 bytes worst case. 4096 provides headroom.
-    uint8_t datagram[4096];
-    size_t offset = 0;
+    session_.BeginFrame(frame_counter_, ig_mode, timestamp_s);
+    session_.AppendEntityCtrl(static_cast<uint16_t>(entity_id_),
+                              roll_deg, pitch_deg, yaw_deg,
+                              lat_deg, lon_deg, alt_m);
 
-    encode_ig_ctrl(datagram, frame_counter_, timestamp_s, ig_mode);
-    offset += CIGI_IG_CTRL_SIZE;
-
-    encode_entity_ctrl(datagram + offset,
-                       static_cast<uint16_t>(entity_id_),
-                       roll_deg, pitch_deg, yaw_deg,
-                       lat_deg, lon_deg, alt_m);
-    offset += CIGI_ENTITY_CTRL_SIZE;
-
-    // Append weather packets only when weather has changed.
-    // Order: global weather (Atmosphere Control + global Weather Control) first,
-    //        then regional weather (patches via WeatherSync diff logic).
     if (weather_dirty_) {
-        size_t weather_bytes = cigi_bridge::encode_weather_packets(
-            datagram + offset, sizeof(datagram) - offset, latest_weather_);
-        offset += weather_bytes;
-
-        size_t patch_bytes = weather_sync_.process_update(
-            latest_weather_, datagram + offset, sizeof(datagram) - offset);
-        offset += patch_bytes;
-
+        append_global_weather(latest_weather_);
+        weather_sync_.process_update(latest_weather_, session_);
         weather_dirty_ = false;
     }
 
-    if (send_fd_ >= 0) {
-        sendto(send_fd_, datagram, offset, 0,
+    auto [buf, len] = session_.FinishFrame();
+    if (send_fd_ >= 0 && buf != nullptr && len > 0) {
+        sendto(send_fd_, buf, len, 0,
                reinterpret_cast<struct sockaddr *>(&ig_addr_), sizeof(ig_addr_));
     }
 
@@ -560,46 +580,32 @@ void CigiHostNode::send_hot_requests()
     double ac_lon_rad = fms->longitude_deg * DEG_TO_RAD;
     double heading_rad = fms->true_heading_rad;
 
-    // Build one UDP datagram with all HOT request packets
-    size_t total = gear_points_.size() * CIGI_HOT_REQUEST_SIZE;
-    std::vector<uint8_t> datagram(total, 0);
+    // Emit a dedicated IG-Control-led datagram with all HOT requests. The
+    // IG Control is required as the first packet of every Host→IG datagram
+    // (CIGI 3.3 §4.1.1).
+    hot_session_.BeginFrame(frame_counter_, IG_MODE_OPERATE, fms->sim_time_sec);
 
-    for (size_t i = 0; i < gear_points_.size(); ++i) {
-        auto & gp = gear_points_[i];
+    for (auto & gp : gear_points_) {
         double pt_lat_deg, pt_lon_deg;
         body_to_latlon(ac_lat_rad, ac_lon_rad, heading_rad,
                        gp.x_m, gp.y_m, pt_lat_deg, pt_lon_deg);
 
         uint16_t req_id = hat_tracker_.next_id();
-        encode_hot_request(datagram.data() + i * CIGI_HOT_REQUEST_SIZE,
-                           req_id, pt_lat_deg, pt_lon_deg);
-
-        hat_tracker_.add_request(req_id,
-                                 pt_lat_deg,
-                                 pt_lon_deg,
-                                 gp.name);
+        hot_session_.AppendHatHotRequest(req_id, pt_lat_deg, pt_lon_deg);
+        hat_tracker_.add_request(req_id, pt_lat_deg, pt_lon_deg, gp.name);
     }
 
-    if (send_fd_ >= 0) {
-        sendto(send_fd_, datagram.data(), total, 0,
+    auto [buf, len] = hot_session_.FinishFrame();
+    if (send_fd_ >= 0 && buf != nullptr && len > 0) {
+        sendto(send_fd_, buf, len, 0,
                reinterpret_cast<struct sockaddr *>(&ig_addr_), sizeof(ig_addr_));
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HAT/HOT Extended Response wire format (IG → Host), CIGI 3.3 §4.2.3
-//   Packet ID = 0x67 (103), Packet Size = 40 bytes
-//   Byte 0:    Packet ID = 0x67
-//   Byte 1:    Packet Size = 40
-//   Byte 2-3:  HAT/HOT ID (uint16 BE)
-//   Byte 4:    [0] Valid, [3:1] Reserved, [7:4] Host Frame Number LSN
-//   Byte 5-7:  Reserved
-//   Byte 8-15: HAT (double BE, metres above terrain)
-//   Byte 16-23:HOT (double BE, metres MSL)
-//   Byte 24-27:Material Code (uint32 BE) — framework surface enum in low byte
-//   Byte 28-31:Normal Vector Azimuth   (float BE, deg) — stubbed 0 for now
-//   Byte 32-35:Normal Vector Elevation (float BE, deg) — stubbed 0 for now
-//   Byte 36-39:Reserved
+// Drain pending UDP datagrams and hand each to the session for parsing.
+// Dispatch arrives via OnSof / OnHatHotResp below.
+// ─────────────────────────────────────────────────────────────────────────────
 void CigiHostNode::recv_pending()
 {
     if (recv_fd_ < 0) return;
@@ -608,74 +614,45 @@ void CigiHostNode::recv_pending()
     while (true) {
         ssize_t n = ::recv(recv_fd_, buf, sizeof(buf), 0);
         if (n <= 0) break;  // EAGAIN or error
+        session_.HandleDatagram(buf, static_cast<size_t>(n));
+    }
+}
 
-        // Walk the CIGI packet stream in the datagram
-        ssize_t offset = 0;
-        while (offset + 2 <= n) {
-            uint8_t pkt_id   = buf[offset];
-            uint8_t pkt_size = buf[offset + 1];
-            if (pkt_size < 2 || offset + pkt_size > n) break;
+// ─────────────────────────────────────────────────────────────────────────────
+// ISofProcessor — invoked by session_ for each SOF packet parsed.
+// ─────────────────────────────────────────────────────────────────────────────
+void CigiHostNode::OnSof(const cigi_session::SofFields & f)
+{
+    uint8_t prev = ig_status_;
+    ig_status_     = static_cast<uint8_t>(f.ig_mode);
+    last_ig_frame_ = f.ig_frame_number;
+    if (ig_status_ != prev) {
+        // CIGI 3.3 IG Mode enum: 0=Reset/Standby, 1=Operate, 2=Debug, 3=Offline
+        static const char * mode_names[] = {"Standby", "Operate", "Debug", "Offline"};
+        RCLCPP_INFO(get_logger(), "IG mode changed: %s → %s",
+                    mode_names[prev & 0x03], mode_names[ig_status_ & 0x03]);
+        auto status_msg = std_msgs::msg::UInt8();
+        status_msg.data = ig_status_;
+        ig_status_pub_->publish(status_msg);
+    }
+}
 
-            if (pkt_id == CIGI_PKT_HAT_HOT_EXT_RESPONSE && pkt_size >= 40) {
-                uint16_t hat_hot_id = (static_cast<uint16_t>(buf[offset + 2]) << 8) | buf[offset + 3];
-                bool     valid      = (buf[offset + 4] & 0x01) != 0;
+// ─────────────────────────────────────────────────────────────────────────────
+// IHatHotRespProcessor — invoked by session_ for each HAT/HOT Extended
+// Response (packet 0x67) parsed.
+// ─────────────────────────────────────────────────────────────────────────────
+void CigiHostNode::OnHatHotResp(const cigi_session::HatHotRespFields & f)
+{
+    // Only publish HOT when IG reports terrain valid (Operate mode).
+    if (ig_status_ != static_cast<uint8_t>(cigi_session::IgModeRx::Operate)) return;
 
-                // HAT @ 8-15
-                uint64_t val_u = 0;
-                for (int i = 0; i < 8; ++i)
-                    val_u = (val_u << 8) | buf[offset + 8 + i];
-                double hat_m;
-                memcpy(&hat_m, &val_u, 8);
+    // Material code's low byte carries the framework surface enum.
+    const uint8_t surface_type = static_cast<uint8_t>(f.material_code & 0xFF);
 
-                // HOT @ 16-23
-                val_u = 0;
-                for (int i = 0; i < 8; ++i)
-                    val_u = (val_u << 8) | buf[offset + 16 + i];
-                double hot_m;
-                memcpy(&hot_m, &val_u, 8);
-
-                // Material Code @ 24-27 — low byte carries framework surface enum
-                uint32_t material_code = 0;
-                for (int i = 0; i < 4; ++i)
-                    material_code = (material_code << 8) | buf[offset + 24 + i];
-                uint8_t surface_type = static_cast<uint8_t>(material_code & 0xFF);
-
-                // Normal vector (azimuth @ 28, elevation @ 32) currently unused
-
-                // Only publish HOT when IG reports terrain valid
-                if (ig_status_ != CIGI_SOF_IG_MODE_OPERATE) { offset += pkt_size; continue; }
-                auto resp = hat_tracker_.resolve(hat_hot_id, hat_m, hot_m, valid,
-                                                 surface_type);
-                if (resp && hat_pub_->is_activated()) {
-                    hat_pub_->publish(*resp);
-                }
-            }
-            else if (pkt_id == CIGI_PKT_SOF && pkt_size >= 24) {
-                // SOF (Start of Frame) from IG — CIGI 3.3 §4.2.1, 24 bytes:
-                //   Byte 2:    Major Version
-                //   Byte 3:    Database Number (int8, sign-flip handshake)
-                //   Byte 4:    IG Status Code (0=Normal)
-                //   Byte 5:    bitfield — Minor Version (4) | ERM (1) | TS Valid (1) | IG Mode (2 LSB)
-                //   Byte 8-11: IG Frame Number (uint32 BE)
-                // Verified against CCL CigiSOFV3_2::Pack.
-                uint8_t prev = ig_status_;
-                ig_status_ = buf[offset + 5] & 0x03;
-                last_ig_frame_ = (static_cast<uint32_t>(buf[offset +  8]) << 24)
-                               | (static_cast<uint32_t>(buf[offset +  9]) << 16)
-                               | (static_cast<uint32_t>(buf[offset + 10]) <<  8)
-                               | (static_cast<uint32_t>(buf[offset + 11]));
-                if (ig_status_ != prev) {
-                    // CIGI 3.3 IG Mode enum: 0=Reset/Standby, 1=Operate, 2=Debug, 3=Offline
-                    static const char * mode_names[] = {"Standby", "Operate", "Debug", "Offline"};
-                    RCLCPP_INFO(get_logger(), "IG mode changed: %s → %s",
-                                mode_names[prev & 0x03], mode_names[ig_status_ & 0x03]);
-                    auto status_msg = std_msgs::msg::UInt8();
-                    status_msg.data = ig_status_;
-                    ig_status_pub_->publish(status_msg);
-                }
-            }
-            offset += pkt_size;
-        }
+    auto resp = hat_tracker_.resolve(f.request_id, f.hat_m, f.hot_m, f.valid,
+                                     surface_type);
+    if (resp && hat_pub_->is_activated()) {
+        hat_pub_->publish(*resp);
     }
 }
 

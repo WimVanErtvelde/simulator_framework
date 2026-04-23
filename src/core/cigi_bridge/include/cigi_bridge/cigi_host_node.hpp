@@ -11,6 +11,9 @@
 
 #include "cigi_bridge/hat_request_tracker.hpp"
 #include "cigi_bridge/weather_sync.hpp"
+#include "cigi_session/HostSession.h"
+#include "cigi_session/processors/ISofProcessor.h"
+#include "cigi_session/processors/IHatHotRespProcessor.h"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -23,15 +26,19 @@ using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface
 // CIGI 3.3 host-side ROS2 lifecycle node.
 //
 // Sends Entity Control + IG Control packets to the Image Generator (X-Plane)
-// over UDP using raw CIGI 3.3 encoding (no CCL dependency).
-// Receives SOF and HAT/HOT response packets; publishes HAT results to
+// over UDP. Datagram assembly goes through cigi_session::HostSession which
+// wraps Boeing's CCL 3.3.3 (CigiHostSession) for wire-format translation.
+// Receives SOF and HAT/HOT response packets via the same session (dispatched
+// to OnSof / OnHatHotResp). HAT results are published on
 // /sim/cigi/hat_responses.
 //
 // Sign convention passed to the IG (matches X-Plane plugin EntityCtrl.cpp):
 //   pitch > 0 → nose up   (plugin negates for X-Plane phi)
 //   roll  > 0 → right bank(plugin negates for X-Plane theta)
 //   yaw   degrees 0-360 true heading (plugin passes straight to X-Plane psi)
-class CigiHostNode : public rclcpp_lifecycle::LifecycleNode
+class CigiHostNode : public rclcpp_lifecycle::LifecycleNode,
+                     public cigi_session::ISofProcessor,
+                     public cigi_session::IHatHotRespProcessor
 {
 public:
     CigiHostNode();
@@ -41,46 +48,18 @@ public:
     CallbackReturn on_deactivate(const rclcpp_lifecycle::State &) override;
     CallbackReturn on_cleanup(const rclcpp_lifecycle::State &) override;
 
+    // ── cigi_session inbound dispatch ──────────────────────────────────────
+    void OnSof(const cigi_session::SofFields & f) override;
+    void OnHatHotResp(const cigi_session::HatHotRespFields & f) override;
+
 private:
-    // ── CIGI raw packet encoding ──────────────────────────────────────────
-    // Host→IG packet IDs
-    static constexpr uint8_t CIGI_PKT_IG_CTRL      = 0x01;
-    static constexpr uint8_t CIGI_PKT_ENTITY_CTRL   = 0x02;
-    static constexpr uint8_t CIGI_PKT_HOT_REQUEST   = 0x18;
-    // IG→Host packet IDs (CIGI 3.3 ICD §2.2.2 Table 1)
-    static constexpr uint8_t CIGI_PKT_SOF                  = 0x65;  // 101
-    static constexpr uint8_t CIGI_PKT_HAT_HOT_EXT_RESPONSE = 0x67;  // 103 — carries both HAT and HOT + material code (§4.2.3, 40 B)
-    static constexpr uint8_t CIGI_IG_CTRL_SIZE      = 24;
-    static constexpr uint8_t CIGI_ENTITY_CTRL_SIZE  = 48;
-    static constexpr uint8_t CIGI_HOT_REQUEST_SIZE  = 32;
-
-    // CIGI 3.3 §4.1.1 IG Control byte 4 packing (LSB-first per §2.7.3):
-    //   bits 1..0 = IG Mode (0 = Reset/Standby, 1 = Operate, 2 = Debug)
-    //   bit  2    = Timestamp Valid (1 = valid)
-    //   bit  3    = Extrapolation/Interpolation Enable (0 = disabled)
-    //   bits 7..4 = Minor Version (2 for CIGI 3.3)
-    // Note: the spec collapses Reset and Standby into a single value (0) — the
-    // framework's "Reset" intent (one-frame signal at reposition start) is
-    // wire-encoded as Standby here, and the IG side detects the
-    // Standby→Operate transition to begin terrain stability checks.
-    // Common composed values with TimestampValid=1, MinorVersion=2:
-    static constexpr uint8_t CIGI_IG_MODE_STANDBY = 0x24;  // 0010_0100
-    static constexpr uint8_t CIGI_IG_MODE_RESET   = 0x24;  // alias for Standby (spec collapses both to 0)
-    static constexpr uint8_t CIGI_IG_MODE_OPERATE = 0x25;  // 0010_0101
-    // Entity state byte[4]: Active(1) in bits[1:0]
-    static constexpr uint8_t CIGI_ENTITY_ACTIVE = 0x01;
-    // Incoming SOF IG Mode (byte 5 bits 1..0 per §4.2.1) matches the outgoing
-    // enum: 0=Reset/Standby, 1=Operate, 2=Debug. HAT responses are trusted
-    // only while IG reports Operate.
-    static constexpr uint8_t CIGI_SOF_IG_MODE_OPERATE = 0x01;
-
-    void encode_ig_ctrl(uint8_t * buf, uint32_t frame_cntr, double timestamp_s,
-                        uint8_t ig_mode) const;
-    void encode_entity_ctrl(uint8_t * buf, uint16_t entity_id,
-                            float roll_deg, float pitch_deg, float yaw_deg,
-                            double lat_deg, double lon_deg, double alt_m) const;
-    void encode_hot_request(uint8_t * buf, uint16_t request_id,
-                            double lat_deg, double lon_deg) const;
+    // IG Mode wire values passed to HostSession::BeginFrame.
+    //   0 = Standby/Reset (CIGI 3.3 collapses these)
+    //   1 = Operate
+    //   2 = Debug
+    //   3 = Offline
+    static constexpr std::uint8_t IG_MODE_STANDBY = 0;
+    static constexpr std::uint8_t IG_MODE_OPERATE = 1;
 
     // ── Gear point config ─────────────────────────────────────────────────
     struct GearPoint {
@@ -100,6 +79,11 @@ private:
     void send_cigi_frame();
     void send_hot_requests();
     void recv_pending();
+
+    // Append global weather (Atmosphere + Weather Control packets) to the
+    // current session frame. Mirrors the packet sequence the framework
+    // previously emitted via weather_encoder.
+    void append_global_weather(const sim_msgs::msg::WeatherState & weather);
 
     // ── Socket management ─────────────────────────────────────────────────
     bool open_sockets();
@@ -127,7 +111,7 @@ private:
     std::mutex fms_mutex_;
     uint32_t   frame_counter_ = 0;
     uint32_t   last_ig_frame_ = 0;   // last IG Frame Number from SOF, echoed in IG Control
-    uint8_t    ig_status_     = 0;   // SOF IG Mode from IG: 0=Standby, 1=Reset, 2=Operate
+    uint8_t    ig_status_     = 0;   // SOF IG Mode from IG: 0=Standby, 1=Operate, 2=Debug
     uint8_t    sim_state_     = 0;   // from /sim/state
     bool       reposition_active_ = false;  // from SimState.reposition_active
     bool       sent_reset_    = false;      // true after Reset sent, cleared on next frame
@@ -138,6 +122,13 @@ private:
 
     // ── HAT tracking ──────────────────────────────────────────────────────
     HatRequestTracker hat_tracker_;
+
+    // ── CIGI session (wraps CCL CigiHostSession) ──────────────────────────
+    cigi_session::HostSession session_;
+    // Separate session for HOT-request datagrams (one per frame, independent
+    // of the main IG Control + Entity + Weather datagram). HOT requests are
+    // emitted as their own CIGI 3.3 message so they can be rate-gated by AGL.
+    cigi_session::HostSession hot_session_;
 
     // ── Weather sync (regional patch diff tracking) ──────────────────────
     cigi_bridge::WeatherSync weather_sync_;

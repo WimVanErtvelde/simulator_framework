@@ -1,5 +1,4 @@
 #include "cigi_bridge/weather_sync.hpp"
-#include "cigi_bridge/weather_encoder.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -7,9 +6,6 @@
 
 namespace cigi_bridge
 {
-
-static constexpr uint8_t REGION_STATE_DESTROYED = 2;
-static constexpr uint8_t REGION_STATE_ACTIVE    = 1;
 
 static constexpr uint8_t CLOUD_LAYER_ID_BASE      = 1;
 static constexpr uint8_t WIND_LAYER_ID_BASE       = 10;
@@ -29,11 +25,6 @@ static constexpr uint8_t SCALAR_LAYER_ID_PRECIP   = 21;
 // Does NOT compare: patch_id (caller matches by id), patch_type, label, icao
 // (IOS-display metadata, not sent to IG), ground_elevation_m (IOS-display
 // only, not sent to IG).
-//
-// Float comparisons are exact (==). IOS-authored values round-trip through
-// ROS2 messages with no lossy conversions for same-second-publish scenarios,
-// so bitwise equality is reliable here. A future refinement could bucket
-// floats to tolerate sub-noise drift if that ever becomes an issue.
 // ─────────────────────────────────────────────────────────────────────────────
 static bool patch_content_equal(
     const sim_msgs::msg::WeatherPatch & a,
@@ -78,103 +69,161 @@ static bool patch_content_equal(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Emit Region(Active) + all layers of a single patch into buffer.
-// All-or-nothing: returns 0 if full patch doesn't fit in capacity.
+// Append Env Region (Active) + all regional Weather Control layers for one
+// patch to the session.
 // ─────────────────────────────────────────────────────────────────────────────
-size_t WeatherSync::emit_patch_active(
+void WeatherSync::emit_patch_active(
     const sim_msgs::msg::WeatherPatch & patch,
-    uint8_t * buffer, size_t capacity) const
+    cigi_session::HostSession & session) const
 {
-    size_t required =
-        48 +
-        56 * std::min<size_t>(patch.cloud_layers.size(), MAX_CLOUD_LAYERS) +
-        56 * std::min<size_t>(patch.wind_layers.size(),  MAX_WIND_LAYERS) +
-        (patch.override_visibility  ? 56 : 0) +
-        (patch.override_temperature && !patch.override_visibility ? 56 : 0) +
-        (patch.override_precipitation ? 56 : 0);
-    // Note: vis+temp share one packet (layer 20). If only temperature is set,
-    // it still takes one packet. The logic above over-counts by 56 if both
-    // vis and temp are set separately — correcting here:
-    if (patch.override_visibility && patch.override_temperature) {
-        required -= 56;  // single combined packet, not two
-    }
+    // Circular region: SizeX=SizeY=0, CornerRadius=radius_m.
+    // Transition perimeter = 10% of radius (framework convention).
+    session.AppendEnvRegionControl(
+        patch.patch_id,
+        cigi_session::HostSession::RegionState::Active,
+        /*merge_weather=*/true,
+        patch.lat_deg, patch.lon_deg,
+        /*size_x_m=*/0.0f, /*size_y_m=*/0.0f,
+        /*corner_radius_m=*/patch.radius_m,
+        /*rotation_deg=*/0.0f,
+        /*transition_perimeter_m=*/patch.radius_m * 0.10f);
 
-    if (required > capacity) return 0;
-
-    size_t offset = 0;
-    size_t n;
-
-    n = encode_region_control(
-        buffer + offset, capacity - offset, patch, REGION_STATE_ACTIVE);
-    if (n == 0) return 0;
-    offset += n;
-
+    // ── Cloud layers (regional Scope, layer IDs 1..3) ────────────────────
     size_t n_cloud = std::min<size_t>(patch.cloud_layers.size(), MAX_CLOUD_LAYERS);
     for (size_t i = 0; i < n_cloud; ++i) {
-        n = encode_regional_cloud_layer(
-            buffer + offset, capacity - offset,
-            patch.patch_id, static_cast<uint8_t>(CLOUD_LAYER_ID_BASE + i),
-            patch.cloud_layers[i], /*enable=*/true);
-        if (n == 0) return 0;
-        offset += n;
+        const auto & cl = patch.cloud_layers[i];
+        cigi_session::HostSession::WeatherCtrlFields wc{};
+        wc.region_id           = patch.patch_id;
+        wc.layer_id            = static_cast<uint8_t>(CLOUD_LAYER_ID_BASE + i);
+        wc.humidity_pct        = 0;
+        wc.weather_enable      = true;
+        wc.scud_enable         = cl.scud_enable;
+        wc.cloud_type          = cl.cloud_type;
+        wc.scope               = cigi_session::HostSession::WeatherScope::Regional;
+        wc.severity            = 0;
+        wc.air_temp_c          = 0.0f;
+        wc.visibility_m        = 0.0f;
+        wc.scud_frequency_pct  = cl.scud_frequency_pct;
+        wc.coverage_pct        = cl.coverage_pct;
+        wc.base_elevation_m    = cl.base_elevation_m;
+        wc.thickness_m         = cl.thickness_m;
+        wc.transition_band_m   = cl.transition_band_m;
+        wc.horiz_wind_ms       = 0.0f;
+        wc.vert_wind_ms        = 0.0f;
+        wc.wind_direction_deg  = 0.0f;
+        wc.barometric_pressure_hpa   = 0.0f;
+        wc.aerosol_concentration_gm3 = 0.0f;
+        session.AppendWeatherControl(wc);
     }
 
+    // ── Wind layers (regional Scope, layer IDs 10..12) ───────────────────
     size_t n_wind = std::min<size_t>(patch.wind_layers.size(), MAX_WIND_LAYERS);
     for (size_t i = 0; i < n_wind; ++i) {
-        n = encode_regional_wind_layer(
-            buffer + offset, capacity - offset,
-            patch.patch_id, static_cast<uint8_t>(WIND_LAYER_ID_BASE + i),
-            patch.wind_layers[i], /*enable=*/true);
-        if (n == 0) return 0;
-        offset += n;
+        const auto & wl = patch.wind_layers[i];
+        cigi_session::HostSession::WeatherCtrlFields wc{};
+        wc.region_id           = patch.patch_id;
+        wc.layer_id            = static_cast<uint8_t>(WIND_LAYER_ID_BASE + i);
+        wc.humidity_pct        = 0;
+        wc.weather_enable      = true;
+        wc.scud_enable         = false;
+        wc.cloud_type          = 0;  // None
+        wc.scope               = cigi_session::HostSession::WeatherScope::Regional;
+        wc.severity            = 0;
+        wc.air_temp_c          = 0.0f;
+        wc.visibility_m        = 0.0f;
+        wc.scud_frequency_pct  = 0.0f;
+        wc.coverage_pct        = 0.0f;
+        wc.base_elevation_m    = wl.altitude_msl_m;
+        wc.thickness_m         = 0.0f;
+        wc.transition_band_m   = 0.0f;
+        wc.horiz_wind_ms       = wl.wind_speed_ms;
+        wc.vert_wind_ms        = wl.vertical_wind_ms;
+        wc.wind_direction_deg  = wl.wind_direction_deg;
+        wc.barometric_pressure_hpa   = 0.0f;
+        wc.aerosol_concentration_gm3 = 0.0f;
+        session.AppendWeatherControl(wc);
     }
 
+    // ── Scalar override: visibility + temperature (layer 20) ─────────────
     if (patch.override_visibility || patch.override_temperature) {
-        float vis  = patch.override_visibility  ? patch.visibility_m  : std::nanf("");
-        float temp = patch.override_temperature ? patch.temperature_k : std::nanf("");
-        n = encode_regional_scalar_override(
-            buffer + offset, capacity - offset,
-            patch.patch_id, SCALAR_LAYER_ID_VIS_TEMP,
-            vis, temp, std::nanf(""), 0, /*enable=*/true);
-        if (n == 0) return 0;
-        offset += n;
+        cigi_session::HostSession::WeatherCtrlFields wc{};
+        wc.region_id           = patch.patch_id;
+        wc.layer_id            = SCALAR_LAYER_ID_VIS_TEMP;
+        wc.humidity_pct        = 0;
+        wc.weather_enable      = true;
+        wc.scud_enable         = false;
+        wc.cloud_type          = 0;
+        wc.scope               = cigi_session::HostSession::WeatherScope::Regional;
+        wc.severity            = 0;
+        // Unused overrides are left at 0 (encoded on wire as 0); plugin
+        // gates by threshold so default-zero is ignored.
+        wc.air_temp_c   = patch.override_temperature
+                          ? static_cast<float>(patch.temperature_k - 273.15f)
+                          : 0.0f;
+        wc.visibility_m = patch.override_visibility
+                          ? patch.visibility_m
+                          : 0.0f;
+        wc.scud_frequency_pct = 0.0f;
+        wc.coverage_pct       = 0.0f;
+        wc.base_elevation_m   = 0.0f;
+        wc.thickness_m        = 0.0f;
+        wc.transition_band_m  = 0.0f;
+        wc.horiz_wind_ms      = 0.0f;
+        wc.vert_wind_ms       = 0.0f;
+        wc.wind_direction_deg = 0.0f;
+        wc.barometric_pressure_hpa   = 0.0f;
+        wc.aerosol_concentration_gm3 = 0.0f;
+        session.AppendWeatherControl(wc);
     }
 
+    // ── Scalar override: precipitation (layer 21) ────────────────────────
     if (patch.override_precipitation) {
-        n = encode_regional_scalar_override(
-            buffer + offset, capacity - offset,
-            patch.patch_id, SCALAR_LAYER_ID_PRECIP,
-            std::nanf(""), std::nanf(""),
-            patch.precipitation_rate, patch.precipitation_type,
-            /*enable=*/true);
-        if (n == 0) return 0;
-        offset += n;
+        cigi_session::HostSession::WeatherCtrlFields wc{};
+        wc.region_id           = patch.patch_id;
+        wc.layer_id            = SCALAR_LAYER_ID_PRECIP;
+        wc.humidity_pct        = 0;
+        wc.weather_enable      = true;
+        wc.scud_enable         = false;
+        wc.cloud_type          = 0;
+        wc.scope               = cigi_session::HostSession::WeatherScope::Regional;
+        wc.severity            = 0;
+        wc.air_temp_c          = 0.0f;
+        wc.visibility_m        = 0.0f;
+        wc.scud_frequency_pct  = 0.0f;
+        wc.coverage_pct        = patch.precipitation_rate * 100.0f;
+        wc.base_elevation_m    = 0.0f;
+        wc.thickness_m         = 0.0f;
+        wc.transition_band_m   = 0.0f;
+        wc.horiz_wind_ms       = 0.0f;
+        wc.vert_wind_ms        = 0.0f;
+        wc.wind_direction_deg  = 0.0f;
+        wc.barometric_pressure_hpa   = 0.0f;
+        wc.aerosol_concentration_gm3 = 0.0f;
+        session.AppendWeatherControl(wc);
     }
-
-    return offset;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-size_t WeatherSync::emit_patch_destroyed(
+void WeatherSync::emit_patch_destroyed(
     uint16_t patch_id,
-    uint8_t * buffer, size_t capacity) const
+    cigi_session::HostSession & session) const
 {
-    sim_msgs::msg::WeatherPatch stub;
-    stub.patch_id = patch_id;
-    stub.radius_m = 0.0f;
-    return encode_region_control(buffer, capacity, stub, REGION_STATE_DESTROYED);
+    session.AppendEnvRegionControl(
+        patch_id,
+        cigi_session::HostSession::RegionState::Destroyed,
+        /*merge_weather=*/true,
+        /*lat_deg=*/0.0, /*lon_deg=*/0.0,
+        /*size_x_m=*/0.0f, /*size_y_m=*/0.0f,
+        /*corner_radius_m=*/0.0f,
+        /*rotation_deg=*/0.0f,
+        /*transition_perimeter_m=*/0.0f);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-size_t WeatherSync::process_update(
+void WeatherSync::process_update(
     const sim_msgs::msg::WeatherState & weather,
-    uint8_t * buffer,
-    size_t capacity)
+    cigi_session::HostSession & session)
 {
-    if (buffer == nullptr || capacity == 0) return 0;
-
-    size_t offset = 0;
-
     const size_t n_current = std::min<size_t>(weather.patches.size(), MAX_PATCHES);
     if (weather.patches.size() > MAX_PATCHES) {
         std::ostringstream oss;
@@ -192,16 +241,7 @@ size_t WeatherSync::process_update(
     // 1. Find removals — sent patches not in current set → emit Destroyed once
     for (auto it = sent_patches_.begin(); it != sent_patches_.end(); ) {
         if (current_by_id.find(it->first) == current_by_id.end()) {
-            size_t n = emit_patch_destroyed(it->first, buffer + offset, capacity - offset);
-            if (n > 0) {
-                offset += n;
-            } else {
-                std::ostringstream oss;
-                oss << "WeatherSync: buffer full during destroy of patch_id=" << it->first
-                    << " — Destroy not emitted. Zombie region possible until next"
-                       " /world/weather message that triggers a re-diff.";
-                log(oss.str());
-            }
+            emit_patch_destroyed(it->first, session);
             it = sent_patches_.erase(it);
         } else {
             ++it;
@@ -218,19 +258,9 @@ size_t WeatherSync::process_update(
             continue;
         }
 
-        size_t n = emit_patch_active(p, buffer + offset, capacity - offset);
-        if (n == 0) {
-            std::ostringstream oss;
-            oss << "WeatherSync: buffer too small for patch_id="
-                << p.patch_id << " — skipping (will retry on next /world/weather)";
-            log(oss.str());
-            continue;
-        }
-        offset += n;
+        emit_patch_active(p, session);
         sent_patches_[p.patch_id] = p;
     }
-
-    return offset;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
