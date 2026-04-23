@@ -1101,7 +1101,168 @@ view group assignment.
 *TODO*
 
 ### 0x16 — Collision Detection Segment Definition
-*TODO*
+
+- **Direction**: Host → IG
+- **Opcode**: 22 / 0x16
+- **Total size**: 40 bytes
+- **ICD section**: §4.1.22 (PDF page 154)
+- **Mandatory each frame**: no
+
+Defines a line segment in an entity's body frame along which the IG performs
+segment-to-polygon collision testing every frame. Hits are reported via
+Collision Detection Segment Notification (§4.2.13).
+
+**Fields**
+
+| Offset | Size | Name              | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID         | unsigned int8   | 22                                              | fixed |
+| 1      | 1    | Packet Size       | unsigned int8   | 40                                              | fixed |
+| 2      | 2    | Entity ID         | unsigned int16  | parent entity                                   |       |
+| 4      | 1    | Segment ID        | unsigned int8   | host-assigned segment index                     | reuse → overwrites |
+| 5      | —    | Segment Enable (\*1) | 1-bit        | 0 Disable / 1 Enable                            | byte 5, bit 0 |
+| 5      | —    | Reserved          | 7-bit           | 0                                               | byte 5, bits 7..1 |
+| 6      | 2    | Reserved          | —               | 0                                               |       |
+| 8      | 4    | X1                | single float    | metres along entity +X                          | datum: entity reference point |
+| 12     | 4    | Y1                | single float    | metres along entity +Y                          |       |
+| 16     | 4    | Z1                | single float    | metres along entity +Z                          |       |
+| 20     | 4    | X2                | single float    | metres                                          | other endpoint |
+| 24     | 4    | Y2                | single float    | metres                                          |       |
+| 28     | 4    | Z2                | single float    | metres                                          |       |
+| 32     | 4    | Material Mask     | unsigned int32  | bitmask of material code ranges                 | IG-defined assignments |
+| 36     | 4    | Reserved          | —               | 0                                               | 8-byte alignment |
+
+**Usage notes**
+- Setting the parent Entity Control's `Collision Detection Enable` = 0 disables
+  *all* segments on that entity without destroying them.
+- Destroying the entity destroys all its segments.
+- Discrete-time tests can miss thin polygons; the IG is responsible for sweep
+  testing if it cares about that case.
+
+### 0x17 — Collision Detection Volume Definition
+
+- **Direction**: Host → IG
+- **Opcode**: 23 / 0x17
+- **Total size**: 48 bytes
+- **ICD section**: §4.1.23 (PDF page 158)
+- **Mandatory each frame**: no
+
+Defines a sphere or cuboid in an entity's body frame for volume-to-volume
+collision testing. Hits are reported via Collision Detection Volume
+Notification (§4.2.14). Volumes on the same entity are not tested against each
+other.
+
+**Fields**
+
+| Offset | Size | Name              | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID         | unsigned int8   | 23                                              | fixed |
+| 1      | 1    | Packet Size       | unsigned int8   | 48                                              | fixed |
+| 2      | 2    | Entity ID         | unsigned int16  | parent entity                                   |       |
+| 4      | 1    | Volume ID         | unsigned int8   | host-assigned volume index                      | reuse → overwrites |
+| 5      | —    | Volume Enable (\*1) | 1-bit         | 0 Disable / 1 Enable                            | byte 5, bit 0 |
+| 5      | —    | Volume Type (\*2) | 1-bit           | 0 Sphere / 1 Cuboid                             | byte 5, bit 1 |
+| 5      | —    | Reserved          | 6-bit           | 0                                               | byte 5, bits 7..2 |
+| 6      | 2    | Reserved          | —               | 0                                               |       |
+| 8      | 4    | X                 | single float    | metres, volume centre along entity +X           | datum: entity reference point |
+| 12     | 4    | Y                 | single float    | metres along entity +Y                          |       |
+| 16     | 4    | Z                 | single float    | metres along entity +Z                          |       |
+| 20     | 4    | Height / Radius   | single float    | metres, > 0                                     | sphere → radius; cuboid → length along Z |
+| 24     | 4    | Width             | single float    | metres, > 0                                     | cuboid → along Y; ignored for sphere |
+| 28     | 4    | Depth             | single float    | metres, > 0                                     | cuboid → along X; ignored for sphere |
+| 32     | 4    | Roll              | single float    | -180.0 .. +180.0 deg                            | cuboid only; ignored for sphere |
+| 36     | 4    | Pitch             | single float    | -90.0 .. +90.0 deg                              | cuboid only |
+| 40     | 4    | Yaw               | single float    | 0.0 .. 360.0 deg                                | cuboid only |
+| 44     | 4    | Reserved          | —               | 0                                               | 8-byte alignment |
+
+**Usage notes**
+- An entity with `Collision Detection Enable` = 0 still has its volumes used as
+  *destinations* but never as *sources* — useful for impassable obstacles.
+- If two entities both have collision detection enabled, every pair of volumes
+  is tested twice (once per source) — typically wasted work, so disable on one
+  side when modelling shooter→target.
+
+### 0x18 — HAT/HOT Request
+
+- **Direction**: Host → IG
+- **Opcode**: 24 / 0x18
+- **Total size**: 32 bytes
+- **ICD section**: §4.1.24 (PDF page 164)
+- **Mandatory each frame**: no — once per query, or with `Update Period > 0` for periodic responses
+
+Requests the Height Above Terrain (HAT), Height Of Terrain (HOT), or both
+(Extended) at a test point. Test point can be in geodetic coordinates or as an
+offset from an entity's reference point. IG replies with HAT/HOT Response
+(§4.2.2) or HAT/HOT Extended Response (§4.2.3).
+
+**Fields**
+
+| Offset | Size | Name                          | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-------------------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID                     | unsigned int8   | 24                                              | fixed |
+| 1      | 1    | Packet Size                   | unsigned int8   | 32                                              | fixed |
+| 2      | 2    | HAT/HOT ID                    | unsigned int16  | host-assigned correlation ID                    | echoed in response |
+| 4      | —    | Request Type (\*1)            | unsigned 2-bit  | 0 HAT, 1 HOT, 2 Extended                        | byte 4, bits 1..0 |
+| 4      | —    | Coordinate System (\*2)       | 1-bit           | 0 Geodetic / 1 Entity                           | byte 4, bit 2 |
+| 4      | —    | Reserved                      | 5-bit           | 0                                               | byte 4, bits 7..3 |
+| 5      | 1    | Update Period                 | unsigned int8   | 0 = one-shot; n>0 = response every nth frame    |       |
+| 6      | 2    | Entity ID                     | unsigned int16  | required when Coordinate System = Entity        | ignored for Geodetic |
+| 8      | 8    | Latitude / X Offset           | double float    | deg (-90..+90) or metres                        | per Coordinate System |
+| 16     | 8    | Longitude / Y Offset          | double float    | deg (-180..+180) or metres                      |       |
+| 24     | 8    | Altitude / Z Offset           | double float    | metres MSL or metres                            | ignored if Request Type = HOT |
+
+**Usage notes**
+- The IG sets `Valid` = 0 in the response if the test point is outside the
+  loaded database.
+- The Host should not reuse a HAT/HOT ID before the IG has had time to respond
+  — pending requests sharing an ID can be lost.
+- Used by the Ownship to keep wheels on the ground (gear-point HOT every frame)
+  and to drive sensor occlusion testing.
+
+### 0x19 — Line of Sight Segment Request
+
+- **Direction**: Host → IG
+- **Opcode**: 25 / 0x19
+- **Total size**: 64 bytes
+- **ICD section**: §4.1.25 (PDF page 167)
+- **Mandatory each frame**: no
+
+Requests an LOS test along a finite segment defined by a source and destination
+point (each in geodetic or entity-local coordinates). IG replies with Line of
+Sight Response (§4.2.4) or Line of Sight Extended Response (§4.2.5). LOS ID
+namespace is shared with `LOS Vector Request` (§4.1.26).
+
+**Fields**
+
+| Offset | Size | Name                              | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-----------------------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID                         | unsigned int8   | 25                                              | fixed |
+| 1      | 1    | Packet Size                       | unsigned int8   | 64                                              | fixed |
+| 2      | 2    | LOS ID                            | unsigned int16  | host-assigned correlation ID                    | echoed in response |
+| 4      | —    | Request Type (\*1)                | 1-bit           | 0 Basic / 1 Extended                            | byte 4, bit 0 |
+| 4      | —    | Source Point Coordinate System (\*2) | 1-bit        | 0 Geodetic / 1 Entity                           | byte 4, bit 1 |
+| 4      | —    | Destination Point Coordinate System (\*3) | 1-bit   | 0 Geodetic / 1 Entity                           | byte 4, bit 2 |
+| 4      | —    | Response Coordinate System (\*4)  | 1-bit           | 0 Geodetic / 1 Entity                           | byte 4, bit 3 |
+| 4      | —    | Destination Entity ID Valid (\*5) | 1-bit           | 0 Not Valid / 1 Valid                           | byte 4, bit 4 |
+| 4      | —    | Reserved                          | 3-bit           | 0                                               | byte 4, bits 7..5 |
+| 5      | 1    | Alpha Threshold                   | unsigned int8   | 0..255 minimum opacity                          | surfaces below this α don't register |
+| 6      | 2    | Source Entity ID                  | unsigned int16  | when source coordinate system = Entity          | ignored if both source/dest are Geodetic |
+| 8      | 8    | Source Latitude / X Offset        | double float    | deg (-90..+90) or metres                        | per Source CS |
+| 16     | 8    | Source Longitude / Y Offset       | double float    | deg (-180..+180) or metres                      |       |
+| 24     | 8    | Source Altitude / Z Offset        | double float    | metres MSL or metres                            |       |
+| 32     | 8    | Destination Latitude / X Offset   | double float    | deg or metres                                   | per Destination CS |
+| 40     | 8    | Destination Longitude / Y Offset  | double float    | deg or metres                                   |       |
+| 48     | 8    | Destination Altitude / Z Offset   | double float    | metres MSL or metres                            |       |
+| 56     | 4    | Material Mask                     | unsigned int32  | bitmask, IG-defined material code ranges        |       |
+| 60     | 1    | Update Period                     | unsigned int8   | 0 = one-shot; n>0 = every nth frame             |       |
+| 61     | 1    | Reserved                          | —               | 0                                               |       |
+| 62     | 2    | Destination Entity ID             | unsigned int16  | only used when Destination CS = Entity AND Destination Entity ID Valid = 1 |  |
+
+**Usage notes**
+- IG generates one response packet *per intersection* along the segment; an
+  empty segment yields one response with `Valid` = 0.
+- Don't share LOS IDs with `LOS Vector Request` — both use the same response
+  packet types and the IG can't tell them apart.
 
 ### 0x17 — Collision Detection Volume Definition
 *TODO*
@@ -1113,7 +1274,109 @@ view group assignment.
 *TODO*
 
 ### 0x1A — Line of Sight Vector Request
-*TODO*
+
+- **Direction**: Host → IG
+- **Opcode**: 26 / 0x1A
+- **Total size**: 56 bytes
+- **ICD section**: §4.1.26 (PDF page 174)
+- **Mandatory each frame**: no
+
+Requests an LOS test along an azimuth/elevation vector from a source point,
+constrained to a min..max range. Used for laser range-finding, weight-on-wheels
+testing, target ranging. Shares LOS ID namespace with §4.1.25.
+
+**Fields**
+
+| Offset | Size | Name                              | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-----------------------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID                         | unsigned int8   | 26                                              | fixed |
+| 1      | 1    | Packet Size                       | unsigned int8   | 56                                              | fixed |
+| 2      | 2    | LOS ID                            | unsigned int16  | host-assigned correlation ID                    | echoed in response |
+| 4      | —    | Request Type (\*1)                | 1-bit           | 0 Basic / 1 Extended                            | byte 4, bit 0 |
+| 4      | —    | Source Point Coordinate System (\*2) | 1-bit        | 0 Geodetic / 1 Entity                           | byte 4, bit 1 |
+| 4      | —    | Response Coordinate System (\*3)  | 1-bit           | 0 Geodetic / 1 Entity                           | byte 4, bit 2 |
+| 4      | —    | Reserved                          | 5-bit           | 0                                               | byte 4, bits 7..3 |
+| 5      | 1    | Alpha Threshold                   | unsigned int8   | 0..255 minimum opacity                          |       |
+| 6      | 2    | Entity ID                         | unsigned int16  | source entity (when Source CS = Entity)         | ignored if Geodetic |
+| 8      | 4    | Azimuth                           | single float    | -180.0 .. +180.0 deg                            | datum: True N (Geodetic) or entity +X (Entity) |
+| 12     | 4    | Elevation                         | single float    | -90.0 .. +90.0 deg                              | +ve = away from ellipsoid (Geodetic) or toward entity -Z (Entity) |
+| 16     | 4    | Minimum Range                     | single float    | metres, ≥ 0                                     | datum: source point |
+| 20     | 4    | Maximum Range                     | single float    | metres, > Minimum Range                         |       |
+| 24     | 8    | Source Latitude / X Offset        | double float    | deg or metres                                   | per Source CS |
+| 32     | 8    | Source Longitude / Y Offset       | double float    | deg or metres                                   |       |
+| 40     | 8    | Source Altitude / Z Offset        | double float    | metres MSL or metres                            |       |
+| 48     | 4    | Material Mask                     | unsigned int32  | bitmask of material code ranges                 |       |
+| 52     | 1    | Update Period                     | unsigned int8   | 0 = one-shot; n>0 = every nth frame             |       |
+| 53     | 3    | Reserved                          | —               | 0                                               |       |
+
+**Usage notes**
+- One response per intersection along the vector within `[Min, Max]`. No
+  intersection → one response with `Valid` = 0.
+- Don't reuse a LOS ID before a response has come back, and don't share IDs
+  with `LOS Segment Request`.
+
+### 0x1B — Position Request
+
+- **Direction**: Host → IG
+- **Opcode**: 27 / 0x1B
+- **Total size**: 8 bytes
+- **ICD section**: §4.1.27 (PDF page 180)
+- **Mandatory each frame**: no
+
+Queries the current position/orientation of an entity, articulated part, view,
+view group, or motion tracker. IG replies with Position Response (§4.2.8).
+
+**Fields**
+
+| Offset | Size | Name                          | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-------------------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID                     | unsigned int8   | 27                                              | fixed |
+| 1      | 1    | Packet Size                   | unsigned int8   | 8                                               | fixed |
+| 2      | 2    | Object ID                     | unsigned int16  | per Object Class (Entity/View/Group/Tracker ID; for Articulated Part = parent Entity ID) |  |
+| 4      | 1    | Articulated Part ID           | unsigned int8   | only used when Object Class = Articulated Part  |       |
+| 5      | —    | Update Mode (\*1)             | 1-bit           | 0 One-Shot / 1 Continuous                       | byte 5, bit 0 |
+| 5      | —    | Object Class (\*2)            | unsigned 3-bit  | 0 Entity, 1 Articulated Part, 2 View, 3 View Group, 4 Motion Tracker | byte 5, bits 3..1 |
+| 5      | —    | Coordinate System (\*3)       | unsigned 2-bit  | 0 Geodetic, 1 Parent Entity, 2 Submodel         | byte 5, bits 5..4 |
+| 5      | —    | Reserved (\*4)                | 2-bit           | 0                                               | byte 5, bits 7..6 |
+| 6      | 2    | Reserved                      | —               | 0                                               |       |
+
+**Usage notes**
+- `Coordinate System` = Parent Entity is invalid for top-level entities (no
+  parent). Submodel is only valid when querying an Articulated Part.
+- Motion Tracker class always returns data in the tracker's native frame
+  regardless of `Coordinate System`.
+
+### 0x1C — Environmental Conditions Request
+
+- **Direction**: Host → IG
+- **Opcode**: 28 / 0x1C
+- **Total size**: 32 bytes
+- **ICD section**: §4.1.28 (PDF page 182)
+- **Mandatory each frame**: no
+
+Asks the IG for the active environmental state at a geodetic point. `Request
+Type` is a bitmask — combine 1/2/4/8 to get any combination of maritime
+surface, terrestrial surface, weather, and aerosol responses in one go.
+
+**Fields**
+
+| Offset | Size | Name              | Type            | Range / Values                                              | Notes |
+|-------:|-----:|-------------------|-----------------|-------------------------------------------------------------|-------|
+| 0      | 1    | Packet ID         | unsigned int8   | 28                                                          | fixed |
+| 1      | 1    | Packet Size       | unsigned int8   | 32                                                          | fixed |
+| 2      | 1    | Request Type (\*1) | unsigned 4-bit | bitmask: 1 Maritime Surface, 2 Terrestrial Surface, 4 Weather, 8 Aerosol Concentrations | byte 2, bits 3..0 |
+| 2      | —    | Reserved          | 4-bit           | 0                                                           | byte 2, bits 7..4 |
+| 3      | 1    | Request ID        | unsigned int8   | host-assigned correlation ID                                | echoed in response packets |
+| 4      | 4    | Reserved          | —               | 0                                                           | 8-byte alignment |
+| 8      | 8    | Latitude          | double float    | -90.0 .. +90.0 deg                                          |       |
+| 16     | 8    | Longitude         | double float    | -180.0 .. +180.0 deg                                        |       |
+| 24     | 8    | Altitude          | double float    | metres MSL                                                  | only used for weather + aerosol queries |
+
+**Usage notes**
+- IG returns at most one Maritime Surface (§4.2.11) and one Weather Conditions
+  (§4.2.9) packet per request. It returns one Terrestrial Surface (§4.2.12)
+  packet per surface condition type at the point, and one Aerosol Concentration
+  (§4.2.10) packet per weather layer (per `Layer ID`) the point falls inside.
 
 ### 0x1B — Position Request
 *TODO*
