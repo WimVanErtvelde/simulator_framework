@@ -3245,3 +3245,75 @@ Frontend state-machine bugs discovered during end-to-end validation of 5b-iv —
 - FOUND: SRTM probe failures in `_resolve_ground_elevation_async` return `float('nan')` as ground_elevation_m; patch is added with NaN. `??` in frontend doesn't coalesce NaN (only null/undefined), so NaN propagates into cloud `base_elevation_m = base_agl_ft * FT_TO_M + NaN = NaN` on the wire → weather_solver consumes NaN.
 - DECISION: Added `Number.isFinite()` guards in both `applyOverridesToWire` and `patchesFromBroadcast` so NaN is coalesced to 0 at the wire boundaries. Backend-side rejection of failed SRTM probes deferred — out of scope for this session.
 - AFFECTS: `weatherUnits.js` (patchGroundM guard + finiteOr helper in broadcast parser).
+
+## 2026-04-23 — Claude Code (CIGI 3.3 opcode audit — host↔plugin alignment)
+
+- DECIDED: Align all CIGI packet IDs emitted by cigi_bridge and xplanecigi
+  with the opcode values defined in CIGI 3.3 ICD §2.2.2 Table 1. Three
+  opcodes were previously non-standard because matching non-standard
+  values on both sides had cancelled out on the wire:
+
+  1. Entity Control:          0x03 → **0x02**  (§4.1.2, Host→IG, 48 B)
+  2. Start of Frame (SOF):    0x01 → **0x65**  (§4.2.1, IG→Host, 32 B)
+  3. HAT/HOT Response path:   0x66 + custom 48-byte payload
+                              → **0x67** (HAT/HOT Extended Response,
+                              §4.2.3, IG→Host, 40 B)
+
+- REASON: Bugs #14, #20, #21 in bugs.md. Each was a symmetric bug —
+  xplanecigi emitted an incorrect opcode and cigi_bridge parsed that
+  same incorrect opcode, so neither side ever failed against the other.
+  The flaw only shows up against a compliant third-party IG or CCL stack,
+  and it blocks any spec-compliant captured-traffic review. Fixing now
+  avoids shipping a simulator that can't interoperate with CCL/commercial
+  IGs. Audit table and findings recorded in the session that closed
+  Bugs #14/#20/#21.
+
+- HAT/HOT Response shape change (Option B):
+  - 0x66 + 48 B custom → 0x67 + 40 B spec-compliant Extended Response.
+  - Layout now matches §4.2.3 exactly: HAT (double @ 8), HOT (double @ 16),
+    Material Code (uint32 @ 24), Normal Vector Azimuth (float @ 28),
+    Normal Vector Elevation (float @ 32), reserved @ 36-39.
+  - `HatHotRequest.Request Type` bit field changed from 1 (HOT only) to
+    2 (Extended) — a compliant IG will answer with 0x67 and drive the
+    new path end-to-end.
+  - Framework surface enum (0..10) carried in the low byte of Material
+    Code; host masks it back to `HatHotResponse.surface_type` (uint8).
+
+- FRICTION REMOVED FROM WIRE: `static_friction_factor` and
+  `rolling_friction_factor` fields deleted from HatHotResponse.msg.
+  Verified end-to-end: flight_model_adapter_node never read them —
+  ground friction for JSBSim is derived entirely from YAML tables
+  indexed by (surface_type, effective_runway_friction) in
+  JSBSimSurfaceWriteback. xplanecigi's `default_friction_for_surface()`
+  helper deleted with its single call site.
+
+- NORMAL VECTOR STUBBED: azimuth and elevation floats in the Extended
+  Response are currently emitted as 0.0. Deferred to a future
+  slope-aware slice (crosswind taxi behaviour, sloped parking ramps).
+
+- CONTACT-POINT COVERAGE: Noted during audit — C172 `gear_points:` in
+  `src/aircraft/c172/config/config.yaml` declares only 3 contact points
+  (nose, left_main, right_main). cigi_bridge issues one HAT/HOT Request
+  per point, so only gear contacts are terrain-probed — no wingtip,
+  tail, or prop-strike coverage. Matches JSBSim `<ground_reactions>`
+  for C172. Broadening to wingstrike/tail-strike requires paired
+  changes in the JSBSim aircraft XML; not in scope for this audit.
+
+- NOTE: This is an opcode/layout audit only. Payload-level audit of
+  Entity Control bitfields, Atmosphere Control (0x0A), Weather Control
+  (0x0C), and Environmental Region Control (0x0B) byte-accurate semantics
+  is a separate future slice; only opcodes were verified here.
+
+- AFFECTS:
+  - `src/core/cigi_bridge/` — cigi_host_node.{hpp,cpp},
+    hat_request_tracker.{hpp,cpp}.
+  - `src/sim_msgs/msg/HatHotResponse.msg` — two fields removed;
+    consumers regenerated via `colcon build --symlink-install`.
+  - `x-plane_plugins/xplanecigi/XPluginMain.cpp` — HAT/HOT response
+    encoder rewritten, `default_friction_for_surface()` deleted, new
+    `g_elevation` dataref bound.
+  - Deployment: MUST redeploy xplanecigi.xpl to X-Plane/Resources/plugins
+    at the same time as the updated cigi_bridge_node; mismatched sides
+    drop each other's packets silently (opcode IDs now differ).
+  - `bugs.md` — Bugs #20 and #21 moved to Resolved when this audit
+    completed.
