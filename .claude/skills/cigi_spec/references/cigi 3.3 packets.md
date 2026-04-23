@@ -2135,7 +2135,7 @@ NULL-terminated, zero-padded to the next 8-byte boundary.
 | Offset | Size | Name              | Type            | Range / Values                                  | Notes |
 |-------:|-----:|-------------------|-----------------|-------------------------------------------------|-------|
 | 0      | 1    | Packet ID         | unsigned int8   | 117                                             | fixed |
-| 1      | 1    | Packet Size       | unsigned int8   | 8..104 (= 4 + message length, multiple of 8)    |       |
+| 1      | 1    | Packet Size       | unsigned int8   | 8..104 (= 4-byte header + message length, padded to multiple of 8) |       |
 | 2      | 2    | Message ID        | unsigned int16  | IG-defined message identifier                   |       |
 | 4      | msg_len | Message        | UTF-8 octets    | NULL-terminated; zero-pad to 8-byte boundary    | max 100 octets including NULL |
 
