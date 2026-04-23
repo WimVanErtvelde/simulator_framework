@@ -308,8 +308,15 @@ void IgSession::SetCompCtrlProcessor(ICompCtrlProcessor * p)     { impl_->comp =
 
 std::size_t IgSession::HandleDatagram(const std::uint8_t * data, std::size_t len) {
     if (data == nullptr || len == 0) return 0;
-    impl_->ccl.GetIncomingMsgMgr().ProcessIncomingMsg(
-        const_cast<Cigi_uint8 *>(data), static_cast<int>(len));
+    // CCL throws CigiMissingIgControlException / CigiBufferOverrunException
+    // on malformed datagrams; swallow so the caller's plugin/node process
+    // is not torn down by a single bad packet.
+    try {
+        impl_->ccl.GetIncomingMsgMgr().ProcessIncomingMsg(
+            const_cast<Cigi_uint8 *>(data), static_cast<int>(len));
+    } catch (...) {
+        return 0;
+    }
     return 1;
 }
 

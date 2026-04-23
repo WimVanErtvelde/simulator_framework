@@ -269,9 +269,14 @@ std::size_t HostSession::HandleDatagram(const std::uint8_t * data, std::size_t l
     auto & in = impl_->ccl.GetIncomingMsgMgr();
     // CCL auto-detects byte order from the Byte Swap Magic in SOF/IGCtrl
     // (bytes 6-7) so the same parser handles native-LE and swapped-BE
-    // datagrams transparently.
-    in.ProcessIncomingMsg(const_cast<Cigi_uint8 *>(data), static_cast<int>(len));
-    return 1;  // CCL doesn't report per-packet counts via this entry point
+    // datagrams transparently. CCL throws on malformed datagrams — swallow
+    // so a single bad packet doesn't crash the node.
+    try {
+        in.ProcessIncomingMsg(const_cast<Cigi_uint8 *>(data), static_cast<int>(len));
+    } catch (...) {
+        return 0;
+    }
+    return 1;
 }
 
 }  // namespace cigi_session
