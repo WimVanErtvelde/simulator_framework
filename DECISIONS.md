@@ -3428,3 +3428,59 @@ Frontend state-machine bugs discovered during end-to-end validation of 5b-iv —
     — 1 line added (steer-cmd-norm writeback).
   - `src/core/flight_model_adapter/src/JSBSimAdapter.cpp` — replace
     hardcoded zero with per-bogey steering-angle-deg readback.
+
+## 2026-04-23 — 15:42:49 - Claude Code
+
+- DECIDED: `cigi_bridge` host-side wire format is now spec-conformant
+  CIGI 3.3 (§4.1.1, §4.1.24, §4.2.1), verified by a CCL round-trip
+  regression test (`test_cigi_wire_conformance`) that runs on every
+  commit when CCL is installed.
+
+- REASON: Audit on 2026-04-23 against Boeing's CCL and the Wireshark
+  dissector showed three critical wire-format bugs in
+  `cigi_host_node.cpp`:
+    * IG Control encoder missing Major Version and Byte Swap Magic
+      Number, with IG Mode at the wrong byte and Timestamp encoded
+      as a double at byte 16 instead of uint32 at byte 12.
+    * HAT/HOT Request encoder placing Lat/Lon/Alt at offsets
+      12/20/28 (the last as float) instead of the spec-mandated
+      8/16/24 (all doubles).
+    * SOF parser reading IG Mode from byte 4 (IG Status Code) rather
+      than byte 5 bits 1..0 (HDta bitfield).
+  These bugs were masked because the X-Plane plugin
+  (`x-plane_plugins/xplanecigi/`) was co-developed against the same
+  non-conformant layout. After 35 commits iterating on
+  `src/core/cigi_bridge/` without ever pinning to the spec, the
+  accumulated drift became hard to debug.
+
+- FIX: Realigned both sides (host + plugin) to spec in the same
+  branch, added a CCL round-trip test. The test is the new
+  foundation — if the wire format drifts from spec, the test fails
+  at build time and the build is broken until fixed.
+
+- IG Mode values: framework uses `STANDBY = 0x24`, `RESET = 0x24`
+  (alias — spec collapses Reset/Standby to wire value 0), and
+  `OPERATE = 0x25`. The X-Plane plugin's terrain-probe stability
+  trigger moved from Reset→Operate (1→2 in old dialect) to
+  Standby→Operate (0→1 in spec) — same semantic event.
+
+- AFFECTS:
+  - `src/core/cigi_bridge/include/cigi_bridge/cigi_host_node.hpp`
+    (IG Mode constants, last_ig_frame_ state for SOF echo).
+  - `src/core/cigi_bridge/src/cigi_host_node.cpp`
+    (three encoders/parser rewritten).
+  - `src/core/cigi_bridge/CMakeLists.txt`
+    (CCL search paths extended, round-trip test target added,
+    vendored cigi_ig_interface gated behind
+    `-DBUILD_CIGI_IG_INTERFACE=ON`).
+  - `src/core/cigi_bridge/test/test_cigi_wire_conformance.cpp` (new).
+  - `x-plane_plugins/xplanecigi/XPluginMain.cpp` (parsers + SOF
+    encoder realigned to spec; mode-transition trigger updated).
+
+- FOLLOW-UP: Run the end-to-end smoke test with X-Plane connected
+  to confirm the coordinated host+plugin change works as expected
+  before merging `cigi-spec-conformance` → `main`. After that,
+  install CCL on CI so the round-trip test runs automatically.
+  Optional future work: retire the X-Plane plugin's hand-written
+  CIGI encode/decode in favour of a CCL-based one under
+  `~/CIGI_IG_Interface`.
