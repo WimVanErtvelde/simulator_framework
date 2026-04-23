@@ -1,12 +1,9 @@
-// XPluginMain.cpp — Minimal raw CIGI 3.3 IG plugin for X-Plane
+// XPluginMain.cpp — CIGI 3.3 IG plugin for X-Plane
 //
-// Self-contained: no CCL, no CIGI_IG_Interface library.
-// Parses incoming CIGI 3.3 datagrams directly and sets X-Plane position/attitude.
-// Sends a CIGI 3.3 Start-of-Frame (SOF) reply after each received datagram.
-//
-// Packets handled (host → IG direction):
-//   0x01  IG Control (24 bytes) — extract host frame counter
-//   0x02  Entity Control (48 bytes) — set ownship position + attitude
+// Datagram parsing + assembly flows through cigi_session::IgSession (a thin
+// wrapper around Boeing's CigiIGSession). Incoming host packets dispatch to
+// per-packet I*Processor hooks; outgoing SOF + HAT/HOT Extended Response
+// emission goes through IgSession::BeginFrame → Append* → FinishFrame.
 //
 // Build: mingw-w64 cross-compiler from WSL, see CMakeLists.txt.
 // Install: X-Plane/Resources/plugins/xplanecigi/win_x64/xplanecigi.xpl
@@ -24,6 +21,16 @@
 #include <XPLMScenery.h>
 #include <XPLMDataAccess.h>
 #include <XPLMWeather.h>
+
+#include "cigi_session/IgSession.h"
+#include "cigi_session/ComponentIds.h"
+#include "cigi_session/processors/IIgCtrlProcessor.h"
+#include "cigi_session/processors/IEntityCtrlProcessor.h"
+#include "cigi_session/processors/IHatHotReqProcessor.h"
+#include "cigi_session/processors/IAtmosphereProcessor.h"
+#include "cigi_session/processors/IEnvRegionProcessor.h"
+#include "cigi_session/processors/IWeatherCtrlProcessor.h"
+#include "cigi_session/processors/ICompCtrlProcessor.h"
 
 #include <cstring>
 #include <cstdint>
@@ -141,7 +148,7 @@ static XPLMCommandRef cmd_regen_weather     = nullptr;
 
 // ── Weather state (decoded from CIGI packets, written to XP by flight loop) ──
 struct PendingWeather {
-    // From 0x0A Atmosphere Control
+    // From Atmosphere Control
     float temperature_c = 15.0f;
     float visibility_m  = 9999.0f;
     float wind_speed_ms = 0.0f;
@@ -178,9 +185,9 @@ static XPLMFlightLoopID    weather_flight_loop_id = nullptr;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Slice 3a — Regional weather decoder state.
-// Accumulates Environmental Region Control (0x0B) geometry + Weather Control
-// Scope=Regional (0x0C) layers into per-region structs. Slice 3b will feed
-// these into XPLMSetWeatherAtLocation.
+// Accumulates Environmental Region Control geometry + Weather Control
+// Scope=Regional layers into per-region structs. Slice 3b feeds these into
+// XPLMSetWeatherAtLocation.
 //
 // Region ID 0 is reserved (used for Scope=Global); valid regions are 1-65535.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -242,10 +249,6 @@ static std::map<uint16_t, PendingPatch> g_pending_patches;
 // Keyed by Region ID. The stored lat/lon is what was passed to Set; used on
 // erase and on move (XP cannot move a sample in place — must erase old lat/lon
 // and set at new lat/lon).
-//
-// Invariant: an entry exists in g_xp_applied iff the Region is currently live
-// in X-Plane's weather field. Entries are added after Set succeeds, removed
-// after Erase succeeds.
 // ─────────────────────────────────────────────────────────────────────────────
 struct XpAppliedRegion {
     uint16_t region_id;
@@ -256,8 +259,7 @@ struct XpAppliedRegion {
 
 static std::map<uint16_t, XpAppliedRegion> g_xp_applied;
 
-// Forward declaration — defined below near build_weather_info. Called from
-// the 0x01 IG Control handler in process_packet() when entering Reset mode.
+// Forward declaration — defined below near build_weather_info.
 static void cleanup_regional_weather();
 
 static float remap_cloud_type(uint8_t cigi_type)
@@ -276,7 +278,7 @@ static uint32_t g_host_frame = 0;
 static uint32_t g_ig_frame   = 0;
 
 // ── IG Mode state (driven by host IG Control packet) ─────────────────────
-static uint8_t g_ig_mode             = 2;       // from host: 0=Standby, 1=Reset, 2=Operate
+static uint8_t g_ig_mode             = 2;       // from host: 0=Standby, 1=Operate, 2=Debug, 3=Offline
 static bool    g_probing_terrain     = false;   // true while waiting for terrain stability
 static double  g_last_probe_t        = 0.0;     // last probe wall time
 static int     g_probe_stable_count  = 0;       // consecutive stable probes
@@ -288,72 +290,6 @@ static double  g_last_probe_alt      = 0.0;
 static constexpr double PROBE_INTERVAL_S   = 0.5;  // probe terrain every 0.5s
 static constexpr int    PROBE_STABLE_COUNT = 4;     // 4 stable probes = 2s of stability
 static constexpr double PROBE_TOLERANCE_M  = 1.0;   // probes within 1m = stable
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Big-endian read helpers
-// ─────────────────────────────────────────────────────────────────────────────
-static uint16_t read_be16(const uint8_t * p)
-{
-    return ((uint16_t)p[0] << 8) | (uint16_t)p[1];
-}
-
-static uint32_t read_be32(const uint8_t * p)
-{
-    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16)
-         | ((uint32_t)p[2] <<  8) |  (uint32_t)p[3];
-}
-
-static float read_be_float(const uint8_t * p)
-{
-    uint32_t v = read_be32(p);
-    float    f;
-    std::memcpy(&f, &v, 4);
-    return f;
-}
-
-static double read_be_double(const uint8_t * p)
-{
-    uint64_t hi = read_be32(p);
-    uint64_t lo = read_be32(p + 4);
-    uint64_t v  = (hi << 32) | lo;
-    double   d;
-    std::memcpy(&d, &v, 8);
-    return d;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Big-endian write helper
-// ─────────────────────────────────────────────────────────────────────────────
-static void write_be16(uint8_t * p, uint16_t v)
-{
-    p[0] = (v >> 8) & 0xFF;
-    p[1] =  v       & 0xFF;
-}
-
-static void write_be32(uint8_t * p, uint32_t v)
-{
-    p[0] = (v >> 24) & 0xFF;
-    p[1] = (v >> 16) & 0xFF;
-    p[2] = (v >>  8) & 0xFF;
-    p[3] =  v        & 0xFF;
-}
-
-static void write_be_double(uint8_t * p, double v)
-{
-    uint64_t u;
-    std::memcpy(&u, &v, sizeof u);
-    p[0] = (uint8_t)(u >> 56); p[1] = (uint8_t)(u >> 48);
-    p[2] = (uint8_t)(u >> 40); p[3] = (uint8_t)(u >> 32);
-    p[4] = (uint8_t)(u >> 24); p[5] = (uint8_t)(u >> 16);
-    p[6] = (uint8_t)(u >>  8); p[7] = (uint8_t) u;
-}
-
-static void write_be_float(uint8_t * p, float v)
-{
-    uint32_t u;
-    std::memcpy(&u, &v, sizeof u);
-    write_be32(p, u);
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Surface type mapping: X-Plane enum → framework enum (see HatHotResponse.msg)
@@ -399,547 +335,428 @@ static uint8_t xp_surface_to_framework(int xp_type)
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Send CIGI 3.3 Start-of-Frame (SOF, §4.2.1, 24 bytes) to host
-//   Byte 0:    Packet ID = 0x65 (101)
-//   Byte 1:    Packet Size = 24
-//   Byte 2:    Major Version = 3
-//   Byte 3:    Database Number (int8; 0 = no DB loading)
-//   Byte 4:    IG Status Code (0 = Normal)
-//   Byte 5:    bitfield — Minor Version (4 bits, =2) | ERM (1, WGS84=0) |
-//              Timestamp Valid (1, =0) | IG Mode (2 bits, LSB)
-//   Byte 6-7:  Byte Swap Magic Number = 0x8000
-//   Byte 8-11: IG Frame Number (uint32 BE)
-//   Byte 12-15:Timestamp (uint32 BE, unused)
-//   Byte 16-19:Last Host Frame Number (uint32 BE)
-//   Byte 20-23:Reserved
+// IgSession + processor dispatch glue
 // ─────────────────────────────────────────────────────────────────────────────
-static void send_sof()
+static cigi_session::IgSession g_ig_session;
+
+// Send an SOF-led datagram (IG → Host). IgSession::BeginFrame appends the
+// SOF packet automatically; caller may append additional packets (e.g.
+// HAT/HOT Extended Response) before FinishFrame.
+static void begin_ig_frame()
+{
+    // IG Mode wire value: 0=Standby (during probing), 1=Operate (ready).
+    uint8_t ig_mode = g_probing_terrain ? 0 : 1;
+    g_ig_session.BeginFrame(ig_mode, /*database_id=*/0,
+                             g_ig_frame, g_host_frame);
+}
+
+static void finish_and_send_ig_frame()
 {
     if (g_send_sock == INVALID_SOCKET) return;
-
-    uint8_t buf[24] = {};
-    buf[0] = 0x65;   // Packet ID
-    buf[1] = 24;     // Packet Size
-    buf[2] = 3;      // Major Version
-    buf[3] = 0;      // Database Number — load complete / no load
-    buf[4] = 0;      // IG Status Code = Normal
-    // IG Mode = Standby (0) while probing terrain, Operate (1) when ready
-    // Minor Version = 2 (bits 7..4), TimestampValid=0, ERM=WGS84
-    buf[5] = static_cast<uint8_t>((2u << 4) | (g_probing_terrain ? 0u : 1u));
-    write_be16(buf + 6,  0x8000);            // Byte Swap Magic Number
-    write_be32(buf + 8,  g_ig_frame);        // IG Frame Number
-    // buf[12..15] = 0 (Timestamp not used)
-    write_be32(buf + 16, g_host_frame);      // Last Host Frame Number echo
-    // buf[20..23] = 0 (Reserved)
-
+    auto [buf, len] = g_ig_session.FinishFrame();
+    if (!buf || len == 0) return;
     sendto(g_send_sock,
-           reinterpret_cast<const char *>(buf), 24, 0,
+           reinterpret_cast<const char *>(buf), static_cast<int>(len), 0,
            reinterpret_cast<const struct sockaddr *>(&g_host_addr),
            sizeof(g_host_addr));
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Process a single CIGI 3.3 packet
-// ─────────────────────────────────────────────────────────────────────────────
-static void process_packet(const uint8_t * pkt, int len)
+// Emit an SOF-only datagram (no extra packets). Matches the previous
+// send_sof() behavior — one SOF after each received host datagram.
+static void send_sof_only()
 {
-    if (len < 2) return;
-
-    const uint8_t packet_id   = pkt[0];
-    const uint8_t packet_size = pkt[1];
-    if (packet_size < 2 || packet_size > (uint8_t)len) return;
-
-    switch (packet_id)
-    {
-    // ── IG Control (host → IG) — CIGI 3.3 §4.1.1, 24 bytes ────────────────
-    //   Byte 4 bitfield: bits 1..0 = IG Mode (0=Standby, 1=Reset, 2=Operate),
-    //                    bit  2    = Timestamp Valid,
-    //                    bits 7..4 = Minor Version
-    //   Byte 8-11        = Host Frame Number (uint32 BE)
-    case 0x01:
-        if (packet_size >= 24) {
-            g_host_frame = read_be32(pkt + 8);
-            uint8_t new_mode = pkt[4] & 0x03;
-            if (new_mode != g_ig_mode) {
-                char dbg[128];
-                // CIGI 3.3 IG Mode enum: 0=Reset/Standby, 1=Operate, 2=Debug
-                static const char * mode_names[] = {"Standby", "Operate", "Debug", "Offline"};
-                snprintf(dbg, sizeof(dbg), "xplanecigi: IG Mode %s → %s\n",
-                         mode_names[g_ig_mode & 0x03], mode_names[new_mode & 0x03]);
-                XPLMDebugString(dbg);
-
-                // Standby → Operate transition: framework's reset/reposition
-                // signal (host sends Standby for one frame, then Operate).
-                // Begin terrain probe stability check.
-                if (g_ig_mode == 0 && new_mode == 1) {
-                    g_probing_terrain = true;
-                    g_probe_stable_count = 0;
-                    g_last_probe_t = 0.0;
-                    g_last_probe_alt = 0.0;
-                    XPLMDebugString("xplanecigi: terrain probing started (Standby → Operate)\n");
-                }
-                // Entering Standby: host signals reposition or startup reset.
-                // Erase all regional weather samples, clear tracking state,
-                // trigger visual refresh. Slice 3c.
-                if (new_mode == 0 && g_ig_mode != 0) {
-                    XPLMDebugString("xplanecigi: entering Standby — cleaning up regional weather\n");
-                    cleanup_regional_weather();
-                }
-                g_ig_mode = new_mode;
-            }
-        }
-        break;
-
-    // ── Entity Control ─────────────────────────────────────────────────────
-    // Layout (CIGI 3.3 §4.1.2, big-endian, 48 bytes):
-    //   [0]     packet_id = 0x02
-    //   [1]     packet_size = 48
-    //   [2-3]   entity_id (uint16 BE)
-    //   [4]     entity_state + flags
-    //   [5-11]  attach state, type id, parent id, alpha
-    //   [12-15] roll  (float32 BE, degrees)
-    //   [16-19] pitch (float32 BE, degrees)
-    //   [20-23] yaw   (float32 BE, degrees)
-    //   [24-31] lat   (float64 BE, degrees)
-    //   [32-39] lon   (float64 BE, degrees)
-    //   [40-47] alt   (float64 BE, metres MSL)
-    case 0x02:
-        if (packet_size >= 48)
-        {
-            const float  roll_deg  = read_be_float(pkt + 12);
-            const float  pitch_deg = read_be_float(pkt + 16);
-            const float  yaw_deg   = read_be_float(pkt + 20);
-            const double lat       = read_be_double(pkt + 24);
-            const double lon       = read_be_double(pkt + 32);
-            const double alt       = read_be_double(pkt + 40);
-
-            // Convert geodetic → X-Plane local OpenGL coordinates
-            double lx, ly, lz;
-            XPLMWorldToLocal(lat, lon, alt, &lx, &ly, &lz);
-
-            XPLMSetDatad(g_local_x, lx);
-            XPLMSetDatad(g_local_y, ly);
-            XPLMSetDatad(g_local_z, lz);
-
-            // X-Plane sign convention for Euler angles:
-            //   phi   (roll)  =  CIGI bank  (positive = right wing down)
-            //   theta (pitch) =  CIGI pitch (positive = nose up, same convention)
-            //   psi   (yaw)   =  CIGI heading
-            XPLMSetDataf(g_phi,    roll_deg);
-            XPLMSetDataf(g_theta,  pitch_deg);
-            XPLMSetDataf(g_psi,    yaw_deg);
-
-            // Track entity position for terrain probing
-            g_prev_lat = lat;
-            g_prev_lon = lon;
-        }
-        break;
-
-    // ── HAT/HOT Request (host → IG) — CIGI 3.3 §4.1.24, 32 bytes ─────────
-    //   [2-3]   HAT/HOT ID (uint16 BE) — host correlation
-    //   [4]     bitfield [1:0] Request Type (0=HAT, 1=HOT, 2=Extended),
-    //                    [2]   Coordinate System (0=Geodetic, 1=Entity)
-    //   [5]     Update Period (0 = one-shot)
-    //   [6-7]   Entity ID (used in Entity coord system)
-    //   [8-15]  Latitude / X Offset  (double BE, deg or metres)
-    //   [16-23] Longitude / Y Offset (double BE, deg or metres)
-    //   [24-31] Altitude / Z Offset  (double BE, m MSL — ignored for HOT)
-    case 0x18:
-        if (packet_size >= 32 && g_terrain_probe && g_send_sock != INVALID_SOCKET)
-        {   // Always respond — host side decides whether to trust based on timing
-            const uint16_t req_id  = read_be16(pkt + 2);
-            const double   lat_deg = read_be_double(pkt + 8);
-            const double   lon_deg = read_be_double(pkt + 16);
-
-            // Convert geodetic to X-Plane local coords
-            double lx, ly, lz;
-            XPLMWorldToLocal(lat_deg, lon_deg, 0.0, &lx, &ly, &lz);
-
-            // Probe terrain
-            XPLMProbeInfo_t info;
-            info.structSize = sizeof(info);
-            XPLMProbeResult result = XPLMProbeTerrainXYZ(
-                g_terrain_probe,
-                static_cast<float>(lx), 0.0f, static_cast<float>(lz),
-                &info);
-
-            bool   valid  = (result == xplm_ProbeHitTerrain);
-            double hot_msl = 0.0;
-
-            if (valid) {
-                double out_lat, out_lon, out_alt;
-                XPLMLocalToWorld(info.locationX, info.locationY, info.locationZ,
-                                 &out_lat, &out_lon, &out_alt);
-                hot_msl = out_alt;
-            }
-
-            // HAT = ownship altitude MSL − HOT at this gear point.
-            // X-Plane's terrain probe API doesn't expose surface type per
-            // (lat, lon), so we sample the enum under the aircraft CG and
-            // assume it applies to all gear points (acceptable: gear contact
-            // lat/lon usually share the same runway/surface texture).
-            double  aircraft_alt = g_elevation ? XPLMGetDatad(g_elevation) : 0.0;
-            double  hat_m        = aircraft_alt - hot_msl;
-            uint8_t fw_surface   = 0;
-            if (g_surface_type) {
-                int xp_surface = XPLMGetDatai(g_surface_type);
-                fw_surface = xp_surface_to_framework(xp_surface);
-            }
-
-            // Send HAT/HOT Extended Response (CIGI 3.3 §4.2.3, 0x67, 40 bytes)
-            uint8_t resp[40] = {};
-            resp[0] = 0x67;                         // Packet ID = 103
-            resp[1] = 40;                           // Packet Size
-            write_be16(resp + 2, req_id);
-            resp[4] = valid ? 0x01 : 0x00;          // Valid flag
-            write_be_double(resp + 8,  hat_m);      // HAT (metres above terrain)
-            write_be_double(resp + 16, hot_msl);    // HOT (metres MSL)
-            write_be32(resp + 24, static_cast<uint32_t>(fw_surface));  // Material Code
-            write_be_float(resp + 28, 0.0f);        // Normal Vector Azimuth   — stubbed
-            write_be_float(resp + 32, 0.0f);        // Normal Vector Elevation — stubbed
-            // resp[36..39] reserved (zeroed)
-
-            sendto(g_send_sock,
-                   reinterpret_cast<const char *>(resp), 40, 0,
-                   reinterpret_cast<const struct sockaddr *>(&g_host_addr),
-                   sizeof(g_host_addr));
-        }
-        break;
-
-    // ── Atmosphere Control (host → IG) ──────────────────────────────────────
-    // Packet ID = 0x0A, Size = 32 bytes
-    case 0x0A:
-        if (packet_size >= 32) {
-            // Read raw wire values into locals. CIGI 0x0A carries scalars
-            // as float32 BE; humidity as uint8.
-            uint8_t raw_humidity  = pkt[3];
-            float raw_temp_c      = read_be_float(pkt + 4);
-            float raw_visibility  = read_be_float(pkt + 8);
-            float raw_wind_speed  = read_be_float(pkt + 12);
-            float raw_vert_wind   = read_be_float(pkt + 16);
-            float raw_wind_dir    = read_be_float(pkt + 20);
-            float raw_pressure    = read_be_float(pkt + 24);
-
-            // Clamp to sane ranges at the decoder so pending_wx is the
-            // single source of truth. Values outside these ranges fall back
-            // to ISA / sensible defaults — prevents NaN / division-by-zero
-            // inside X-Plane's global weather pipeline when upstream
-            // WeatherState messages arrive with unset (zero) globals.
-            //
-            // Ranges chosen for atmospheric plausibility, not CIGI strictness:
-            //   temperature:   -90°C (stratospheric) to +60°C (hot desert)
-            //   visibility:    > 100 m (below = likely unset zero)
-            //   wind speed:    0 to 150 m/s (cat-5 hurricane ~ 75 m/s)
-            //   vert wind:     ±50 m/s (severe updraft/downdraft ~ 30 m/s)
-            //   wind direction: wrap to 0-360°
-            //   pressure:      800-1100 hPa (physical troposphere range)
-            //
-            // Anything outside → ISA default.
-            pending_wx.temperature_c =
-                (std::isfinite(raw_temp_c) && raw_temp_c > -90.0f && raw_temp_c < 60.0f)
-                    ? raw_temp_c : 15.0f;
-            pending_wx.visibility_m =
-                (std::isfinite(raw_visibility) && raw_visibility > 100.0f)
-                    ? raw_visibility : 10000.0f;
-            pending_wx.wind_speed_ms =
-                (std::isfinite(raw_wind_speed) && raw_wind_speed >= 0.0f && raw_wind_speed < 150.0f)
-                    ? raw_wind_speed : 0.0f;
-            pending_wx.vert_wind_ms =
-                (std::isfinite(raw_vert_wind) && raw_vert_wind > -50.0f && raw_vert_wind < 50.0f)
-                    ? raw_vert_wind : 0.0f;
-            if (std::isfinite(raw_wind_dir)) {
-                float wd = std::fmod(raw_wind_dir, 360.0f);
-                if (wd < 0.0f) wd += 360.0f;
-                pending_wx.wind_dir_deg = wd;
-            } else {
-                pending_wx.wind_dir_deg = 0.0f;
-            }
-            pending_wx.pressure_hpa =
-                (std::isfinite(raw_pressure) && raw_pressure > 800.0f && raw_pressure < 1100.0f)
-                    ? raw_pressure : 1013.25f;
-            pending_wx.humidity_pct = raw_humidity;   // uint8, no NaN possible
-
-            pending_wx.dirty = true;
-        }
-        break;
-
-    // ── Environmental Region Control (host → IG) ────────────────────────────
-    // Packet ID = 0x0B, Size = 48 bytes. Slice 3a: parse + accumulate into
-    // g_pending_patches. No XP SDK call yet — Slice 3b wires the behavior in.
-    case 0x0B:
-        if (packet_size != 48) {
-            char msg[128];
-            snprintf(msg, sizeof msg,
-                "xplanecigi: unexpected Env Region Ctrl size %u (want 48) — skipping\n",
-                packet_size);
-            XPLMDebugString(msg);
-            break;
-        }
-        {
-            uint16_t region_id    = read_be16(pkt + 2);
-            uint8_t  flags        = pkt[4];
-            uint8_t  region_state = flags & 0x03;    // bits 0-1
-            // bit 2 = Merge Weather Properties (informational, we always merge)
-
-            double lat         = read_be_double(pkt + 8);
-            double lon         = read_be_double(pkt + 16);
-            float  size_x      = read_be_float(pkt + 24);
-            float  size_y      = read_be_float(pkt + 28);
-            float  radius      = read_be_float(pkt + 32);
-            float  rotation    = read_be_float(pkt + 36);
-            float  trans_perim = read_be_float(pkt + 40);
-
-            if (region_id == 0) {
-                // Region 0 is reserved (used by Scope=Global). Shouldn't be set via
-                // Env Region Ctrl — log and ignore.
-                XPLMDebugString("xplanecigi: Env Region Ctrl with region_id=0 — ignoring\n");
-                break;
-            }
-
-            if (region_state == 2) {
-                // Destroyed — remove from pending map (Slice 3b will fire XPLMEraseWeatherAtLocation)
-                auto it = g_pending_patches.find(region_id);
-                if (it != g_pending_patches.end()) {
-                    g_pending_patches.erase(it);
-                    char msg[128];
-                    snprintf(msg, sizeof msg,
-                        "xplanecigi: Region %u destroyed (pending erase)\n", region_id);
-                    XPLMDebugString(msg);
-                }
-            } else {
-                // Active (or Inactive — treat Inactive as Active for now; cigi_bridge
-                // currently emits only Active or Destroyed).
-                PendingPatch & p = g_pending_patches[region_id];
-                p.region_id = region_id;
-                p.region_state = region_state;
-                p.lat_deg = lat;
-                p.lon_deg = lon;
-                p.size_x_m = size_x;
-                p.size_y_m = size_y;
-                p.corner_radius_m = radius;
-                p.rotation_deg = rotation;
-                p.transition_perimeter_m = trans_perim;
-                p.dirty = true;
-
-                char msg[192];
-                snprintf(msg, sizeof msg,
-                    "xplanecigi: Region %u state=%u lat=%.6f lon=%.6f radius=%.1fm transition=%.1fm\n",
-                    region_id, region_state, lat, lon, radius, trans_perim);
-                XPLMDebugString(msg);
-            }
-        }
-        break;
-
-    // ── Weather Control (host → IG) ──────────────────────────────────────────
-    // Packet ID = 0x0C, Size = 56 bytes
-    //
-    // Byte 7 bits[1:0] = Scope: 0=Global, 1=Regional, 2=Entity.
-    // Scope=Regional routes into g_pending_patches (Slice 3a); Scope=Global
-    // falls through to the pre-existing pending_wx path (unchanged behavior).
-    case 0x0C:
-        if (packet_size >= 56) {
-            uint8_t layer_id = pkt[4];
-            uint8_t flags1   = pkt[6];
-            uint8_t flags2   = pkt[7];
-            uint8_t scope    = flags2 & 0x03;
-            bool weather_enable      = (flags1 & 0x01) != 0;
-            bool scud_enable         = (flags1 & 0x02) != 0;
-            uint8_t cloud_type_cigi  = (flags1 >> 4) & 0x0F;
-            uint8_t severity         = (flags2 >> 2) & 0x07;
-
-            float coverage_pct = read_be_float(pkt + 20);
-            float base_elev_m  = read_be_float(pkt + 24);
-            float thickness_m  = read_be_float(pkt + 28);
-            float h_wind_ms    = read_be_float(pkt + 36);
-            float v_wind_ms    = read_be_float(pkt + 40);
-            float wind_dir     = read_be_float(pkt + 44);
-
-            if (scope == 1 /* Regional */) {
-                // Slice 3a regional decoder — accumulate into g_pending_patches.
-                // Region ID is carried in bytes 2-3 when Scope=Regional.
-                uint16_t region_id = read_be16(pkt + 2);
-                if (region_id == 0) {
-                    XPLMDebugString("xplanecigi: Weather Ctrl Scope=Regional with region_id=0 — ignoring\n");
-                    break;
-                }
-
-                // cigi_bridge is supposed to emit Env Region Ctrl BEFORE any
-                // Weather Control referencing that region. If the region is not
-                // in g_pending_patches we still auto-create a stub — missing
-                // geometry will be filled in on the next datagram.
-                PendingPatch & p = g_pending_patches[region_id];
-                p.region_id = region_id;
-                p.dirty = true;
-
-                if (layer_id >= 1 && layer_id <= 3) {
-                    // Cloud layer slot
-                    PendingCloudLayer cl;
-                    cl.layer_id           = layer_id;
-                    cl.cloud_type         = cloud_type_cigi;
-                    cl.coverage_pct       = coverage_pct;
-                    cl.base_elevation_m   = base_elev_m;
-                    cl.thickness_m        = thickness_m;
-                    cl.transition_band_m  = read_be_float(pkt + 32);
-                    cl.scud_enable        = scud_enable;
-                    cl.scud_frequency_pct = read_be_float(pkt + 16);
-                    cl.weather_enable     = weather_enable;
-
-                    auto it = std::find_if(p.cloud_layers.begin(), p.cloud_layers.end(),
-                        [&](const PendingCloudLayer & x){ return x.layer_id == layer_id; });
-                    if (it != p.cloud_layers.end()) *it = cl; else p.cloud_layers.push_back(cl);
-
-                    char msg[192];
-                    snprintf(msg, sizeof msg,
-                        "xplanecigi: Region %u cloud layer %u type=%u cov=%.1f%% base=%.0fm thick=%.0fm en=%d\n",
-                        region_id, layer_id, cloud_type_cigi,
-                        cl.coverage_pct, cl.base_elevation_m, cl.thickness_m, weather_enable);
-                    XPLMDebugString(msg);
-                } else if (layer_id >= 10 && layer_id <= 12) {
-                    // Wind layer slot
-                    PendingWindLayer wl;
-                    wl.layer_id           = layer_id;
-                    wl.altitude_msl_m     = base_elev_m;
-                    wl.wind_speed_ms      = h_wind_ms;
-                    wl.vertical_wind_ms   = v_wind_ms;
-                    wl.wind_direction_deg = wind_dir;
-                    wl.weather_enable     = weather_enable;
-
-                    auto it = std::find_if(p.wind_layers.begin(), p.wind_layers.end(),
-                        [&](const PendingWindLayer & x){ return x.layer_id == layer_id; });
-                    if (it != p.wind_layers.end()) *it = wl; else p.wind_layers.push_back(wl);
-
-                    char msg[192];
-                    snprintf(msg, sizeof msg,
-                        "xplanecigi: Region %u wind layer %u alt=%.0fm spd=%.1fm/s dir=%.0fdeg en=%d\n",
-                        region_id, layer_id, wl.altitude_msl_m,
-                        wl.wind_speed_ms, wl.wind_direction_deg, weather_enable);
-                    XPLMDebugString(msg);
-                } else if (layer_id == 20 || layer_id == 21) {
-                    // Scalar override: vis+temp (20) or precipitation (21)
-                    PendingScalarOverride ov;
-                    ov.layer_id           = layer_id;
-                    ov.temperature_c      = read_be_float(pkt +  8);
-                    ov.visibility_m       = read_be_float(pkt + 12);
-                    // precipitation rate/type not currently carried in Weather Control
-                    // by the encoder — left NaN/0 for now. Slice 3b may expand once the
-                    // encoder's precipitation path is finalized.
-                    ov.precipitation_rate = std::nanf("");
-                    ov.precipitation_type = 0;
-                    ov.weather_enable     = weather_enable;
-
-                    auto it = std::find_if(p.scalar_overrides.begin(), p.scalar_overrides.end(),
-                        [&](const PendingScalarOverride & x){ return x.layer_id == layer_id; });
-                    if (it != p.scalar_overrides.end()) *it = ov; else p.scalar_overrides.push_back(ov);
-
-                    char msg[192];
-                    snprintf(msg, sizeof msg,
-                        "xplanecigi: Region %u scalar override layer %u vis=%.0fm temp=%.1fC en=%d\n",
-                        region_id, layer_id, ov.visibility_m, ov.temperature_c, weather_enable);
-                    XPLMDebugString(msg);
-                } else {
-                    char msg[128];
-                    snprintf(msg, sizeof msg,
-                        "xplanecigi: Region %u unknown layer_id %u — ignoring\n",
-                        region_id, layer_id);
-                    XPLMDebugString(msg);
-                }
-                break;
-            }
-
-            // Scope=Global (0): legacy behavior — write into global pending_wx state
-            // via sim/weather/region/* datarefs. Existed before Slice 3a when the plugin
-            // didn't distinguish scope; retained unchanged for backward compatibility
-            // with the existing global weather path.
-            if (scope == 0 /* Global */) {
-                if (layer_id >= 1 && layer_id <= 3) {
-                    // Cloud layer — respect enable flag so host can disable a removed layer
-                    int idx = layer_id - 1;
-                    auto & slot = pending_wx.cloud[idx];
-                    if (weather_enable) {
-                        float new_type = remap_cloud_type(cloud_type_cigi);
-                        float new_cov  = coverage_pct / 100.0f;
-                        float new_top  = base_elev_m + thickness_m;
-                        bool differs = !slot.valid
-                            || slot.type_xp  != new_type
-                            || slot.coverage != new_cov
-                            || slot.base_m   != base_elev_m
-                            || slot.top_m    != new_top;
-                        slot.type_xp  = new_type;
-                        slot.coverage = new_cov;
-                        slot.base_m   = base_elev_m;
-                        slot.top_m    = new_top;
-                        slot.valid    = true;
-                        if (differs) pending_wx.cloud_changed = true;
-                    } else {
-                        if (slot.valid) pending_wx.cloud_changed = true;
-                        slot.type_xp  = 0.0f;
-                        slot.coverage = 0.0f;
-                        slot.base_m   = 0.0f;
-                        slot.top_m    = 0.0f;
-                        slot.valid    = false;
-                    }
-                } else if (!weather_enable) {
-                    break;  // precipitation/wind layers — legacy behavior
-                } else if (layer_id == 4 || layer_id == 5) {
-                    // Precipitation
-                    float new_rain = coverage_pct / 100.0f;
-                    if (new_rain != pending_wx.rain_pct) pending_wx.cloud_changed = true;
-                    pending_wx.rain_pct = new_rain;
-                } else if (layer_id >= 10) {
-                    // Wind-only layer
-                    int wind_idx = layer_id - 10;
-                    if (wind_idx < 13) {
-                        pending_wx.wind[wind_idx].alt_m     = base_elev_m;
-                        pending_wx.wind[wind_idx].speed_ms  = h_wind_ms;
-                        pending_wx.wind[wind_idx].dir_deg   = wind_dir;
-                        pending_wx.wind[wind_idx].vert_ms   = v_wind_ms;
-                        pending_wx.wind[wind_idx].turb      = severity / 5.0f;
-                        pending_wx.wind[wind_idx].valid     = true;
-                    }
-                }
-                pending_wx.dirty = true;
-                break;
-            }
-
-            // Scope 2 (Entity) or unknown — not used by this framework
-            {
-                char msg[96];
-                snprintf(msg, sizeof msg,
-                    "xplanecigi: Weather Ctrl unexpected scope=%u — ignoring\n", scope);
-                XPLMDebugString(msg);
-            }
-        }
-        break;
-
-    // ── Runway Friction (user-defined, host → IG) ───────────────────────────
-    // Packet ID = 0xCB, Size = 8 bytes
-    case 0xCB:
-        if (packet_size >= 8) {
-            pending_wx.runway_friction = pkt[2];
-            pending_wx.dirty = true;
-        }
-        break;
-
-    default:
-        break;
-    }
+    begin_ig_frame();
+    finish_and_send_ig_frame();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Parse a CIGI datagram (may contain multiple back-to-back packets)
+// Processor implementations. Each OnXxx moves the body of the old
+// process_packet() case block for the corresponding CIGI packet ID.
+// ─────────────────────────────────────────────────────────────────────────────
+class IgProcessor
+  : public cigi_session::IIgCtrlProcessor,
+    public cigi_session::IEntityCtrlProcessor,
+    public cigi_session::IHatHotReqProcessor,
+    public cigi_session::IAtmosphereProcessor,
+    public cigi_session::IEnvRegionProcessor,
+    public cigi_session::IWeatherCtrlProcessor,
+    public cigi_session::ICompCtrlProcessor
+{
+public:
+    // ── IG Control (host → IG) ──────────────────────────────────────────
+    void OnIgCtrl(const cigi_session::IgCtrlFields & f) override
+    {
+        g_host_frame = f.host_frame_number;
+        uint8_t new_mode = f.ig_mode;
+        if (new_mode == g_ig_mode) return;
+
+        char dbg[128];
+        // CIGI 3.3 IG Mode enum: 0=Reset/Standby, 1=Operate, 2=Debug, 3=Offline
+        static const char * mode_names[] = {"Standby", "Operate", "Debug", "Offline"};
+        snprintf(dbg, sizeof(dbg), "xplanecigi: IG Mode %s → %s\n",
+                 mode_names[g_ig_mode & 0x03], mode_names[new_mode & 0x03]);
+        XPLMDebugString(dbg);
+
+        // Standby → Operate transition: framework's reset/reposition
+        // signal (host sends Standby for one frame, then Operate).
+        // Begin terrain probe stability check.
+        if (g_ig_mode == 0 && new_mode == 1) {
+            g_probing_terrain = true;
+            g_probe_stable_count = 0;
+            g_last_probe_t = 0.0;
+            g_last_probe_alt = 0.0;
+            XPLMDebugString("xplanecigi: terrain probing started (Standby → Operate)\n");
+        }
+        // Entering Standby: host signals reposition or startup reset.
+        // Erase all regional weather samples, clear tracking state,
+        // trigger visual refresh.
+        if (new_mode == 0 && g_ig_mode != 0) {
+            XPLMDebugString("xplanecigi: entering Standby — cleaning up regional weather\n");
+            cleanup_regional_weather();
+        }
+        g_ig_mode = new_mode;
+    }
+
+    // ── Entity Control (ownship position + attitude) ────────────────────
+    void OnEntityCtrl(const cigi_session::EntityCtrlFields & f) override
+    {
+        // Convert geodetic → X-Plane local OpenGL coordinates
+        double lx, ly, lz;
+        XPLMWorldToLocal(f.lat_deg, f.lon_deg, f.alt_m, &lx, &ly, &lz);
+
+        XPLMSetDatad(g_local_x, lx);
+        XPLMSetDatad(g_local_y, ly);
+        XPLMSetDatad(g_local_z, lz);
+
+        // X-Plane sign convention for Euler angles:
+        //   phi   (roll)  =  CIGI bank  (positive = right wing down)
+        //   theta (pitch) =  CIGI pitch (positive = nose up)
+        //   psi   (yaw)   =  CIGI heading
+        XPLMSetDataf(g_phi,   f.roll_deg);
+        XPLMSetDataf(g_theta, f.pitch_deg);
+        XPLMSetDataf(g_psi,   f.yaw_deg);
+
+        // Track entity position for terrain probing
+        g_prev_lat = f.lat_deg;
+        g_prev_lon = f.lon_deg;
+    }
+
+    // ── HAT/HOT Request (host → IG) ──────────────────────────────────────
+    void OnHatHotReq(const cigi_session::HatHotReqFields & f) override
+    {
+        if (!g_terrain_probe || g_send_sock == INVALID_SOCKET) return;
+
+        // Convert geodetic to X-Plane local coords
+        double lx, ly, lz;
+        XPLMWorldToLocal(f.lat_deg, f.lon_deg, 0.0, &lx, &ly, &lz);
+
+        // Probe terrain
+        XPLMProbeInfo_t info;
+        info.structSize = sizeof(info);
+        XPLMProbeResult result = XPLMProbeTerrainXYZ(
+            g_terrain_probe,
+            static_cast<float>(lx), 0.0f, static_cast<float>(lz),
+            &info);
+
+        bool   valid  = (result == xplm_ProbeHitTerrain);
+        double hot_msl = 0.0;
+
+        if (valid) {
+            double out_lat, out_lon, out_alt;
+            XPLMLocalToWorld(info.locationX, info.locationY, info.locationZ,
+                             &out_lat, &out_lon, &out_alt);
+            hot_msl = out_alt;
+        }
+
+        // HAT = ownship altitude MSL − HOT at this gear point.
+        // X-Plane's terrain probe API doesn't expose surface type per
+        // (lat, lon), so we sample the enum under the aircraft CG and
+        // assume it applies to all gear points.
+        double  aircraft_alt = g_elevation ? XPLMGetDatad(g_elevation) : 0.0;
+        double  hat_m        = aircraft_alt - hot_msl;
+        uint8_t fw_surface   = 0;
+        if (g_surface_type) {
+            int xp_surface = XPLMGetDatai(g_surface_type);
+            fw_surface = xp_surface_to_framework(xp_surface);
+        }
+
+        // Send SOF + HAT/HOT Extended Response as a single datagram.
+        begin_ig_frame();
+        g_ig_session.AppendHatHotXResp(
+            f.request_id, valid, hat_m, hot_msl,
+            static_cast<uint32_t>(fw_surface),
+            /*normal_azimuth_deg=*/0.0f,
+            /*normal_elevation_deg=*/0.0f);
+        finish_and_send_ig_frame();
+    }
+
+    // ── Atmosphere Control (host → IG) ──────────────────────────────────
+    void OnAtmosphere(const cigi_session::AtmosphereRxFields & f) override
+    {
+        // Clamp to sane ranges at the decoder so pending_wx is the
+        // single source of truth. Values outside these ranges fall back
+        // to ISA / sensible defaults — prevents NaN / division-by-zero
+        // inside X-Plane's global weather pipeline when upstream
+        // WeatherState messages arrive with unset (zero) globals.
+        pending_wx.temperature_c =
+            (std::isfinite(f.temperature_c) && f.temperature_c > -90.0f && f.temperature_c < 60.0f)
+                ? f.temperature_c : 15.0f;
+        pending_wx.visibility_m =
+            (std::isfinite(f.visibility_m) && f.visibility_m > 100.0f)
+                ? f.visibility_m : 10000.0f;
+        pending_wx.wind_speed_ms =
+            (std::isfinite(f.horiz_wind_ms) && f.horiz_wind_ms >= 0.0f && f.horiz_wind_ms < 150.0f)
+                ? f.horiz_wind_ms : 0.0f;
+        pending_wx.vert_wind_ms =
+            (std::isfinite(f.vert_wind_ms) && f.vert_wind_ms > -50.0f && f.vert_wind_ms < 50.0f)
+                ? f.vert_wind_ms : 0.0f;
+        if (std::isfinite(f.wind_direction_deg)) {
+            float wd = std::fmod(f.wind_direction_deg, 360.0f);
+            if (wd < 0.0f) wd += 360.0f;
+            pending_wx.wind_dir_deg = wd;
+        } else {
+            pending_wx.wind_dir_deg = 0.0f;
+        }
+        pending_wx.pressure_hpa =
+            (std::isfinite(f.barometric_pressure_hpa) && f.barometric_pressure_hpa > 800.0f &&
+             f.barometric_pressure_hpa < 1100.0f)
+                ? f.barometric_pressure_hpa : 1013.25f;
+        pending_wx.humidity_pct = f.humidity_pct;
+
+        pending_wx.dirty = true;
+    }
+
+    // ── Environmental Region Control (host → IG) ────────────────────────
+    void OnEnvRegion(const cigi_session::EnvRegionFields & f) override
+    {
+        if (f.region_id == 0) {
+            XPLMDebugString("xplanecigi: Env Region Ctrl with region_id=0 — ignoring\n");
+            return;
+        }
+
+        if (f.region_state == 2) {
+            // Destroyed — remove from pending map (Slice 3b fires XPLMEraseWeatherAtLocation)
+            auto it = g_pending_patches.find(f.region_id);
+            if (it != g_pending_patches.end()) {
+                g_pending_patches.erase(it);
+                char msg[128];
+                snprintf(msg, sizeof msg,
+                    "xplanecigi: Region %u destroyed (pending erase)\n", f.region_id);
+                XPLMDebugString(msg);
+            }
+        } else {
+            // Active (or Inactive — treat Inactive as Active for now; cigi_bridge
+            // currently emits only Active or Destroyed).
+            PendingPatch & p = g_pending_patches[f.region_id];
+            p.region_id              = f.region_id;
+            p.region_state           = f.region_state;
+            p.lat_deg                = f.lat_deg;
+            p.lon_deg                = f.lon_deg;
+            p.size_x_m               = f.size_x_m;
+            p.size_y_m               = f.size_y_m;
+            p.corner_radius_m        = f.corner_radius_m;
+            p.rotation_deg           = f.rotation_deg;
+            p.transition_perimeter_m = f.transition_perimeter_m;
+            p.dirty = true;
+
+            char msg[192];
+            snprintf(msg, sizeof msg,
+                "xplanecigi: Region %u state=%u lat=%.6f lon=%.6f radius=%.1fm transition=%.1fm\n",
+                f.region_id, f.region_state, f.lat_deg, f.lon_deg,
+                f.corner_radius_m, f.transition_perimeter_m);
+            XPLMDebugString(msg);
+        }
+    }
+
+    // ── Weather Control (host → IG) ──────────────────────────────────────
+    void OnWeatherCtrl(const cigi_session::WeatherCtrlRxFields & f) override
+    {
+        if (f.scope == 1 /* Regional */) {
+            if (f.region_id == 0) {
+                XPLMDebugString("xplanecigi: Weather Ctrl Scope=Regional with region_id=0 — ignoring\n");
+                return;
+            }
+
+            // cigi_bridge is supposed to emit Env Region Ctrl BEFORE any
+            // Weather Control referencing that region. If the region is not
+            // in g_pending_patches we still auto-create a stub — missing
+            // geometry will be filled in on the next datagram.
+            PendingPatch & p = g_pending_patches[f.region_id];
+            p.region_id = f.region_id;
+            p.dirty = true;
+
+            if (f.layer_id >= 1 && f.layer_id <= 3) {
+                // Cloud layer slot
+                PendingCloudLayer cl;
+                cl.layer_id           = f.layer_id;
+                cl.cloud_type         = f.cloud_type;
+                cl.coverage_pct       = f.coverage_pct;
+                cl.base_elevation_m   = f.base_elevation_m;
+                cl.thickness_m        = f.thickness_m;
+                cl.transition_band_m  = f.transition_band_m;
+                cl.scud_enable        = f.scud_enable;
+                cl.scud_frequency_pct = f.scud_frequency_pct;
+                cl.weather_enable     = f.weather_enable;
+
+                auto it = std::find_if(p.cloud_layers.begin(), p.cloud_layers.end(),
+                    [&](const PendingCloudLayer & x){ return x.layer_id == f.layer_id; });
+                if (it != p.cloud_layers.end()) *it = cl; else p.cloud_layers.push_back(cl);
+
+                char msg[192];
+                snprintf(msg, sizeof msg,
+                    "xplanecigi: Region %u cloud layer %u type=%u cov=%.1f%% base=%.0fm thick=%.0fm en=%d\n",
+                    f.region_id, f.layer_id, f.cloud_type,
+                    cl.coverage_pct, cl.base_elevation_m, cl.thickness_m, f.weather_enable);
+                XPLMDebugString(msg);
+            } else if (f.layer_id >= 10 && f.layer_id <= 12) {
+                // Wind layer slot
+                PendingWindLayer wl;
+                wl.layer_id           = f.layer_id;
+                wl.altitude_msl_m     = f.base_elevation_m;
+                wl.wind_speed_ms      = f.horiz_wind_ms;
+                wl.vertical_wind_ms   = f.vert_wind_ms;
+                wl.wind_direction_deg = f.wind_direction_deg;
+                wl.weather_enable     = f.weather_enable;
+
+                auto it = std::find_if(p.wind_layers.begin(), p.wind_layers.end(),
+                    [&](const PendingWindLayer & x){ return x.layer_id == f.layer_id; });
+                if (it != p.wind_layers.end()) *it = wl; else p.wind_layers.push_back(wl);
+
+                char msg[192];
+                snprintf(msg, sizeof msg,
+                    "xplanecigi: Region %u wind layer %u alt=%.0fm spd=%.1fm/s dir=%.0fdeg en=%d\n",
+                    f.region_id, f.layer_id, wl.altitude_msl_m,
+                    wl.wind_speed_ms, wl.wind_direction_deg, f.weather_enable);
+                XPLMDebugString(msg);
+            } else if (f.layer_id == 20 || f.layer_id == 21) {
+                // Scalar override: vis+temp (20) or precipitation (21)
+                PendingScalarOverride ov;
+                ov.layer_id           = f.layer_id;
+                ov.temperature_c      = f.air_temp_c;
+                ov.visibility_m       = f.visibility_m;
+                ov.precipitation_rate = std::nanf("");
+                ov.precipitation_type = 0;
+                ov.weather_enable     = f.weather_enable;
+
+                auto it = std::find_if(p.scalar_overrides.begin(), p.scalar_overrides.end(),
+                    [&](const PendingScalarOverride & x){ return x.layer_id == f.layer_id; });
+                if (it != p.scalar_overrides.end()) *it = ov; else p.scalar_overrides.push_back(ov);
+
+                char msg[192];
+                snprintf(msg, sizeof msg,
+                    "xplanecigi: Region %u scalar override layer %u vis=%.0fm temp=%.1fC en=%d\n",
+                    f.region_id, f.layer_id, ov.visibility_m, ov.temperature_c, f.weather_enable);
+                XPLMDebugString(msg);
+            } else {
+                char msg[128];
+                snprintf(msg, sizeof msg,
+                    "xplanecigi: Region %u unknown layer_id %u — ignoring\n",
+                    f.region_id, f.layer_id);
+                XPLMDebugString(msg);
+            }
+            return;
+        }
+
+        if (f.scope == 0 /* Global */) {
+            // Legacy behavior — write into global pending_wx state via
+            // sim/weather/region/* datarefs.
+            if (f.layer_id >= 1 && f.layer_id <= 3) {
+                // Cloud layer — respect enable flag so host can disable a removed layer
+                int idx = f.layer_id - 1;
+                auto & slot = pending_wx.cloud[idx];
+                if (f.weather_enable) {
+                    float new_type = remap_cloud_type(f.cloud_type);
+                    float new_cov  = f.coverage_pct / 100.0f;
+                    float new_top  = f.base_elevation_m + f.thickness_m;
+                    bool differs = !slot.valid
+                        || slot.type_xp  != new_type
+                        || slot.coverage != new_cov
+                        || slot.base_m   != f.base_elevation_m
+                        || slot.top_m    != new_top;
+                    slot.type_xp  = new_type;
+                    slot.coverage = new_cov;
+                    slot.base_m   = f.base_elevation_m;
+                    slot.top_m    = new_top;
+                    slot.valid    = true;
+                    if (differs) pending_wx.cloud_changed = true;
+                } else {
+                    if (slot.valid) pending_wx.cloud_changed = true;
+                    slot.type_xp  = 0.0f;
+                    slot.coverage = 0.0f;
+                    slot.base_m   = 0.0f;
+                    slot.top_m    = 0.0f;
+                    slot.valid    = false;
+                }
+            } else if (!f.weather_enable) {
+                return;  // precipitation/wind layers — legacy behavior
+            } else if (f.layer_id == 4 || f.layer_id == 5) {
+                // Precipitation
+                float new_rain = f.coverage_pct / 100.0f;
+                if (new_rain != pending_wx.rain_pct) pending_wx.cloud_changed = true;
+                pending_wx.rain_pct = new_rain;
+            } else if (f.layer_id >= 10) {
+                // Wind-only layer
+                int wind_idx = f.layer_id - 10;
+                if (wind_idx < 13) {
+                    pending_wx.wind[wind_idx].alt_m     = f.base_elevation_m;
+                    pending_wx.wind[wind_idx].speed_ms  = f.horiz_wind_ms;
+                    pending_wx.wind[wind_idx].dir_deg   = f.wind_direction_deg;
+                    pending_wx.wind[wind_idx].vert_ms   = f.vert_wind_ms;
+                    pending_wx.wind[wind_idx].turb      = f.severity / 5.0f;
+                    pending_wx.wind[wind_idx].valid     = true;
+                }
+            }
+            pending_wx.dirty = true;
+            return;
+        }
+
+        // Scope 2 (Entity) or unknown — not used by this framework
+        char msg[96];
+        snprintf(msg, sizeof msg,
+            "xplanecigi: Weather Ctrl unexpected scope=%u — ignoring\n", f.scope);
+        XPLMDebugString(msg);
+    }
+
+    // ── Component Control (host → IG) ───────────────────────────────────
+    // Runway friction is carried as class=GlobalTerrainSurface (8) +
+    // component_id=RunwayFriction (100). Earlier protocol versions used a
+    // user-defined 0xCB packet; migrated to standard Component Control.
+    void OnCompCtrl(const cigi_session::CompCtrlFields & f) override
+    {
+        using cigi_session::GlobalTerrainComponentId;
+        constexpr uint8_t CLASS_GLOBAL_TERRAIN =
+            static_cast<uint8_t>(8);   // matches HostSession::ComponentClass::GlobalTerrainSurface
+
+        if (f.component_class == CLASS_GLOBAL_TERRAIN &&
+            f.component_id ==
+                static_cast<uint16_t>(GlobalTerrainComponentId::RunwayFriction))
+        {
+            pending_wx.runway_friction = f.component_state;
+            pending_wx.dirty = true;
+            return;
+        }
+
+        char msg[128];
+        snprintf(msg, sizeof msg,
+            "xplanecigi: Component Control class=%u id=%u state=%u — ignored\n",
+            f.component_class, f.component_id, f.component_state);
+        XPLMDebugString(msg);
+    }
+};
+
+static IgProcessor g_ig_proc;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Parse a CIGI datagram (may contain multiple back-to-back packets) via the
+// session. Each packet dispatches to a g_ig_proc.OnXxx method. After the
+// entire datagram is parsed we emit one SOF to the host (unchanged
+// behavior).
 // ─────────────────────────────────────────────────────────────────────────────
 static void process_datagram(const uint8_t * buf, int len)
 {
-    int offset = 0;
-    while (offset + 2 <= len)
-    {
-        const uint8_t pkt_size = buf[offset + 1];
-        if (pkt_size < 2 || offset + pkt_size > len) break;
-        process_packet(buf + offset, pkt_size);
-        offset += pkt_size;
-    }
+    g_ig_session.HandleDatagram(buf, static_cast<size_t>(len));
     ++g_ig_frame;
-    send_sof();
+    send_sof_only();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -973,8 +790,6 @@ static float derive_max_alt_ft(const PendingPatch & p) {
 }
 
 // Probe X-Plane terrain for MSL elevation (meters) at the given lat/lon.
-// Reuses the long-lived g_terrain_probe created at XPluginStart — same pattern
-// as HOT response code. Returns 0.0 on probe miss (logged).
 static double probe_terrain_elevation_m(double lat_deg, double lon_deg) {
     if (!g_terrain_probe) return 0.0;
 
@@ -1010,14 +825,6 @@ static double probe_terrain_elevation_m(double lat_deg, double lon_deg) {
 //   - Seed from global pending_wx (read-only) so unauthored patch fields are
 //     no-ops in X-Plane's weather blend.
 //   - Overlay patch-authored fields where weather_enable=true.
-//
-// Units at boundaries:
-//   pending_wx (global, existing):  coverage 0-1, pressure hPa, cloud_type XP 0-3
-//   PendingPatch (regional, 3a):    coverage_pct 0-100, cloud_type CIGI 0-15
-//   XPLMWeatherInfo_t (XP SDK):     coverage 0-1, pressure_sl Pa, cloud_type XP 0-3
-//
-// Regional cloud_type is remapped via remap_cloud_type() because 3a stores
-// the raw CIGI wire enum (0-15). pending_wx already stores the XP enum (0-3).
 // ─────────────────────────────────────────────────────────────────────────────
 static XPLMWeatherInfo_t build_weather_info(const PendingPatch & p)
 {
@@ -1025,10 +832,6 @@ static XPLMWeatherInfo_t build_weather_info(const PendingPatch & p)
     info.structSize = sizeof info;
 
     // ── 1. Seed wind layers with "undefined" sentinel ───────────────────────
-    // XP blending treats XPLM_WIND_UNDEFINED_LAYER (-1) in alt_msl as "no
-    // data for this slot, skip". Previously this loop seeded all 13 slots
-    // from pending_wx.wind[].alt_m which defaults to 0.0f — XP then saw 13
-    // layers stacked at altitude 0 and produced NaN downstream.
     for (int i = 0; i < XPLM_NUM_WIND_LAYERS; ++i) {
         info.wind_layers[i].alt_msl   = XPLM_WIND_UNDEFINED_LAYER;
         info.wind_layers[i].speed     = 0.0f;
@@ -1044,9 +847,6 @@ static XPLMWeatherInfo_t build_weather_info(const PendingPatch & p)
     }
 
     // ── 2. Seed cloud layers ────────────────────────────────────────────────
-    // Zero-init from `info = {}` gives coverage=0 everywhere — XP treats
-    // this as "no clouds at this slot, don't inject". Only overlay valid
-    // pending_wx cloud slots.
     for (int i = 0; i < XPLM_NUM_CLOUD_LAYERS; ++i) {
         if (!pending_wx.cloud[i].valid) continue;
         info.cloud_layers[i].cloud_type = pending_wx.cloud[i].type_xp;
@@ -1056,9 +856,6 @@ static XPLMWeatherInfo_t build_weather_info(const PendingPatch & p)
     }
 
     // ── 3. Scalars with validity clamps ─────────────────────────────────────
-    // pending_wx scalars can be populated with 0/invalid from WeatherState
-    // messages that didn't set those fields (ROS2 default-init = 0). Clamp
-    // to sane ranges; fall back to ISA defaults.
     info.temperature_alt =
         (pending_wx.temperature_c > -90.0f && pending_wx.temperature_c < 60.0f)
             ? pending_wx.temperature_c : 15.0f;
@@ -1074,8 +871,6 @@ static XPLMWeatherInfo_t build_weather_info(const PendingPatch & p)
             ? pending_wx.rain_pct : 0.0f;
 
     // ── 4. Overlay patch-authored cloud layers ──────────────────────────────
-    // framework layer_id 1-3 → slots 0-2. coverage_pct 0-100 → coverage 0-1.
-    // cloud_type CIGI 0-15 → XP 0-3 via remap_cloud_type().
     for (const auto & cl : p.cloud_layers) {
         if (!cl.weather_enable) continue;
         if (cl.layer_id < 1 || cl.layer_id > 3) continue;
@@ -1087,7 +882,6 @@ static XPLMWeatherInfo_t build_weather_info(const PendingPatch & p)
     }
 
     // ── 5. Overlay patch-authored wind layers ───────────────────────────────
-    // framework layer_id 10-12 → slots 0-2.
     for (const auto & wl : p.wind_layers) {
         if (!wl.weather_enable) continue;
         if (wl.layer_id < 10 || wl.layer_id > 12) continue;
@@ -1098,16 +892,6 @@ static XPLMWeatherInfo_t build_weather_info(const PendingPatch & p)
     }
 
     // ── 6. Overlay scalar overrides with threshold checks ───────────────────
-    // CIGI wire protocol can't distinguish "not authored" from "authored as 0"
-    // for these fields (encoder memsets buffer to 0 then writes only authored
-    // values via NaN-gate, so decoder sees 0 for both cases). Apply only when
-    // values look plausibly authored, not default-zero.
-    //
-    // Thresholds:
-    //   visibility_m > 1.0     — below 1 m is not a realistic training value
-    //   temperature_c > -200.0 — below -200°C is not a realistic training value
-    //   precipitation_rate checked against NaN only (0.0 is legitimately
-    //     "no precip" and a sane override, unlike visibility/temperature)
     for (const auto & ov : p.scalar_overrides) {
         if (!ov.weather_enable) continue;
         if (ov.layer_id == 20) {
@@ -1121,8 +905,6 @@ static XPLMWeatherInfo_t build_weather_info(const PendingPatch & p)
             if (!std::isnan(ov.precipitation_rate)) {
                 info.precip_rate = ov.precipitation_rate;
             }
-            // precipitation_type currently not mapped to an XPLMWeatherInfo_t
-            // field (XP derives snow/rain from temperature).
         }
     }
 
@@ -1134,18 +916,10 @@ static XPLMWeatherInfo_t build_weather_info(const PendingPatch & p)
 // tracking state. Called on:
 //   - Entry to IG Mode=Reset (host signals reposition or startup reset)
 //   - XPluginDisable (plugin unload or X-Plane shutdown)
-//
-// Fires cmd_regen_weather unconditionally at the end (bypasses g_regen_mode
-// gating) because a Reset/Disable is a cleanup event, not a cloud change —
-// we want XP's visual state to refresh immediately regardless of instructor
-// regen preference.
 // ─────────────────────────────────────────────────────────────────────────────
 static void cleanup_regional_weather()
 {
     if (g_xp_applied.empty()) {
-        // Nothing applied to erase, but clear pending defensively — a Reset
-        // arriving mid-datagram could leave g_pending_patches non-empty even
-        // though nothing has been pushed to XP yet.
         g_pending_patches.clear();
         return;
     }
@@ -1212,14 +986,7 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     if (dr_cloud_coverage) XPLMSetDatavf(dr_cloud_coverage, cloud_cov,  0, 3);
     if (dr_cloud_type)     XPLMSetDatavf(dr_cloud_type,     cloud_tp,   0, 3);
 
-    // Wind layers [13] — pack authored into lowest indices, extrapolate above.
-    // X-Plane's wind_* arrays are live weather. Leaving unauthored slots at
-    // zero caused X-Plane to blend phantom "wind=0 at altitude=0" layers,
-    // pulling high-altitude winds toward a default direction regardless of
-    // what was authored. Fix: collect valid layers, sort ascending by alt,
-    // pack into [0..n-1], then fill [n..12] with top_alt + k*5000m using
-    // the highest-authored layer's dir/spd/turb. Mirrors what weather_solver
-    // does internally (clamp above the highest authored layer).
+    // Wind layers [13]
     struct AuthoredWind {
         float alt_m;
         float dir_deg;
@@ -1251,9 +1018,6 @@ static float WeatherFlightLoopCb(float, float, int, void *)
             w_spd[i]  = authored[i].spd_kt;
             w_turb[i] = authored[i].turb_0_10;
         }
-        // Extrapolate above the highest authored layer. First extrapolated
-        // slot (i = n) sits at top_alt + 5000m; each subsequent slot adds
-        // another 5000m. Direction/speed/turbulence copied from top.
         const AuthoredWind & top = authored.back();
         for (int i = n; i < 13; i++) {
             w_alt[i]  = top.alt_m + (i - (n - 1)) * 5000.0f;
@@ -1268,18 +1032,12 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     }
 
     // Runway friction — direct passthrough (XP enum matches our 0-15).
-    // Dataref is typed float, not int.
     if (dr_runway_friction)
         XPLMSetDataf(dr_runway_friction, static_cast<float>(pending_wx.runway_friction));
 
     if (dr_update_immediately)
         XPLMSetDatai(dr_update_immediately, 0);
 
-    // Cloud/precipitation changes need a regen to push the edit through
-    // X-Plane's weather pipeline (dataref writes alone don't update visuals fast).
-    // Wind/visibility/temperature changes apply immediately — no regen needed.
-    // Gated by g_regen_mode config so instructors can trade responsiveness for
-    // smoothness in flight.
     if (pending_wx.cloud_changed && cmd_regen_weather) {
         bool fire = false;
         switch (g_regen_mode) {
@@ -1306,15 +1064,9 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     XPLMDebugString(dbg);
 
     pending_wx.dirty = false;
-    }  // end if (pending_wx.dirty) — global weather writes
+    }  // end if (pending_wx.dirty)
 
     // ── Slice 3b: Regional weather patch apply / erase ──────────────────────
-    // Runs every 1 Hz tick regardless of pending_wx.dirty. Self-guarded by
-    // the outer if — both maps empty → no work, no SDK calls.
-    //
-    // Batch all Set/Erase in a single Begin/End(isIncremental=1,
-    // updateImmediately=1) context so instructor changes take effect right
-    // away rather than morphing over minutes.
     if (!g_pending_patches.empty() || !g_xp_applied.empty()) {
         struct ApplyJob { uint16_t id; double lat, lon; double ground_m; XPLMWeatherInfo_t info; float radius_nm; };
         struct EraseJob { uint16_t id; double lat, lon; };
@@ -1403,8 +1155,6 @@ static float FlightLoopCallback(float, float, int, void *)
     if (g_recv_sock == INVALID_SOCKET) return -1.0f;
 
     // Terrain probe stability check — runs after Reset → Operate transition.
-    // Probes at entity position every 0.5s; 4 consecutive within 1m = stable.
-    // SOF reports Standby during probing, Normal after stable.
     if (g_probing_terrain && g_terrain_probe) {
         double now = XPLMGetElapsedTime();
         if (now - g_last_probe_t >= PROBE_INTERVAL_S) {
@@ -1464,7 +1214,7 @@ PLUGIN_API int XPluginStart(char * outName, char * outSig, char * outDesc)
 {
     strcpy(outName, "xplanecigi");
     strcpy(outSig,  "sim.cigi.xplanecigi");
-    strcpy(outDesc, "CIGI 3.3 raw IG plugin — driven by sim_cigi_bridge (ROS2)");
+    strcpy(outDesc, "CIGI 3.3 IG plugin — driven by sim_cigi_bridge (ROS2)");
 
     load_config();
 
@@ -1521,7 +1271,6 @@ PLUGIN_API int XPluginStart(char * outName, char * outSig, char * outDesc)
     g_terrain_probe = XPLMCreateProbe(xplm_ProbeY);
 
     // Surface type under aircraft CG (for HAT response).
-    // X-Plane has two candidate datarefs in different versions — probe both.
     g_surface_type = XPLMFindDataRef("sim/flightmodel/ground/surface_texture_type");
     if (!g_surface_type) {
         g_surface_type = XPLMFindDataRef("sim/flightmodel2/ground/surface_texture_type");
@@ -1530,7 +1279,7 @@ PLUGIN_API int XPluginStart(char * outName, char * outSig, char * outDesc)
         ? "xplanecigi: surface_type dataref bound\n"
         : "xplanecigi: WARNING — no surface_type dataref found, HAT surface=UNKNOWN\n");
 
-    // Ownship altitude MSL (metres) — used to compute HAT = elevation − HOT
+    // Ownship altitude MSL (metres)
     g_elevation = XPLMFindDataRef("sim/flightmodel/position/elevation");
 
     // Weather region datarefs (writable since XP 12.0)
@@ -1557,6 +1306,15 @@ PLUGIN_API int XPluginStart(char * outName, char * outSig, char * outDesc)
             "xplanecigi: regen_weather = %s\n", regen_mode_name(g_regen_mode));
         XPLMDebugString(msg);
     }
+
+    // ── Wire inbound processors ──────────────────────────────────────────
+    g_ig_session.SetIgCtrlProcessor     (&g_ig_proc);
+    g_ig_session.SetEntityCtrlProcessor (&g_ig_proc);
+    g_ig_session.SetHatHotReqProcessor  (&g_ig_proc);
+    g_ig_session.SetAtmosphereProcessor (&g_ig_proc);
+    g_ig_session.SetEnvRegionProcessor  (&g_ig_proc);
+    g_ig_session.SetWeatherCtrlProcessor(&g_ig_proc);
+    g_ig_session.SetCompCtrlProcessor   (&g_ig_proc);
 
     // Register weather flight loop (1 Hz, writes datarefs only when dirty)
     XPLMCreateFlightLoop_t wx_fl;
@@ -1611,8 +1369,6 @@ PLUGIN_API void XPluginDisable()
 {
     // Slice 3c: erase all applied regional weather so it doesn't persist
     // into the next plugin-enable session or into X-Plane shutdown.
-    // XPluginStop runs after XPluginDisable; by that point weather is
-    // already cleaned up.
     cleanup_regional_weather();
 }
 PLUGIN_API void XPluginReceiveMessage(XPLMPluginID, int, void *) {}
