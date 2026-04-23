@@ -42,7 +42,7 @@ public:
     bool  visible_moisture     = false;
     float turbulence_intensity = 0.0f;
     // Patch-aware runway condition index at aircraft position (0-15).
-    // Equals global WeatherState.runway_friction unless inside a patch with
+    // Equals global WeatherState.runway_condition_idx unless inside a patch with
     // override_runway.
     uint8_t runway_condition_idx = 0;
   };

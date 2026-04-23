@@ -48,7 +48,7 @@ export function globalDraftToWire(global, aircraftGroundM = 0) {
     humidity_pct:       global.humidity_pct       ?? 50,
     precipitation_rate: global.precipitation_rate ?? 0.0,
     precipitation_type: global.precipitation_type ?? 0,
-    runway_friction:    global.runway_friction    ?? 0,
+    runway_condition_idx: global.runway_condition_idx ?? 0,
     cloud_layers: (global.cloud_layers ?? []).map(cl => ({
       cloud_type:   cl.cloud_type,
       // Resolve AGL (draft) → MSL (wire) using aircraft ground snapshot.
@@ -98,7 +98,7 @@ export function activeWeatherToGlobalDraft(active, aircraftGroundM = 0) {
     humidity_pct:        active.humidityPct        ?? 50,
     precipitation_rate:  active.precipitationRate  ?? 0.0,
     precipitation_type:  active.precipitationType  ?? 0,
-    runway_friction:     active.runwayFriction     ?? 0,
+    runway_condition_idx: active.runwayConditionIdx ?? 0,
     cloud_layers,
     wind_layers,
   }
@@ -129,8 +129,8 @@ function applyOverridesToWire(p, data) {
   data.override_pressure = !!p.override_pressure
   data.pressure_sl_pa    = (p.pressure_hpa ?? 1013.25) * HPA_TO_PA
 
-  data.override_runway   = !!p.override_runway
-  data.runway_friction   = p.runway_friction ?? 0
+  data.override_runway      = !!p.override_runway
+  data.runway_condition_idx = p.runway_condition_idx ?? 0
 
   // AGL→MSL using this patch's own ground elevation (from airport DB
   // when patch is an airport; SRTM probe for custom). NaN-safe coalesce:
@@ -216,7 +216,7 @@ export function patchesFromBroadcast(raw) {
     override_pressure:      !!rp.override_pressure,
     pressure_hpa:           (rp.pressure_sl_pa ?? 101325) / HPA_TO_PA,
     override_runway:        !!rp.override_runway,
-    runway_friction:        rp.runway_friction ?? 0,
+    runway_condition_idx:   rp.runway_condition_idx ?? 0,
 
     // MSL→AGL using the patch's own ground elevation, symmetric with
     // applyOverridesToWire. Patches are self-referential for AGL — the

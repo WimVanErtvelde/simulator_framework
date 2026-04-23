@@ -837,11 +837,12 @@ void JSBSimAdapter::set_ground_friction_tables(const GroundFrictionTables & tabl
 }
 
 void JSBSimAdapter::write_back_surface(uint8_t surface_type,
-                                       uint8_t runway_friction,
+                                       uint8_t runway_condition_idx,
                                        bool on_ground)
 {
   try {
-    jsbsim_writeback::write_surface(exec_.get(), surface_type, runway_friction,
+    jsbsim_writeback::write_surface(exec_.get(), surface_type,
+                                    runway_condition_idx,
                                     on_ground, ground_friction_tables_);
   } catch (const std::exception & e) {
     log_error(std::string("[JSBSimAdapter] Exception in write_back_surface: ") + e.what());

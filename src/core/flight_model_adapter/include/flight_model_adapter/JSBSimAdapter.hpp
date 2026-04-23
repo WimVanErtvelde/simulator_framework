@@ -45,7 +45,7 @@ public:
                              double altitude_msl_m) override;
   void set_ground_friction_tables(const GroundFrictionTables & tables) override;
   void write_back_surface(uint8_t surface_type,
-                          uint8_t runway_friction,
+                          uint8_t runway_condition_idx,
                           bool on_ground) override;
   void apply_payload_command(const sim_msgs::msg::PayloadCommand & cmd) override;
   void apply_fuel_load_command(const sim_msgs::msg::PayloadCommand & cmd) override;

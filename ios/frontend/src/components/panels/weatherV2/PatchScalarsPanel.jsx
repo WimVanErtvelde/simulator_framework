@@ -78,8 +78,8 @@ export default function PatchScalarsPanel({ patch }) {
         onToggleOverride={(en) => toggleOverride(cid, 'precipitation', en)}
       />
       <RunwayField
-        value={patch.runway_friction}
-        onChange={(v) => updatePatch(cid, { runway_friction: v })}
+        value={patch.runway_condition_idx}
+        onChange={(v) => updatePatch(cid, { runway_condition_idx: v })}
         showOverrideToggle
         overrideEnabled={patch.override_runway}
         onToggleOverride={(en) => toggleOverride(cid, 'runway', en)}

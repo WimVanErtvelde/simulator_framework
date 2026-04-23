@@ -33,8 +33,11 @@ uint8   precipitation_type       # 0=None, 1=Rain, 2=Snow, 3=Sleet
 float32 wave_height_m            # wave amplitude (m)
 float32 wave_direction_deg       # direction waves come from (deg true)
 # Terrestrial (maps to CIGI 0x0F Terrestrial Surface Conditions)
-uint8   runway_friction          # 0-15 enum: Dry=0, wet 1-3, puddly 4-6,
-                                 # snowy 7-9, icy 10-12, snowy/icy 13-15
+uint8   runway_condition_idx     # 0-15 category × severity index: Dry=0,
+                                 # Wet 1-3, Standing Water 4-6, Snow 7-9,
+                                 # Ice 10-12, Snow+Ice 13-15. Indexes the
+                                 # per-aircraft contamination_factors table
+                                 # — not a friction coefficient itself.
 
 # ── FSTD control (maps to CIGI user-defined 0xCB) ────────────────────────
 float32 variability_pct          # 0.0-1.0, XP weather variability (0 for QTG determinism)

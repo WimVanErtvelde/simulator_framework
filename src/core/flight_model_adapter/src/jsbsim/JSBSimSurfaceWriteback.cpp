@@ -19,7 +19,7 @@ static void safe_set(JSBSim::FGFDMExec * exec,
 
 void write_surface(JSBSim::FGFDMExec * exec,
                    uint8_t surface_type,
-                   uint8_t runway_friction,
+                   uint8_t runway_condition_idx,
                    bool on_ground,
                    const flight_model_adapter::GroundFrictionTables & tables)
 {
@@ -30,7 +30,7 @@ void write_surface(JSBSim::FGFDMExec * exec,
 
   if (on_ground) {
     const auto surf = tables.lookup_surface(surface_type);
-    const auto cont = tables.lookup_contamination(runway_friction);
+    const auto cont = tables.lookup_contamination(runway_condition_idx);
     static_ff  = surf.static_ff  * cont.static_ff;
     rolling_ff = surf.rolling_ff * cont.rolling_ff;
   }

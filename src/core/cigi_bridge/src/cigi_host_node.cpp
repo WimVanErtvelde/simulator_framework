@@ -458,7 +458,7 @@ void CigiHostNode::append_global_weather(const sim_msgs::msg::WeatherState & wea
         /*instance_id=*/0,
         static_cast<std::uint16_t>(
             cigi_session::GlobalTerrainComponentId::RunwayFriction),
-        /*component_state=*/weather.runway_friction);
+        /*component_state=*/weather.runway_condition_idx);
 
     // ── 5. Wind-only layers (layer_id 10+) ───────────────────────────────
     const size_t max_winds = std::min(weather.wind_layers.size(), static_cast<size_t>(13));

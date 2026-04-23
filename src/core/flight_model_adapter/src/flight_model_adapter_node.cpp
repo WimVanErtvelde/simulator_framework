@@ -334,7 +334,7 @@ public:
       [this](sim_msgs::msg::AtmosphereState::ConstSharedPtr msg) {
         latest_atmosphere_ = *msg;
         atmosphere_received_ = true;
-        latest_runway_friction_ = msg->runway_condition_idx;
+        latest_runway_condition_idx_ = msg->runway_condition_idx;
       });
 
     payload_command_sub_ = this->create_subscription<sim_msgs::msg::PayloadCommand>(
@@ -456,7 +456,7 @@ public:
         // applied to JSBSim's global rolling/static friction multipliers.
         if (adapter_) {
           adapter_->write_back_surface(latest_surface_type_,
-            latest_runway_friction_,
+            latest_runway_condition_idx_,
             adapter_->get_state().on_ground);
         }
 
@@ -548,7 +548,7 @@ private:
   // Build ground-friction tables from the aircraft config.yaml ground_friction
   // block. Entry order is authoritative: the first surface_type_factors entry
   // maps to HatHotResponse.surface_type==0, and the first contamination_factors
-  // entry maps to WeatherState.runway_friction==0. Missing entries default to
+  // entry maps to WeatherState.runway_condition_idx==0. Missing entries default to
   // {1.0, 1.0} so JSBSim sees baseline physics.
   flight_model_adapter::GroundFrictionTables
   load_ground_friction_tables(const std::string & pkg_dir) const
@@ -716,7 +716,7 @@ private:
   sim_msgs::msg::EngineControls::SharedPtr latest_engine_controls_;
   sim_msgs::msg::AtmosphereState latest_atmosphere_;
   bool atmosphere_received_ = false;
-  uint8_t latest_runway_friction_ = 0;
+  uint8_t latest_runway_condition_idx_ = 0;
   // Default to ASPHALT (1) so ground handling is nominal before the first
   // HAT response arrives (e.g., at startup parked on a runway).
   uint8_t latest_surface_type_ = 1;

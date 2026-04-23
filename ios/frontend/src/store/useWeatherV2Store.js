@@ -54,8 +54,8 @@ function _flushPendingForClient(client_id, patch_id) {
 //
 // Runway condition is NOT part of V2's draft/serverState — it fires
 // immediately via set_runway_condition from RunwayField and reads state
-// from useSimStore.activeWeather.runwayFriction, matching the WX panel's
-// pattern so both UIs stay in sync.
+// from useSimStore.activeWeather.runwayConditionIdx, matching the WX
+// panel's pattern so both UIs stay in sync.
 
 const initialDraft = {
   global: {
@@ -67,7 +67,7 @@ const initialDraft = {
     precipitation_type:   0,
     cloud_layers:         [],   // {cloud_type, base_agl_ft, thickness_m, coverage_pct}
     wind_layers:          [],   // Slice 5a-iv
-    runway_friction:      0,    // 0-15 EURAMEC index (0=DRY)
+    runway_condition_idx: 0,    // 0-15 category × severity index (0=DRY)
   },
   patches: [],
   // Microbursts live on patches: patch.microburst = null | hazard fields.
@@ -136,7 +136,7 @@ function normalizePatchOverridesForDiff(p) {
     override_pressure:      !!p.override_pressure,
     pressure_hpa:           p.pressure_hpa,
     override_runway:        !!p.override_runway,
-    runway_friction:        p.runway_friction,
+    runway_condition_idx:   p.runway_condition_idx,
     cloud_layers: p.cloud_layers || [],
     wind_layers:  p.wind_layers  || [],
   })
@@ -499,12 +499,12 @@ export const useWeatherV2Store = create((set, get) => ({
     return applyLayers(state, client_id, 'cloud_layers', next)
   }),
 
-  setRunwayFriction: (idx) => set((state) => ({
+  setRunwayConditionIdx: (idx) => set((state) => ({
     draft: {
       ...state.draft,
       global: {
         ...state.draft.global,
-        runway_friction: Math.max(0, Math.min(15, Number(idx) || 0)),
+        runway_condition_idx: Math.max(0, Math.min(15, Number(idx) || 0)),
       },
     },
   })),
@@ -593,7 +593,7 @@ export const useWeatherV2Store = create((set, get) => ({
                                      precipitation_type: globalG.precipitation_type,
       override_humidity:      false, humidity_pct:       globalG.humidity_pct,
       override_pressure:      false, pressure_hpa:       globalG.pressure_hpa,
-      override_runway:        false, runway_friction:    globalG.runway_friction ?? 0,
+      override_runway:        false, runway_condition_idx: globalG.runway_condition_idx ?? 0,
 
       cloud_layers: [],
       wind_layers:  [],

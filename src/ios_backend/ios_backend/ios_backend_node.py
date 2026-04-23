@@ -118,9 +118,8 @@ WEATHER_BOUNDS = {
     # Patch geometry
     'radius_nm':           (   1.0,     50.0),
 
-    # Runway
-    'runway_friction':     (   0,         2),
-    'runway_conditions':   (   0,         1),
+    # Runway condition is validated inline (0-15 integer index) in
+    # _validate_weather_bounds; the generic range check is not used for it.
 
     # Wave
     'wave_height_m':       (   0.0,     10.0),
@@ -240,9 +239,9 @@ def _validate_overrides(data: dict) -> dict:
     if data.get('override_pressure'):
         _validate_in_range('pressure_sl_pa', data.get('pressure_sl_pa'), 'pressure_sl_pa')
     if data.get('override_runway'):
-        rf = data.get('runway_friction')
-        if rf is None or not (0 <= int(rf) <= 15):
-            raise ValueError(f"runway_friction out of range [0, 15]: {rf}")
+        rci = data.get('runway_condition_idx')
+        if rci is None or not (0 <= int(rci) <= 15):
+            raise ValueError(f"runway_condition_idx out of range [0, 15]: {rci}")
 
     return data
 
@@ -1032,7 +1031,7 @@ class IosBackendNode(Node):
         # Surface conditions
         msg.wave_height_m = 0.0
         msg.wave_direction_deg = 0.0
-        msg.runway_friction = int(source.get('runway_friction', 0))
+        msg.runway_condition_idx = int(source.get('runway_condition_idx', 0))
 
         # FSTD control — deterministic defaults.
         # turbulence_model defaults to MIL-F-8785C (1) so Dryden is always
@@ -1104,7 +1103,7 @@ class IosBackendNode(Node):
             wp.override_pressure      = bool(p.get('override_pressure', False))
             wp.pressure_sl_pa         = float(p.get('pressure_sl_pa', 101325.0))
             wp.override_runway        = bool(p.get('override_runway', False))
-            wp.runway_friction        = int(p.get('runway_friction', 0))
+            wp.runway_condition_idx   = int(p.get('runway_condition_idx', 0))
             msg.patches.append(wp)
 
         self._weather_pub.publish(msg)
@@ -1337,7 +1336,7 @@ class IosBackendNode(Node):
                 'wind_layers': wind_layers,
                 'precipitation_rate': float(source.get('precipitation_rate', 0.0)),
                 'precipitation_type': int(source.get('precipitation_type', 0)),
-                'runway_friction': int(source.get('runway_friction', 0)),
+                'runway_condition_idx': int(source.get('runway_condition_idx', 0)),
             }
         }
         with self._lock:
@@ -1386,7 +1385,7 @@ class IosBackendNode(Node):
                                             'precipitation_type': 0,
             'override_humidity':     False, 'humidity_pct':       50,
             'override_pressure':     False, 'pressure_sl_pa':     101325.0,
-            'override_runway':       False, 'runway_friction':    0,
+            'override_runway':       False, 'runway_condition_idx': 0,
         }
         self._next_patch_id += 1
         self._active_patches.append(patch)
@@ -1452,7 +1451,7 @@ class IosBackendNode(Node):
             'override_precipitation', 'precipitation_rate', 'precipitation_type',
             'override_humidity',      'humidity_pct',
             'override_pressure',      'pressure_sl_pa',
-            'override_runway',        'runway_friction',
+            'override_runway',        'runway_condition_idx',
         )
         for f in OVERRIDE_FIELDS:
             if f in data:
@@ -1529,7 +1528,7 @@ class IosBackendNode(Node):
                     'override_pressure':     p['override_pressure'],
                     'pressure_sl_pa':        p['pressure_sl_pa'],
                     'override_runway':       p['override_runway'],
-                    'runway_friction':       p['runway_friction'],
+                    'runway_condition_idx':  p['runway_condition_idx'],
                 }
                 for p in self._active_patches
             ],

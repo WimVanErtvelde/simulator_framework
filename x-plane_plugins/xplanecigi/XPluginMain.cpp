@@ -157,7 +157,12 @@ struct PendingWeather {
     float pressure_hpa  = 1013.25f;
     uint8_t humidity_pct = 0;
     float rain_pct      = 0.0f;
-    uint8_t runway_friction = 0;  // 0=Dry, 1-3=Wet, 4-6=Puddly, 7-9=Snowy, 10-12=Icy, 13-15=Snowy/Icy
+    uint8_t runway_condition_idx = 0;  // 0=Dry, 1-3=Wet, 4-6=Standing Water,
+                                       // 7-9=Snow, 10-12=Ice, 13-15=Snow+Ice.
+                                       // Forwarded to X-Plane's
+                                       // sim/weather/region/runway_friction
+                                       // dataref (X-Plane's naming, same
+                                       // 0-15 index — kept for SDK compat).
 
     struct CloudLayer {
         float type_xp   = 0.0f;
@@ -718,9 +723,11 @@ public:
     }
 
     // ── Component Control (host → IG) ───────────────────────────────────
-    // Runway friction is carried as class=GlobalTerrainSurface (8) +
-    // component_id=RunwayFriction (100). Earlier protocol versions used a
-    // user-defined 0xCB packet; migrated to standard Component Control.
+    // Runway condition is carried as class=GlobalTerrainSurface (8) +
+    // component_id=RunwayFriction (100). The component_state byte is the
+    // 0-15 condition index (Dry/Wet/Standing Water/Snow/Ice/Snow+Ice × 3
+    // severities). Earlier protocol versions used a user-defined 0xCB
+    // packet; migrated to standard Component Control.
     void OnCompCtrl(const cigi_session::CompCtrlFields & f) override
     {
         using cigi_session::GlobalTerrainComponentId;
@@ -731,7 +738,7 @@ public:
             f.component_id ==
                 static_cast<uint16_t>(GlobalTerrainComponentId::RunwayFriction))
         {
-            pending_wx.runway_friction = f.component_state;
+            pending_wx.runway_condition_idx = f.component_state;
             pending_wx.dirty = true;
             return;
         }
@@ -1033,7 +1040,7 @@ static float WeatherFlightLoopCb(float, float, int, void *)
 
     // Runway friction — direct passthrough (XP enum matches our 0-15).
     if (dr_runway_friction)
-        XPLMSetDataf(dr_runway_friction, static_cast<float>(pending_wx.runway_friction));
+        XPLMSetDataf(dr_runway_friction, static_cast<float>(pending_wx.runway_condition_idx));
 
     if (dr_update_immediately)
         XPLMSetDatai(dr_update_immediately, 0);
@@ -1060,7 +1067,7 @@ static float WeatherFlightLoopCb(float, float, int, void *)
         pending_wx.wind_dir_deg, pending_wx.wind_speed_ms,
         (int)(pending_wx.cloud[0].valid + pending_wx.cloud[1].valid + pending_wx.cloud[2].valid),
         pending_wx.rain_pct * 100.0f,
-        (unsigned)pending_wx.runway_friction);
+        (unsigned)pending_wx.runway_condition_idx);
     XPLMDebugString(dbg);
 
     pending_wx.dirty = false;

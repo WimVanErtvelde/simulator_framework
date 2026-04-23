@@ -302,9 +302,9 @@ WeatherSolver::AtmoResult WeatherSolver::compute(
     // aircraft on_ground state); here we just publish the regional value.
     uint8_t condition_idx = 0;
     if (weather_received_) {
-        condition_idx = weather_.runway_friction;
+        condition_idx = weather_.runway_condition_idx;
         if (active_patch && active_patch->override_runway) {
-            condition_idx = active_patch->runway_friction;
+            condition_idx = active_patch->runway_condition_idx;
         }
     }
     r.runway_condition_idx = condition_idx;

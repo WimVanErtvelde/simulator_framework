@@ -41,7 +41,7 @@ ground_friction:
     - { name: SAND,         static: 0.35, rolling: 5.00 }
     - { name: MARSH,        static: 0.30, rolling: 6.00 }
 
-  contamination_factors:            # indexed by WeatherState.runway_friction (0-15)
+  contamination_factors:            # indexed by WeatherState.runway_condition_idx (0-15)
     - { name: dry,                   static: 1.00, rolling: 1.00 }
     - { name: wet_light,             static: 0.80, rolling: 1.20 }
     - { name: wet_medium,            static: 0.65, rolling: 1.50 }

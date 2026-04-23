@@ -488,7 +488,7 @@ TEST(WeatherSolver, PatchRunwayOverrideWhenInside)
     sim_msgs::msg::WeatherState w;
     w.temperature_sl_k = 288.15f;
     w.pressure_sl_pa   = 101325.0f;
-    w.runway_friction  = 0;  // global DRY
+    w.runway_condition_idx  = 0;  // global DRY
 
     sim_msgs::msg::WeatherPatch p;
     p.patch_id = 1;
@@ -496,7 +496,7 @@ TEST(WeatherSolver, PatchRunwayOverrideWhenInside)
     p.lon_deg  = 4.5;
     p.radius_m = 10000.0f;
     p.override_runway    = true;
-    p.runway_friction    = 12;  // ICE+MEDIUM (example index)
+    p.runway_condition_idx    = 12;  // ICE+MEDIUM (example index)
     w.patches.push_back(p);
 
     s.set_weather(w);

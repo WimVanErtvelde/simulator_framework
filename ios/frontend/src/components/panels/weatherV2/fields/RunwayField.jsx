@@ -3,19 +3,22 @@ import { fieldBox, fieldHeader, fieldLabel, fieldValue, neutralBtn,
 import OverridePill from './OverridePill'
 
 // Runway condition — 6-category × 3-severity model, mapped to the 0-15
-// runway_friction index on the wire. Same semantics as WX but decoupled
-// from the store: takes value + onChange as props.
+// runway_condition_idx index on the wire. Same semantics as WX but
+// decoupled from the store: takes value + onChange as props.
 //
 // Commits atomically on Accept alongside atmospheric scalars and cloud
 // layers (Slice 5a-iii.1).
 
+// Category ids map to the YAML `contamination_factors[]` name prefixes
+// (dry / wet / standing_water / snow / ice / snow_ice). UI labels are
+// shortened where necessary to fit a 3-column button grid.
 const RUNWAY_CATEGORIES = [
-  { id: 'DRY',   label: 'DRY',   color: '#22c55e', baseIndex:  0, noSeverity: true },
-  { id: 'WET',   label: 'WET',   color: '#39d0d8', baseIndex:  1 },
-  { id: 'WATER', label: 'WATER', color: '#06b6d4', baseIndex:  4 },
-  { id: 'SNOW',  label: 'SNOW',  color: '#f1f5f9', baseIndex:  7 },
-  { id: 'ICE',   label: 'ICE',   color: '#93c5fd', baseIndex: 10 },
-  { id: 'SN+IC', label: 'SN+IC', color: '#c084fc', baseIndex: 13 },
+  { id: 'DRY',            label: 'DRY',      color: '#22c55e', baseIndex:  0, noSeverity: true },
+  { id: 'WET',            label: 'WET',      color: '#39d0d8', baseIndex:  1 },
+  { id: 'STANDING_WATER', label: 'WATER',    color: '#06b6d4', baseIndex:  4 },
+  { id: 'SNOW',           label: 'SNOW',     color: '#f1f5f9', baseIndex:  7 },
+  { id: 'ICE',            label: 'ICE',      color: '#93c5fd', baseIndex: 10 },
+  { id: 'SNOW_ICE',       label: 'SNOW+ICE', color: '#c084fc', baseIndex: 13 },
 ]
 const SEVERITIES = ['LIGHT', 'MEDIUM', 'MAX']
 

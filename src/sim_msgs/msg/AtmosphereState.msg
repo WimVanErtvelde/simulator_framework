@@ -32,10 +32,11 @@ float64 wind_down_ms             # NED down component (m/s, + = downdraft)
 bool    visible_moisture          # true = in cloud or precipitation
 float32 turbulence_intensity      # 0.0-1.0 at aircraft position
 
-# Runway condition index at aircraft position (0=Dry … 15=Snow/Ice max).
+# Runway condition index at aircraft position (0=Dry … 15=Snow+Ice max).
 # Indexes the per-aircraft contamination_factors table, not a friction value.
-# Patch-aware: equals global WeatherState.runway_friction, unless aircraft is
-# inside a patch with override_runway=true, in which case it's the patch value.
-# Consumed by flight_model_adapter_node → JSBSimSurfaceWriteback. The "apply only
-# on ground" gate lives in the writeback (on_ground state), not here.
+# Patch-aware: equals global WeatherState.runway_condition_idx, unless aircraft
+# is inside a patch with override_runway=true, in which case it's the patch
+# value. Consumed by flight_model_adapter_node → JSBSimSurfaceWriteback. The
+# "apply only on ground" gate lives in the writeback (on_ground state), not
+# here.
 uint8   runway_condition_idx

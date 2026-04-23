@@ -18,18 +18,18 @@ import RunwayField        from './fields/RunwayField'
 export default function GlobalScalarsPanel() {
   const {
     visibility_m, temperature_c, pressure_hpa, humidity_pct,
-    precipitation_rate, precipitation_type, runway_friction,
-    updateDraft, setRunwayFriction,
+    precipitation_rate, precipitation_type, runway_condition_idx,
+    updateDraft, setRunwayConditionIdx,
   } = useWeatherV2Store(useShallow(s => ({
-    visibility_m:       s.draft.global.visibility_m,
-    temperature_c:      s.draft.global.temperature_c,
-    pressure_hpa:       s.draft.global.pressure_hpa,
-    humidity_pct:       s.draft.global.humidity_pct,
-    precipitation_rate: s.draft.global.precipitation_rate,
-    precipitation_type: s.draft.global.precipitation_type,
-    runway_friction:    s.draft.global.runway_friction ?? 0,
-    updateDraft:        s.updateDraft,
-    setRunwayFriction:  s.setRunwayFriction,
+    visibility_m:          s.draft.global.visibility_m,
+    temperature_c:         s.draft.global.temperature_c,
+    pressure_hpa:          s.draft.global.pressure_hpa,
+    humidity_pct:          s.draft.global.humidity_pct,
+    precipitation_rate:    s.draft.global.precipitation_rate,
+    precipitation_type:    s.draft.global.precipitation_type,
+    runway_condition_idx:  s.draft.global.runway_condition_idx ?? 0,
+    updateDraft:           s.updateDraft,
+    setRunwayConditionIdx: s.setRunwayConditionIdx,
   })))
 
   return (
@@ -65,8 +65,8 @@ export default function GlobalScalarsPanel() {
         onChangeType={(v) => updateDraft(['global', 'precipitation_type'], v)}
       />
       <RunwayField
-        value={runway_friction}
-        onChange={setRunwayFriction}
+        value={runway_condition_idx}
+        onChange={setRunwayConditionIdx}
       />
     </div>
   )

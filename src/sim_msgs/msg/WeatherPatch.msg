@@ -69,5 +69,10 @@ float32 pressure_sl_pa             # 80000-110000 Pa; applied when override_pres
                                    # P_isa or density (field QNH exercise, not density physics)
 
 bool    override_runway
-uint8   runway_friction            # 0-15 category×severity index; applied when
-                                   # override_runway=true AND aircraft on ground inside patch
+uint8   runway_condition_idx       # 0-15 category × severity index (Dry=0,
+                                   # Wet 1-3, Standing Water 4-6, Snow 7-9,
+                                   # Ice 10-12, Snow+Ice 13-15). Indexes the
+                                   # per-aircraft contamination_factors table
+                                   # — not a friction coefficient itself.
+                                   # Applied when override_runway=true AND
+                                   # aircraft on ground inside patch.

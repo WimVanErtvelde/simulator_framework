@@ -16,7 +16,7 @@ namespace flight_model_adapter
 
 /// Per-surface friction multipliers. One entry per framework surface enum
 /// (HatHotResponse.surface_type: UNKNOWN=0..MARSH=10) and per contamination
-/// level (WeatherState.runway_friction 0=Dry..15=Snowy/Icy max).
+/// level (WeatherState.runway_condition_idx 0=Dry..15=Snow+Ice max).
 /// The effective factor applied to JSBSim's ground solver is the product
 /// of the surface and contamination entries.
 struct GroundFrictionTables {
@@ -29,7 +29,7 @@ struct GroundFrictionTables {
   static constexpr std::size_t kContaminationCount = 16;  // 0..15
 
   std::array<Factors, kSurfaceCount>       surface{};        // indexed by surface_type
-  std::array<Factors, kContaminationCount> contamination{};  // indexed by runway_friction
+  std::array<Factors, kContaminationCount> contamination{};  // indexed by runway_condition_idx
 
   /// Clamped lookup: if the enum index is out of range, index 0 (UNKNOWN/Dry) is used.
   Factors lookup_surface(uint8_t idx) const {
@@ -152,7 +152,7 @@ public:
   /// contamination (WeatherState 0..15) into a single effective factor.
   /// Called each step before Run().
   virtual void write_back_surface(uint8_t /*surface_type*/,
-                                   uint8_t /*runway_friction*/,
+                                   uint8_t /*runway_condition_idx*/,
                                    bool /*on_ground*/) {}
 
   /// Apply payload station weight command from IOS.

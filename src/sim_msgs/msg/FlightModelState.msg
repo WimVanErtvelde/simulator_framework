@@ -310,7 +310,7 @@ uint8[5] gear_status
 
 # Effective ground friction factors actually applied to the FDM this frame.
 # Computed by flight_model_adapter from HatHotResponse.surface_type and
-# AtmosphereState.effective_runway_friction via aircraft YAML tables.
+# AtmosphereState.runway_condition_idx via aircraft YAML tables.
 # 1.0 = dry-pavement baseline. Debug/diagnostic only — not authoritative
 # FDM input (the FDM sets them internally during the step).
 float32 effective_static_friction    1.0

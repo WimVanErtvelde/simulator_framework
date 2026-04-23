@@ -181,7 +181,7 @@ export const useSimStore = create((set, get) => ({
     cloudLayers: [],
     windLayers: [],
     precipitationRate: 0, precipitationType: 0,
-    runwayFriction: 0,
+    runwayConditionIdx: 0,
     patches: [],        // regional patches (Slice 5b-ii) — broadcast-updated list
     microbursts: [],    // active microbursts (Slice 5c) — broadcast-updated list
   },
@@ -493,7 +493,7 @@ export const useSimStore = create((set, get) => ({
                 windLayers: d.wind_layers ?? [],
                 precipitationRate: d.precipitation_rate ?? 0,
                 precipitationType: d.precipitation_type ?? 0,
-                runwayFriction: d.runway_friction ?? 0,
+                runwayConditionIdx: d.runway_condition_idx ?? 0,
               }
             }))
             break

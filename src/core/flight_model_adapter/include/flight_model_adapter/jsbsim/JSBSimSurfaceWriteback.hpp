@@ -16,14 +16,14 @@ namespace jsbsim_writeback
 /// ground/rolling_friction-factor, which FGGroundReactions reads globally
 /// each tick and every landing-gear leg picks up.
 ///
-/// surface_type     — framework enum from HatHotResponse (0..10)
-/// runway_friction  — WeatherState enum 0..15
-/// on_ground        — when false, resets factors to 1.0 (baseline) so the
-///                     next landing starts from nominal JSBSim ground physics
-/// tables           — loaded from aircraft config.yaml
+/// surface_type        — framework enum from HatHotResponse (0..10)
+/// runway_condition_idx — WeatherState classification 0..15
+/// on_ground           — when false, resets factors to 1.0 (baseline) so the
+///                        next landing starts from nominal JSBSim ground physics
+/// tables              — loaded from aircraft config.yaml
 void write_surface(JSBSim::FGFDMExec * exec,
                    uint8_t surface_type,
-                   uint8_t runway_friction,
+                   uint8_t runway_condition_idx,
                    bool on_ground,
                    const flight_model_adapter::GroundFrictionTables & tables);
 
