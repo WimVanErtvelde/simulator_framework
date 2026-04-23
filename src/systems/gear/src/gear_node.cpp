@@ -247,6 +247,12 @@ public:
         // Nosewheel
         msg.nosewheel_angle_deg = snap.nosewheel_angle_deg;
 
+        // Debug: echo effective ground friction from FlightModelState
+        if (latest_fms_) {
+          msg.effective_static_friction  = latest_fms_->effective_static_friction;
+          msg.effective_rolling_friction = latest_fms_->effective_rolling_friction;
+        }
+
         gear_state_pub_->publish(msg);
       });
 

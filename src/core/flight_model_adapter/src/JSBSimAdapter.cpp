@@ -705,6 +705,13 @@ sim_msgs::msg::FlightModelState JSBSimAdapter::get_state() const
   state.collective_control_engaged = false;
   state.ap_collective_mode = 0;
 
+  // Effective ground friction applied to JSBSim this frame (debug only —
+  // the values are authored by write_back_surface() from YAML tables).
+  state.effective_static_friction = static_cast<float>(
+    exec_->GetPropertyValue("ground/static-friction-factor"));
+  state.effective_rolling_friction = static_cast<float>(
+    exec_->GetPropertyValue("ground/rolling_friction-factor"));
+
   // --- 15. INTEROP ---
   state.sim_clock = state.sim_time_sec;
 

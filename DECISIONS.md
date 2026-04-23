@@ -3317,3 +3317,60 @@ Frontend state-machine bugs discovered during end-to-end validation of 5b-iv —
     drop each other's packets silently (opcode IDs now differ).
   - `bugs.md` — Bugs #20 and #21 moved to Resolved when this audit
     completed.
+
+## 2026-04-23 — Claude Code (Debug: expose effective ground friction on FlightModelState + GearState)
+
+- DECIDED: Surface the two JSBSim friction factors that
+  `JSBSimSurfaceWriteback::write_surface()` writes each frame
+  (`ground/static-friction-factor`, `ground/rolling_friction-factor`)
+  as ROS2 message fields so they can be plotted in PlotJuggler /
+  inspected via `ros2 topic echo` without attaching a JSBSim
+  property-console.
+
+- REASON: Follow-up to the CIGI 3.3 Option B audit (same day). That
+  audit removed `static_friction_factor` / `rolling_friction_factor`
+  from the `HatHotResponse.msg` wire because nothing consumed them —
+  the authoritative values come from aircraft YAML tables in
+  `JSBSimSurfaceWriteback`. But after the removal there was no ROS2
+  visibility at all on the *effective* values the FDM actually used.
+  Debugging taxi-on-grass vs taxi-on-asphalt behaviour required
+  inspecting JSBSim internals directly. Adding them back as
+  *diagnostic* fields (on FMS for authority, on GearState for
+  convenience) restores that visibility without reinstating the
+  vestigial wire fields.
+
+- FIELDS ADDED (forward-compatible, defaults 1.0):
+  - `FlightModelState.effective_static_friction`  (float32)
+  - `FlightModelState.effective_rolling_friction` (float32)
+  - `GearState.effective_static_friction`  (float32)
+  - `GearState.effective_rolling_friction` (float32)
+
+- DATA FLOW:
+  1. `flight_model_adapter_node` subscribes to `HatHotResponse.surface_type`
+     and `AtmosphereState.effective_runway_friction` (unchanged).
+  2. Each step, `write_surface()` looks up
+     (surface_type × runway_friction) in the YAML
+     `GroundFrictionTables` and writes factors into JSBSim properties
+     (unchanged behaviour).
+  3. `JSBSimAdapter::get_state()` now reads those same properties
+     straight back into the two new `FlightModelState` fields.
+  4. `sim_gear` already subscribes to `FlightModelState`; it copies
+     the two fields verbatim into its published `GearState`.
+
+- ARCHITECTURE: Coupling through `/aircraft/fdm/state` per the
+  canonical "no cross-subscribes except through FlightModelState"
+  rule in CLAUDE.md. No new subscriptions added anywhere.
+
+- NOT AUTHORITATIVE: These fields are *debug* — they reflect what was
+  applied, not what drives the FDM. JSBSim's FGGroundReactions reads
+  the same properties internally; they are not an input from ROS2.
+  IOS / QTG must not use these fields as canonical ground-friction
+  state.
+
+- AFFECTS:
+  - `src/sim_msgs/msg/FlightModelState.msg` — 2 fields added.
+  - `src/sim_msgs/msg/GearState.msg` — 2 fields added.
+  - `src/core/flight_model_adapter/src/JSBSimAdapter.cpp` —
+    `get_state()` reads JSBSim friction properties.
+  - `src/systems/gear/src/gear_node.cpp` — copies from FMS to
+    GearState at publish time.

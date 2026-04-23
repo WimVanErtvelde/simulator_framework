@@ -33,3 +33,9 @@ bool parking_brake                  # parking brake set
 
 # Nosewheel
 float32 nosewheel_angle_deg         # steering angle in degrees (from FlightModelState or computed)
+
+# Debug — effective ground friction applied to FDM, echoed from
+# FlightModelState for convenient plotting alongside WoW/brakes.
+# 1.0 = dry-pavement baseline.
+float32 effective_static_friction    1.0
+float32 effective_rolling_friction   1.0
