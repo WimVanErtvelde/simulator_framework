@@ -1597,48 +1597,60 @@ attachment, surface, layer, color, flash cycle, position/rotation, scale.
 
 - **Direction**: Host → IG
 - **Opcode**: 35 / 0x23
-- **Total size**: 32 bytes
+- **Total size**: 16 bytes
 - **ICD section**: §4.1.35 (PDF page 220)
 - **Mandatory each frame**: no
 
-Lower-bandwidth alternative to Symbol Control for changing 1 or 2 attributes
-of a symbol. Each `Attribute Value` field is interpreted per the matching
-`Attribute Select` enum. Use this for high-rate single-attribute updates
-(needle position, layer toggle).
+Lower-bandwidth alternative to Symbol Control (§4.1.34) for changing 1
+or 2 attributes of a symbol. Each `Attribute Value` field is interpreted
+per the matching `Attribute Select` enum. Use this for high-rate
+single-attribute updates (needle position, layer toggle, colour).
 
 **Fields**
 
 | Offset | Size | Name                  | Type            | Range / Values                                  | Notes |
 |-------:|-----:|-----------------------|-----------------|-------------------------------------------------|-------|
 | 0      | 1    | Packet ID             | unsigned int8   | 35                                              | fixed |
-| 1      | 1    | Packet Size           | unsigned int8   | 32                                              | fixed (matches Figure 108) |
+| 1      | 1    | Packet Size           | unsigned int8   | 16                                              | fixed |
 | 2      | 2    | Symbol ID             | unsigned int16  | target symbol                                   |       |
 | 4      | —    | Symbol State (\*1)    | 2-bit           | 0 Hidden, 1 Visible, 2 Destroyed                | byte 4, bits 1..0 |
 | 4      | —    | Attach State (\*2)    | 1-bit           | 0 Detach / 1 Attach                             | byte 4, bit 2 |
 | 4      | —    | Flash Control (\*3)   | 1-bit           | 0 Continue / 1 Reset                            | byte 4, bit 3 |
 | 4      | —    | Inherit Color (\*4)   | 1-bit           | 0 Not Inherited / 1 Inherited                   | byte 4, bit 4 |
-| 4      | —    | Reserved (\*5)        | 3-bit           | 0                                               | byte 4, bits 7..5 |
+| 4      | —    | Reserved              | 3-bit           | 0                                               | byte 4, bits 7..5 |
 | 5      | 1    | Reserved              | —               | 0                                               |       |
-| 6      | 1    | Attribute Select 1    | unsigned 8-bit  | 0 None, 1 Surface ID, 2 Parent Symbol ID, 3 Layer, 4 Flash Duty Cycle %, 5 Flash Period, 6 Position U, 7 Position V, 8 Rotation, 9 Color, 10 Scale U, 11 Scale V | spec calls it 2-bit but enum requires 4 — treat byte as a small int |
-| 7      | 1    | Attribute Select 2    | unsigned 8-bit  | same enum as Select 1                           |       |
-| 8      | 4    | Attribute Value 1     | word            | int32 / float / 4×uint8 (Color) per Attribute Select 1 | byte-swapped as 32-bit |
-| 12     | 4    | Attribute Value 2     | word            | per Attribute Select 2                          |       |
-| 16     | 16   | Reserved              | —               | 0                                               | padding to 32-byte total / 8-byte boundary |
+| 6      | 1    | Attribute Select 1    | unsigned int8   | 0 None, 1 Surface ID, 2 Parent Symbol ID, 3 Layer, 4 Flash Duty Cycle %, 5 Flash Period, 6 Position U, 7 Position V, 8 Rotation, 9 Color, 10 Scale U, 11 Scale V | full byte; selects the type of `Attribute Value 1` |
+| 7      | 1    | Attribute Select 2    | unsigned int8   | same enum as Select 1                           | full byte |
+| 8      | 4    | Attribute Value 1     | word            | type per Attribute Select 1: 1..4 → unsigned int32; 5..8, 10, 11 → single float; 9 → 4×uint8 R/G/B/A (MSB→LSB) | byte-swapped as 32-bit |
+| 12     | 4    | Attribute Value 2     | word            | type per Attribute Select 2                     |       |
 
-> **Note on Packet Size and bit-field width** — Table 43 in the published
-> ICD claims `Value: 16` for Packet Size while Figure 108 shows
-> `Packet Size = 32`. The figure layout is the binding one (it has space for
-> the two 32-bit Attribute Value words plus header), so 32 bytes is the
-> correct wire size. Similarly the prose calls Attribute Select 1/2 a
-> "2-bit field", but the enum has 12 values (needs ≥4 bits) — implementations
-> consistently treat each Attribute Select as a full octet at byte offsets
-> 6 and 7. Verify against your CCL build before relying on either.
+**Cross-reference (verified 2026-04-23)**
+The 16-byte size and 8-bit Attribute Select widths above match Boeing's
+own CIGI Class Library:
+
+```c
+#define CIGI_SHORT_SYMBOL_CONTROL_PACKET_SIZE_V3_3 16
+```
+(`include/CigiBaseShortSymbolCtrl.h` in the CCL).
+
+The Wireshark CIGI dissector
+(`epan/dissectors/packet-cigi.c::cigi3_3_add_short_symbol_control`) reads
+the same 16 bytes; its `attribute_select1` / `attribute_select2` calls use
+`offset, 1, ...` (1 byte each), and the value enum
+`cigi3_3_short_symbol_control_attribute_select_vals` lists 12 values
+(0..11), confirming an 8-bit selector.
+
+(Earlier extractions of this file claimed Figure 108 shows
+`Packet Size = 32`. That reading was wrong — the figure layout is for a
+16-byte packet; only Symbol Control §4.1.34 is 32 bytes.)
 
 **Usage notes**
-- Color value must be packed MSB→LSB as R / G / B / A (so that 32-bit byte
-  swap on the receiver still recovers the components in the right order).
-- Cannot detach by leaving Parent Symbol ID 0 — explicitly send Attach State
-  = Detach with one of the Attribute Selects = None.
+- For Attribute Select 1 or 2 = Color (9), the four colour bytes are
+  packed MSB→LSB as R / G / B / A so that a 32-bit byte-swap on a
+  little-endian receiver recovers them in the correct order — see
+  Wireshark dissector for the canonical packing.
+- Selecting `None` (0) on an Attribute Select makes the corresponding
+  Attribute Value field ignored.
 
 ---
 
