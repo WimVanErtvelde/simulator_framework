@@ -362,16 +362,36 @@ void CigiHostNode::body_to_latlon(double ac_lat_rad, double ac_lon_rad,
 // Raw CIGI 3.3 packet encoding
 // ─────────────────────────────────────────────────────────────────────────────
 
+// IG Control packet wire format (CIGI 3.3 §4.1.1, 24 bytes):
+//   Byte 0:    Packet ID = 0x01
+//   Byte 1:    Packet Size = 24
+//   Byte 2:    Major Version = 3
+//   Byte 3:    Database Number (int8; 0 = no load, 1..127 = load DB n,
+//              negative echo from IG indicates loading-in-progress)
+//   Byte 4:    bitfield — Minor Version (4 bits) | Ext/Interp (1 bit) |
+//              Timestamp Valid (1 bit) | IG Mode (2 bits, LSB)
+//   Byte 5:    Reserved (0)
+//   Byte 6-7:  Byte Swap Magic Number = 0x8000 (uint16, network order)
+//   Byte 8-11: Host Frame Number (uint32 BE)
+//   Byte 12-15:Timestamp (uint32 BE, 10 µs ticks)
+//   Byte 16-19:Last IG Frame Number (uint32 BE, echo of IG's last SOF frame)
+//   Byte 20-23:Reserved (0)
+// Verified against CCL CigiIGCtrlV3_3::Pack and Wireshark dissector.
 void CigiHostNode::encode_ig_ctrl(uint8_t * buf, uint32_t frame_cntr, double timestamp_s,
                                    uint8_t ig_mode) const
 {
     memset(buf, 0, CIGI_IG_CTRL_SIZE);
     buf[0] = CIGI_PKT_IG_CTRL;
     buf[1] = CIGI_IG_CTRL_SIZE;
-    buf[2] = 0;
-    buf[3] = ig_mode;
-    write_be32(&buf[8],  frame_cntr);
-    write_be_double(&buf[16], timestamp_s);
+    buf[2] = 3;                // Major Version
+    buf[3] = 0;                // Database Number — no DB load request
+    buf[4] = ig_mode;          // bitfield: see CIGI_IG_MODE_* in header
+    // buf[5] = 0 (Reserved, already zero from memset)
+    write_be16(&buf[6],  0x8000);                                  // Byte Swap Magic
+    write_be32(&buf[8],  frame_cntr);                              // Host Frame Number
+    write_be32(&buf[12], static_cast<uint32_t>(timestamp_s * 1e5)); // Timestamp (10 µs ticks)
+    write_be32(&buf[16], last_ig_frame_);                          // Last IG Frame Number
+    // buf[20..23] = 0 (Reserved, already zero from memset)
 }
 
 void CigiHostNode::encode_entity_ctrl(uint8_t * buf, uint16_t entity_id,
@@ -384,7 +404,6 @@ void CigiHostNode::encode_entity_ctrl(uint8_t * buf, uint16_t entity_id,
     write_be16(&buf[2], entity_id);
     buf[4]  = CIGI_ENTITY_ACTIVE;
     buf[5]  = 0;
-    buf[10] = 0xFF;
     write_be_float(&buf[12], roll_deg);
     write_be_float(&buf[16], pitch_deg);
     write_be_float(&buf[20], yaw_deg);
@@ -393,19 +412,18 @@ void CigiHostNode::encode_entity_ctrl(uint8_t * buf, uint16_t entity_id,
     write_be_double(&buf[40], alt_m);
 }
 
-// HAT/HOT Request (Host → IG), Packet ID = 0x18, Size = 32 bytes
-// CIGI 3.3 ICD Table 2-21
+// HAT/HOT Request (Host → IG), CIGI 3.3 §4.1.24, 32 bytes
 //   Byte 0:    Packet ID = 0x18
 //   Byte 1:    Packet Size = 32
-//   Byte 2-3:  HAT/HOT ID (uint16 BE)
-//   Byte 4:    [1:0] Request Type (0=HAT, 1=HOT, 2=Extended),
-//              [2] Coordinate System (0=geodetic), [3] Update Period, [7:4] Reserved
-//   Byte 5-7:  Padding
-//   Byte 8-9:  Entity ID (uint16 BE, 0 = ownship position not entity)
-//   Byte 10-11:Padding
-//   Byte 12-19:Latitude  (double BE, degrees)
-//   Byte 20-27:Longitude (double BE, degrees)
-//   Byte 28-31:Altitude  (float32 BE, metres — ignored for HOT, use 0)
+//   Byte 2-3:  HAT/HOT ID (uint16 BE) — host-assigned correlation ID
+//   Byte 4:    bitfield [1:0] Request Type (0=HAT, 1=HOT, 2=Extended),
+//              [2] Coordinate System (0=Geodetic, 1=Entity), [7:3] Reserved
+//   Byte 5:    Update Period (uint8, 0 = one-shot)
+//   Byte 6-7:  Entity ID (uint16 BE, used only when Coordinate System = Entity)
+//   Byte 8-15: Latitude / X Offset  (double BE, deg or metres)
+//   Byte 16-23:Longitude / Y Offset (double BE, deg or metres)
+//   Byte 24-31:Altitude / Z Offset  (double BE, metres MSL — ignored for HOT)
+// Verified against CCL CigiHatHotReqV3_2::Pack and Wireshark dissector.
 void CigiHostNode::encode_hot_request(uint8_t * buf, uint16_t request_id,
                                       double lat_deg, double lon_deg) const
 {
@@ -413,10 +431,12 @@ void CigiHostNode::encode_hot_request(uint8_t * buf, uint16_t request_id,
     buf[0] = CIGI_PKT_HOT_REQUEST;
     buf[1] = CIGI_HOT_REQUEST_SIZE;
     write_be16(&buf[2], request_id);
-    buf[4] = 0x02;  // Request Type = Extended (2), geodetic, one-shot — elicits 0x67 response
-    write_be_double(&buf[12], lat_deg);
-    write_be_double(&buf[20], lon_deg);
-    write_be_float(&buf[28], 0.0f);
+    buf[4] = 0x02;  // Request Type = Extended (2), Coordinate System = Geodetic (0)
+    // buf[5] = 0 (Update Period = one-shot, already zero)
+    // buf[6..7] = 0 (Entity ID ignored in Geodetic mode, already zero)
+    write_be_double(&buf[8],  lat_deg);
+    write_be_double(&buf[16], lon_deg);
+    write_be_double(&buf[24], 0.0);   // Altitude — unused for Extended/HOT
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -630,11 +650,20 @@ void CigiHostNode::recv_pending()
                     hat_pub_->publish(*resp);
                 }
             }
-            else if (pkt_id == CIGI_PKT_SOF && pkt_size >= 8) {
-                // SOF (Start of Frame) from IG — parse IG Mode
-                // CIGI 3.3 ICD: byte 4 bits[1:0] = IG Mode (0=Standby, 1=Reset, 2=Operate)
+            else if (pkt_id == CIGI_PKT_SOF && pkt_size >= 24) {
+                // SOF (Start of Frame) from IG — CIGI 3.3 §4.2.1, 24 bytes:
+                //   Byte 2:    Major Version
+                //   Byte 3:    Database Number (int8, sign-flip handshake)
+                //   Byte 4:    IG Status Code (0=Normal)
+                //   Byte 5:    bitfield — Minor Version (4) | ERM (1) | TS Valid (1) | IG Mode (2 LSB)
+                //   Byte 8-11: IG Frame Number (uint32 BE)
+                // Verified against CCL CigiSOFV3_2::Pack.
                 uint8_t prev = ig_status_;
-                ig_status_ = buf[offset + 4] & 0x03;
+                ig_status_ = buf[offset + 5] & 0x03;
+                last_ig_frame_ = (static_cast<uint32_t>(buf[offset +  8]) << 24)
+                               | (static_cast<uint32_t>(buf[offset +  9]) << 16)
+                               | (static_cast<uint32_t>(buf[offset + 10]) <<  8)
+                               | (static_cast<uint32_t>(buf[offset + 11]));
                 if (ig_status_ != prev) {
                     static const char * mode_names[] = {"Standby", "Reset", "Operate", "Debug"};
                     RCLCPP_INFO(get_logger(), "IG status changed: %s → %s",

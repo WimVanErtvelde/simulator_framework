@@ -54,9 +54,19 @@ private:
     static constexpr uint8_t CIGI_ENTITY_CTRL_SIZE  = 48;
     static constexpr uint8_t CIGI_HOT_REQUEST_SIZE  = 32;
 
-    // IG mode byte[3] bits[1:0] = IG Mode, bit[2] = TimestampValid
-    static constexpr uint8_t CIGI_IG_MODE_RESET   = 0x05;  // Reset(1) | TimestampValid → 0x05
-    static constexpr uint8_t CIGI_IG_MODE_OPERATE = 0x06;  // Operate(2) | TimestampValid → 0x06
+    // CIGI 3.3 §4.1.1 IG Control byte 4 packing (LSB-first per §2.7.3):
+    //   bits 1..0 = IG Mode (0 = Reset/Standby, 1 = Operate, 2 = Debug)
+    //   bit  2    = Timestamp Valid (1 = valid)
+    //   bit  3    = Extrapolation/Interpolation Enable (0 = disabled)
+    //   bits 7..4 = Minor Version (2 for CIGI 3.3)
+    // Note: the spec collapses Reset and Standby into a single value (0) — the
+    // framework's "Reset" intent (one-frame signal at reposition start) is
+    // wire-encoded as Standby here, and the IG side detects the
+    // Standby→Operate transition to begin terrain stability checks.
+    // Common composed values with TimestampValid=1, MinorVersion=2:
+    static constexpr uint8_t CIGI_IG_MODE_STANDBY = 0x24;  // 0010_0100
+    static constexpr uint8_t CIGI_IG_MODE_RESET   = 0x24;  // alias for Standby (spec collapses both to 0)
+    static constexpr uint8_t CIGI_IG_MODE_OPERATE = 0x25;  // 0010_0101
     // Entity state byte[4]: Active(1) in bits[1:0]
     static constexpr uint8_t CIGI_ENTITY_ACTIVE = 0x01;
     // SOF IG Status byte[4] bits[1:0] (incoming, different encoding from outgoing IG Mode)
@@ -114,7 +124,8 @@ private:
     sim_msgs::msg::FlightModelState::SharedPtr latest_fms_;
     std::mutex fms_mutex_;
     uint32_t   frame_counter_ = 0;
-    uint8_t    ig_status_     = 0;   // SOF IG Status from IG: 0=Standby, 1=Reset, 2=Operate
+    uint32_t   last_ig_frame_ = 0;   // last IG Frame Number from SOF, echoed in IG Control
+    uint8_t    ig_status_     = 0;   // SOF IG Mode from IG: 0=Standby, 1=Reset, 2=Operate
     uint8_t    sim_state_     = 0;   // from /sim/state
     bool       reposition_active_ = false;  // from SimState.reposition_active
     bool       sent_reset_    = false;      // true after Reset sent, cleared on next frame
