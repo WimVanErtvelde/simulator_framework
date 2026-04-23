@@ -2,7 +2,7 @@
 name: core
 description: >
   Core simulator framework nodes: sim_manager, flight_model_adapter, input_arbitrator,
-  atmosphere_node, cigi_bridge, navaid_sim, and sim_interfaces headers-only package.
+  cigi_bridge, navaid_sim, and sim_interfaces headers-only package.
   Use for work on the simulation backbone — clock, state machine, capabilities,
   FDM adapter interface, control arbitration, CIGI host, and terrain.
 ---

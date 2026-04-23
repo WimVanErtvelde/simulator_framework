@@ -1,5 +1,5 @@
 # AtmosphereState.msg
-# Published by: atmosphere_node  ->  /sim/world/atmosphere
+# Published by: weather_solver_node  ->  /world/atmosphere
 # ISA baseline + weather deviations at current aircraft position.
 # Consumed by: engines_node, ice_protection_node, altimeter logic, QTG
 

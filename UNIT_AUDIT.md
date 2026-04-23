@@ -89,7 +89,7 @@ SI fields (_pa, _k, _ms) coexist with instrument fields (_psi, _degc, _inhg) for
 | M_TO_FT | 3.28084 | m->ft | Condition trigger: altitude |
 | MS_TO_FPM | 196.85 | m/s->fpm | Condition trigger: VS |
 
-### navigation_node.cpp, cigi_host_node.cpp, atmosphere_node.cpp, engines_model.cpp
+### navigation_node.cpp, cigi_host_node.cpp, engines_model.cpp
 
 All use named constants. See source files for full listing.
 

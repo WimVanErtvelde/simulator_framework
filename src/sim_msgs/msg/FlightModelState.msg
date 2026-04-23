@@ -2,7 +2,7 @@
 # Published by: flight_model_adapter  →  /sim/flight_model/state
 # Rate: matches flight model execution rate (typically 100 Hz)
 # Consumer nodes: sim_manager, cigi_bridge, navigation_node,
-#                 atmosphere_node (reads wind only), gear_node, ios_backend
+#                 gear_node, ios_backend
 #
 # Reference sources:
 #   [HLSIM]   STAGE Helisim 6.0 Real-Time Data Export ICD (Engenuity doc 743-0507)

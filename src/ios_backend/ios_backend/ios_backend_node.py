@@ -320,7 +320,7 @@ class IosBackendNode(Node):
         self._gear_sub = self.create_subscription(
             GearState, '/aircraft/gear/state', self._on_gear_state, 10)
 
-        # Atmosphere state (from weather_solver / atmosphere_node)
+        # Atmosphere state (from weather_solver)
         self._atmosphere_sub = self.create_subscription(
             AtmosphereState, '/world/atmosphere', self._on_atmosphere_state, 10)
 
