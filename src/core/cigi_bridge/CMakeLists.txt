@@ -68,6 +68,11 @@ if(CCL_INCLUDE_DIR)
       ${CMAKE_CURRENT_SOURCE_DIR}/../../../references/CIGI/cigi3.3/ccl/install/lib
       ${CCL_ROOT}/lib
   )
+
+  if(CCL_LIBRARY)
+    add_subdirectory(cigi_session)
+    target_link_libraries(cigi_bridge_node cigi_session)
+  endif()
 endif()
 
 # Vendored CIGI_IG_Interface — only build when explicitly requested. Contains
