@@ -618,25 +618,258 @@ and for jitter-smoothing under asynchronous operation.
   and a forward-extrapolation hint.
 
 ### 0x09 — Celestial Sphere Control
-*TODO*
+
+- **Direction**: Host → IG
+- **Opcode**: 9 / 0x09
+- **Total size**: 16 bytes
+- **ICD section**: §4.1.9 (PDF page 94)
+- **Mandatory each frame**: no
+
+Sets sky-model state: time of day, sun/moon/stars enables, ephemeris
+mode, date.
+
+**Fields**
+
+| Offset | Size | Name                          | Type            | Range / Values                          | Notes |
+|-------:|-----:|-------------------------------|-----------------|-----------------------------------------|-------|
+| 0      | 1    | Packet ID                     | unsigned int8   | 9                                       | fixed |
+| 1      | 1    | Packet Size                   | unsigned int8   | 16                                      | fixed |
+| 2      | 1    | Hour                          | unsigned int8   | 0..23 (UTC)                             |       |
+| 3      | 1    | Minute                        | unsigned int8   | 0..59 (UTC)                             |       |
+| 4      | —    | Ephemeris Model Enable (\*1)  | 1-bit           | 0 Disable (static TOD) / 1 Enable       | byte 4, bit 0. Default 1 |
+| 4      | —    | Sun Enable (\*2)              | 1-bit           | 0/1                                     | byte 4, bit 1 |
+| 4      | —    | Moon Enable (\*3)             | 1-bit           | 0/1                                     | byte 4, bit 2 |
+| 4      | —    | Star Field Enable (\*4)       | 1-bit           | 0/1                                     | byte 4, bit 3 |
+| 4      | —    | Date/Time Valid (\*5)         | 1-bit           | 0 Invalid (ignore Hour/Minute/Date) / 1 Valid | byte 4, bit 4 |
+| 4      | —    | Reserved                      | 3-bit           | 0                                       | byte 4, bits 7..5 |
+| 5      | 3    | Reserved                      | —               | 0                                       |       |
+| 8      | 4    | Date                          | unsigned int32  | MMDDYYYY = month×1 000 000 + day×10 000 + year | 7- or 8-digit decimal |
+| 12     | 4    | Star Field Intensity          | single float    | 0..100 %                                | ignored if Star Field Enable = 0 |
+
+**Usage notes**
+- When the host freezes the sim, send a packet with `Ephemeris Model
+  Enable` = 0 to stop continuous TOD update; re-enable on resume.
 
 ### 0x0A — Atmosphere Control
-*TODO*
+
+- **Direction**: Host → IG
+- **Opcode**: 10 / 0x0A
+- **Total size**: 32 bytes
+- **ICD section**: §4.1.10 (PDF page 97)
+- **Mandatory each frame**: no
+
+Sets the *global* baseline atmosphere — temperature, humidity, pressure,
+visibility, wind. Weather layers (§4.1.12) and weather entities override
+this within their footprints; the global values still drive the
+transition bands.
+
+**Fields**
+
+| Offset | Size | Name                            | Type            | Range / Values                              | Notes |
+|-------:|-----:|---------------------------------|-----------------|---------------------------------------------|-------|
+| 0      | 1    | Packet ID                       | unsigned int8   | 10                                          | fixed |
+| 1      | 1    | Packet Size                     | unsigned int8   | 32                                          | fixed |
+| 2      | 1    | Reserved                        | —               | 0                                           |       |
+| 3      | —    | Atmospheric Model Enable (\*1)  | 1-bit           | 0 Disable / 1 Enable                        | byte 3, bit 0. Default 0. Enables FASCODE/MODTRAN/SEDRIS-style sensor-spectral models |
+| 3      | —    | Reserved                        | 7-bit           | 0                                           | byte 3, bits 7..1 |
+| 4      | 1    | Global Humidity                 | unsigned int8   | 0..100 %                                    |       |
+| 5      | 3    | (padding before float)          | —               | —                                           | aligns next double / float on 8-byte boundary — Reserved |
+| 8      | 4    | Global Air Temperature          | single float    | °C                                          |       |
+| 12     | 4    | Global Visibility Range         | single float    | metres, ≥ 0                                 |       |
+| 16     | 4    | Global Horizontal Wind Speed    | single float    | m/s, ≥ 0                                    | direction in `Global Wind Direction` |
+| 20     | 4    | Global Vertical Wind Speed      | single float    | m/s; +ve = updraft, -ve = downdraft         |       |
+| 24     | 4    | Global Wind Direction           | single float    | 0..360 deg from True North (wind FROM)      |       |
+| 28     | 4    | Global Barometric Pressure      | single float    | mb / hPa, ≥ 0                               |       |
+
+> **Note on padding** — the ICD figure shows `Reserved | *1 | Global Humidity`
+> packed in bytes 2–3, then a Reserved word at bytes 4–7 with humidity
+> placed inside it. The exact bit-packing follows the LSB-first rule:
+> `Atmospheric Model Enable` is bit 0 of one byte, with the rest of that
+> word reserved. Verify against Figure 54 (PDF page 97) when implementing.
 
 ### 0x0B — Environmental Region Control
-*TODO*
+
+- **Direction**: Host → IG
+- **Opcode**: 11 / 0x0B
+- **Total size**: 48 bytes
+- **ICD section**: §4.1.11 (PDF page 100)
+- **Mandatory each frame**: no
+
+Defines a rounded-rectangle area on the geoid in which atmospheric and
+surface conditions can differ from the global values. Up to 256 weather
+layers may be hosted within a region (via Weather Control §4.1.12).
+Multiple regions can overlap; per-attribute merge flags decide what
+happens in the overlap.
+
+**Fields**
+
+| Offset | Size | Name                                  | Type            | Range / Values                                  | Notes |
+|-------:|-----:|---------------------------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID                             | unsigned int8   | 11                                              | fixed |
+| 1      | 1    | Packet Size                           | unsigned int8   | 48                                              | fixed |
+| 2      | 2    | Region ID                             | unsigned int16  | host-assigned                                   |       |
+| 4      | —    | Region State (\*1)                    | unsigned 2-bit  | 0 Inactive, 1 Active, 2 Destroyed               | byte 4, bits 1..0 |
+| 4      | —    | Merge Weather Properties (\*2)        | 1-bit           | 0 Use Last, 1 Merge                             | byte 4, bit 2 |
+| 4      | —    | Merge Aerosol Concentrations (\*3)    | 1-bit           | 0 Use Last, 1 Merge                             | byte 4, bit 3 |
+| 4      | —    | Merge Maritime Surface Conditions (\*4) | 1-bit         | 0 Use Last, 1 Merge                             | byte 4, bit 4 |
+| 4      | —    | Merge Terrestrial Surface Conditions (\*5) | 1-bit      | 0 Use Last, 1 Merge                             | byte 4, bit 5 |
+| 4      | —    | Reserved (\*6)                        | 2-bit           | 0                                               | byte 4, bits 7..6 |
+| 5      | 3    | Reserved                              | —               | 0                                               |       |
+| 8      | 8    | Latitude                              | double float    | -90.0 .. +90.0 deg                              | region centre |
+| 16     | 8    | Longitude                             | double float    | -180.0 .. +180.0 deg                            | region centre |
+| 24     | 4    | Size X                                | single float    | metres, > 0                                     | length along local +X |
+| 28     | 4    | Size Y                                | single float    | metres, > 0                                     | length along local +Y |
+| 32     | 4    | Corner Radius                         | single float    | 0..min(½SizeX, ½SizeY) m                        | 0 → rectangle; ½Size{X,Y} → circle |
+| 36     | 4    | Rotation                              | single float    | -180.0 .. +180.0 deg from True N (CW about Z)   |       |
+| 40     | 4    | Transition Perimeter                  | single float    | metres, ≥ 0                                     | gradient corridor outside region |
+| 44     | 4    | Reserved                              | —               | 0                                               | 8-byte alignment |
+
+**Usage notes**
+- Region State Inactive disables every weather layer/surface in the
+  region without destroying them; Destroyed permanently removes the
+  region and all its children.
+- Merge flags drive the Table 17 combining rules (averages, max/min,
+  vector sums) for overlapping regions.
+- Adjacent regions with `Corner Radius = 0` and matching transition
+  perimeters approximate a continuous gridded weather system
+  (Figure 61 in the ICD).
 
 ### 0x0C — Weather Control
-*TODO*
+
+- **Direction**: Host → IG
+- **Opcode**: 12 / 0x0C
+- **Total size**: 56 bytes
+- **ICD section**: §4.1.12 (PDF page 112)
+- **Mandatory each frame**: no
+
+Defines a weather *layer* (global, regional, or attached to a weather
+entity). Up to 256 layers globally + 256 per region. Aerosol type
+follows Layer ID (Ground Fog 0, Cloud Layer 1–3, Rain 4, Snow 5,
+Sleet 6, Hail 7, Sand 8, Dust 9; 10–255 IG-defined).
+
+**Fields**
+
+| Offset | Size | Name                            | Type            | Range / Values                                                           | Notes |
+|-------:|-----:|---------------------------------|-----------------|--------------------------------------------------------------------------|-------|
+| 0      | 1    | Packet ID                       | unsigned int8   | 12                                                                       | fixed |
+| 1      | 1    | Packet Size                     | unsigned int8   | 56                                                                       | fixed |
+| 2      | 2    | Entity ID / Region ID           | unsigned int16  | meaning controlled by Scope                                              | ignored if Scope = Global |
+| 4      | 1    | Layer ID                        | unsigned int8   | 0..9 standard (see above), 10..255 IG-defined                            | ignored if Scope = Entity |
+| 5      | 1    | Humidity                        | unsigned int8   | 0..100 %                                                                 |       |
+| 6      | —    | Weather Enable (\*1)            | 1-bit           | 0 Disable / 1 Enable                                                     | byte 6, bit 0 |
+| 6      | —    | Scud Enable (\*2)               | 1-bit           | 0/1                                                                      | byte 6, bit 1 |
+| 6      | —    | Random Winds Enable (\*3)       | 1-bit           | 0/1                                                                      | byte 6, bit 2 |
+| 6      | —    | Random Lightning Enable (\*4)   | 1-bit           | 0/1                                                                      | byte 6, bit 3 |
+| 6      | —    | Cloud Type (\*5)                | unsigned 4-bit  | 0 None, 1 Altocumulus, 2 Altostratus, 3 Cirrocumulus, 4 Cirrostratus, 5 Cirrus, 6 Cumulonimbus, 7 Cumulus, 8 Nimbostratus, 9 Stratocumulus, 10 Stratus, 11..15 Other | byte 6, bits 7..4 |
+| 7      | —    | Scope (\*6)                     | unsigned 2-bit  | 0 Global, 1 Regional, 2 Entity                                           | byte 7, bits 1..0 |
+| 7      | —    | Severity (\*7)                  | unsigned 3-bit  | 0..5 (least → most severe)                                               | byte 7, bits 4..2 |
+| 7      | —    | Reserved                        | 3-bit           | 0                                                                        | byte 7, bits 7..5 |
+| 8      | 4    | Air Temperature                 | single float    | °C                                                                       |       |
+| 12     | 4    | Visibility Range                | single float    | metres; overrides global Atmosphere Control                              |       |
+| 16     | 4    | Scud Frequency                  | single float    | 0..100 %                                                                 |       |
+| 20     | 4    | Coverage                        | single float    | 0..100 %                                                                 |       |
+| 24     | 4    | Base Elevation                  | single float    | metres MSL; ignored if Scope = Entity                                    |       |
+| 28     | 4    | Thickness                       | single float    | metres; ignored if Scope = Entity                                        | top = base + thickness |
+| 32     | 4    | Transition Band                 | single float    | metres above and below layer; ignored if Scope = Entity                  |       |
+| 36     | 4    | Horizontal Wind Speed           | single float    | m/s                                                                      |       |
+| 40     | 4    | Vertical Wind Speed             | single float    | m/s; +ve updraft                                                         |       |
+| 44     | 4    | Wind Direction                  | single float    | 0..360 deg from True North (wind FROM)                                   |       |
+| 48     | 4    | Barometric Pressure             | single float    | mb / hPa                                                                 |       |
+| 52     | 4    | Aerosol Concentration           | single float    | g/m³                                                                     | aerosol type from Layer ID |
+
+**Usage notes**
+- Disabling a layer (`Weather Enable` = 0) leaves it defined but
+  invisible — useful for IOS-controlled toggling.
+- One layer can carry only one aerosol; for multiple aerosols in one
+  region, define multiple layers.
+- Within a region, layers always combine; between overlapping regions,
+  the merge rule comes from Environmental Region Control (§4.1.11).
 
 ### 0x0D — Maritime Surface Conditions Control
-*TODO*
+
+- **Direction**: Host → IG
+- **Opcode**: 13 / 0x0D
+- **Total size**: 24 bytes
+- **ICD section**: §4.1.13 (PDF page 119)
+- **Mandatory each frame**: no
+
+Sets the surface state of a body of water (height, temperature,
+clarity). Pairs with Wave Control (§4.1.14) for wave dynamics.
+
+**Fields**
+
+| Offset | Size | Name                          | Type            | Range / Values                              | Notes |
+|-------:|-----:|-------------------------------|-----------------|---------------------------------------------|-------|
+| 0      | 1    | Packet ID                     | unsigned int8   | 13                                          | fixed |
+| 1      | 1    | Packet Size                   | unsigned int8   | 24                                          | fixed |
+| 2      | 2    | Entity ID / Region ID         | unsigned int16  | per Scope                                   | ignored if Scope = Global |
+| 4      | —    | Surface Conditions Enable (\*1) | 1-bit         | 0 Disable / 1 Enable                        | byte 4, bit 0; ignored if Scope = Global |
+| 4      | —    | Whitecap Enable (\*2)         | 1-bit           | 0/1                                         | byte 4, bit 1 |
+| 4      | —    | Scope (\*3)                   | unsigned 2-bit  | 0 Global, 1 Regional, 2 Entity              | byte 4, bits 3..2 |
+| 4      | —    | Reserved                      | 4-bit           | 0                                           | byte 4, bits 7..4 |
+| 5      | 3    | Reserved                      | —               | 0                                           |       |
+| 8      | 4    | Sea Surface Height            | single float    | metres MSL (also tide level in surf zone)   |       |
+| 12     | 4    | Surface Water Temperature     | single float    | °C                                          |       |
+| 16     | 4    | Surface Clarity               | single float    | 0..100 % (0 = turbid, 100 = pristine)       |       |
+| 20     | 4    | Reserved                      | —               | 0                                           | 8-byte alignment |
 
 ### 0x0E — Wave Control
-*TODO*
+
+- **Direction**: Host → IG
+- **Opcode**: 14 / 0x0E
+- **Total size**: 32 bytes
+- **ICD section**: §4.1.14 (PDF page 122)
+- **Mandatory each frame**: no
+
+Defines a wave (or wave component, when superposed) propagating across
+a body of water — height, wavelength, period, direction, breaker
+behaviour. Multiple waves form a sea state.
+
+**Fields**
+
+| Offset | Size | Name                          | Type            | Range / Values                                       | Notes |
+|-------:|-----:|-------------------------------|-----------------|------------------------------------------------------|-------|
+| 0      | 1    | Packet ID                     | unsigned int8   | 14                                                   | fixed |
+| 1      | 1    | Packet Size                   | unsigned int8   | 32                                                   | fixed |
+| 2      | 2    | Entity ID / Region ID         | unsigned int16  | per Scope                                            | ignored if Scope = Global |
+| 4      | 1    | Wave ID                       | unsigned int8   | host-assigned wave index                             |       |
+| 5      | —    | Wave Enable (\*1)             | 1-bit           | 0 Disable / 1 Enable                                 | byte 5, bit 0 |
+| 5      | —    | Scope (\*2)                   | unsigned 2-bit  | 0 Global, 1 Regional, 2 Entity                       | byte 5, bits 2..1 |
+| 5      | —    | Breaker Type (\*3)            | unsigned 2-bit  | 0 Plunging, 1 Spilling, 2 Surging                    | byte 5, bits 4..3 |
+| 5      | —    | Reserved                      | 3-bit           | 0                                                    | byte 5, bits 7..5 |
+| 6      | 2    | Reserved                      | —               | 0                                                    |       |
+| 8      | 4    | Wave Height                   | single float    | metres (trough-to-crest), ≥ 0                        |       |
+| 12     | 4    | Wavelength                    | single float    | metres, > 0                                          |       |
+| 16     | 4    | Period                        | single float    | seconds, > 0                                         |       |
+| 20     | 4    | Direction                     | single float    | 0..360 deg from True N (propagation direction)       |       |
+| 24     | 4    | Phase Offset                  | single float    | -360.0..+360.0 deg                                   | for multi-wave interference |
+| 28     | 4    | Leading                       | single float    | -180.0..+180.0 deg                                   | shapes the crest (0 = sinusoid) |
 
 ### 0x0F — Terrestrial Surface Conditions Control
-*TODO*
+
+- **Direction**: Host → IG
+- **Opcode**: 15 / 0x0F
+- **Total size**: 8 bytes
+- **ICD section**: §4.1.15 (PDF page 126)
+- **Mandatory each frame**: no
+
+Sets a contaminant or condition on the terrain surface (wet, icy,
+slushy, sandy, …). Multiple conditions on one surface require
+multiple packets. Used for runway-condition QTG cases (RVR, friction
+coefficients on landing rollout).
+
+**Fields**
+
+| Offset | Size | Name                            | Type            | Range / Values                                              | Notes |
+|-------:|-----:|---------------------------------|-----------------|-------------------------------------------------------------|-------|
+| 0      | 1    | Packet ID                       | unsigned int8   | 15                                                          | fixed |
+| 1      | 1    | Packet Size                     | unsigned int8   | 8                                                           | fixed |
+| 2      | 2    | Entity ID / Region ID           | unsigned int16  | per Scope                                                   | ignored if Scope = Global |
+| 4      | 2    | Surface Condition ID            | unsigned int16  | 0 = Dry (reset; clears all conditions in scope); >0 IG-defined |    |
+| 6      | —    | Surface Condition Enable (\*1)  | 1-bit           | 0 Disable / 1 Enable                                        | byte 6, bit 0 |
+| 6      | —    | Scope (\*2)                     | unsigned 2-bit  | 0 Global, 1 Regional, 2 Entity                              | byte 6, bits 2..1 |
+| 6      | —    | Severity                        | unsigned 5-bit  | 0..31 (0 = negligible, 31 = unnavigable)                    | byte 6, bits 7..3 |
+| 7      | 1    | Coverage                        | unsigned int8   | 0..100 %                                                    |       |
 
 ### 0x10 — View Control
 *TODO*
