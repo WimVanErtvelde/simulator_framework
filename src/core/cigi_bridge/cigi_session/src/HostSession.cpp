@@ -1,5 +1,6 @@
 #include "cigi_session/HostSession.h"
 #include "cigi_session/processors/ISofProcessor.h"
+#include "cigi_session/processors/IHatHotRespProcessor.h"
 
 #include <CigiHostSession.h>
 #include <CigiOutgoingMsg.h>
@@ -13,6 +14,8 @@
 #include <CigiBaseHatHotReq.h>
 #include <CigiSOFV3_2.h>
 #include <CigiBaseSOF.h>
+#include <CigiHatHotXRespV3_2.h>
+#include <CigiBaseHatHotResp.h>
 
 namespace cigi_session {
 
@@ -46,6 +49,28 @@ private:
     ISofProcessor * const * target_;
 };
 
+class HatHotRespAdapter : public CigiBaseEventProcessor {
+public:
+    explicit HatHotRespAdapter(IHatHotRespProcessor * const * target)
+      : target_(target) {}
+    void OnPacketReceived(CigiBasePacket * pkt) override {
+        if (!*target_ || !pkt) return;
+        auto * resp = dynamic_cast<CigiHatHotXRespV3_2 *>(pkt);
+        if (!resp) return;
+        HatHotRespFields f;
+        f.request_id           = resp->GetHatHotID();
+        f.valid                = resp->GetValid();
+        f.hat_m                = resp->GetHat();
+        f.hot_m                = resp->GetHot();
+        f.material_code        = resp->GetMaterial();
+        f.normal_azimuth_deg   = resp->GetNormAz();
+        f.normal_elevation_deg = resp->GetNormEl();
+        (*target_)->OnHatHotResp(f);
+    }
+private:
+    IHatHotRespProcessor * const * target_;
+};
+
 }  // namespace
 
 struct HostSession::Impl {
@@ -53,15 +78,19 @@ struct HostSession::Impl {
     ISofProcessor *       sof_proc  = nullptr;
     IHatHotRespProcessor * resp_proc = nullptr;
     SofAdapter            sof_adapter;
+    HatHotRespAdapter     resp_adapter;
     Cigi_uint8 *          last_msg = nullptr;
     int                   last_len = 0;
 
     Impl()
-      : sof_adapter(&sof_proc) {
+      : sof_adapter(&sof_proc),
+        resp_adapter(&resp_proc) {
         ccl.SetCigiVersion(3, 3);
         ccl.GetIncomingMsgMgr().SetReaderCigiVersion(3, 3);
         ccl.GetIncomingMsgMgr().RegisterEventProcessor(
             CIGI_SOF_PACKET_ID_V3, &sof_adapter);
+        ccl.GetIncomingMsgMgr().RegisterEventProcessor(
+            CIGI_HAT_HOT_XRESP_PACKET_ID_V3, &resp_adapter);
     }
 };
 

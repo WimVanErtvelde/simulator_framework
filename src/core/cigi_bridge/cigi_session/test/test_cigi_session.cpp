@@ -11,6 +11,8 @@
 #include <CigiBaseHatHotReq.h>
 
 #include "cigi_session/processors/ISofProcessor.h"
+#include "cigi_session/processors/IHatHotRespProcessor.h"
+#include <cstring>
 #include <optional>
 
 // CCL writes multi-byte fields in the sender's native byte order and embeds a
@@ -109,6 +111,55 @@ TEST(CigiSession, SofProcessorDispatchesToTarget) {
     EXPECT_EQ(spy.got->ig_mode, cigi_session::IgModeRx::Operate);
     EXPECT_EQ(spy.got->ig_frame_number, 0xCAFEBABEu);
     EXPECT_EQ(spy.got->database_id, 0);
+}
+
+namespace {
+// Fill bytes for a BE double starting at buf[off].
+void write_be_double(std::uint8_t * buf, double v) {
+    std::uint64_t u;
+    std::memcpy(&u, &v, 8);
+    for (int i = 0; i < 8; ++i) buf[i] = (u >> (56 - 8 * i)) & 0xFFu;
+}
+
+struct RespSpy : cigi_session::IHatHotRespProcessor {
+    std::optional<cigi_session::HatHotRespFields> got;
+    void OnHatHotResp(const cigi_session::HatHotRespFields & f) override { got = f; }
+};
+}  // namespace
+
+// Host receive of SOF + HAT/HOT Extended Response in one datagram. The SOF
+// carries the Byte Swap Magic so CCL's IncomingMsg can detect orientation;
+// the response parser fields (id, hat, hot, material) must round-trip
+// through the IHatHotRespProcessor adapter.
+TEST(CigiSession, HatHotRespDispatchesToTarget) {
+    std::uint8_t buf[24 + 40] = {};
+
+    // SOF header
+    buf[0] = 0x65; buf[1] = 24; buf[2] = 3;
+    buf[5] = (2u << 4) | (1u << 2) | 1u;  // Minor=2, TSValid=1, Operate
+    buf[6] = 0x80; buf[7] = 0x00;         // Byte Swap Magic BE
+    buf[8]  = 0; buf[9]  = 0; buf[10] = 0; buf[11] = 1;  // IG frame = 1
+
+    // HAT/HOT Extended Response starts at offset 24.
+    std::uint8_t * r = buf + 24;
+    r[0] = 0x67; r[1] = 40;
+    r[2] = 0x00; r[3] = 0x63;             // HatHotID = 99 (BE)
+    r[4] = 0x01 | (0x02 << 1);            // Valid=1, ReqType=Extended(2)
+    write_be_double(r + 8,  123.456);     // HAT
+    write_be_double(r + 16, 78.901);      // HOT
+    r[24] = 0x00; r[25] = 0x00; r[26] = 0x00; r[27] = 0xAB;  // Material
+
+    cigi_session::HostSession session;
+    RespSpy spy;
+    session.SetHatHotRespProcessor(&spy);
+    session.HandleDatagram(buf, sizeof(buf));
+
+    ASSERT_TRUE(spy.got.has_value());
+    EXPECT_EQ(spy.got->request_id, 99);
+    EXPECT_TRUE(spy.got->valid);
+    EXPECT_DOUBLE_EQ(spy.got->hat_m, 123.456);
+    EXPECT_DOUBLE_EQ(spy.got->hot_m, 78.901);
+    EXPECT_EQ(spy.got->material_code, 0xABu);
 }
 
 TEST(CigiSession, HatHotRequestRoundTrip) {
