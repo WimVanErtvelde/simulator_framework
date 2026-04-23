@@ -9,7 +9,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 ## CURRENT STATE
-<!-- Last updated: 2026-04-03 — This section is editable -->
+<!-- Last updated: 2026-04-23 — This section is editable -->
 
 ### Architecture
 - **Middleware:** ROS2 Jazzy (LTS), all nodes use sim time (`/clock` + `use_sim_time`)
@@ -19,7 +19,7 @@
 - **Systems nodes** (C++) subscribe to `/aircraft/fdm/state` + `/sim/failures/route/<handler>` + `/world/*`, publish own `/aircraft/<s>/state`. Aircraft-specific logic via pluginlib plugins. Cross-subscriptions allowed only for documented physical coupling (engines→electrical, engines→fuel, air_data→electrical).
 - **Electrical solver** — GraphSolver (`graph_solver.hpp/cpp`, namespace `elec_graph`). Graph-based topology: nodes (sources, buses, junctions, loads) + connections (wire, switch, contactor, relay, circuit_breaker). V2 YAML format. BFS power propagation with multi-pass relay coil updates. CB trips only via failure effects or IOS commands. YAML validation on load (duplicate IDs, dangling from/to/coil_bus, orphaned loads, CAS target checks). Old `ElectricalSolver` (`elec_sys`) deleted. EC135 electrical plugin stubbed until v2 YAML written.
 - **Failure effects** — property overrides on graph elements via generic actions (force, jam, disable, multiply). `failures.yaml` references graph element IDs directly (e.g. `alternator`, `cb_fuel_pump`). No per-failure C++ code — adding new electrical failures is pure YAML authoring. Solver applies active overrides before computing each element.
-- **CIGI bridge** — raw CIGI 3.3 big-endian encoding (no CCL). Entity Control + IG Control at 60 Hz. HOT terrain requests rate-gated by AGL (50Hz <10m, 10Hz 10-100m, off above). Repositioning handshake: IG Mode Reset for one frame on `reposition_active` rising edge, clear HAT tracker, then Operate. HOT responses gated by SOF IG Status=Operate.
+- **CIGI bridge** — CCL-based via shared `cigi_session` library (Boeing CCL 3.3.3). Host node uses `HostSession::BeginFrame/Append*/FinishFrame`; plugin uses `IgSession` with processor interfaces for each inbound packet class. Byte order: CCL-native (sender writes host order + Byte Swap Magic 0x8000 in IG Control/SOF; recipient auto-swaps). Entity Control + IG Control at 60 Hz. HOT terrain requests rate-gated by AGL (50Hz <10m, 10Hz 10-100m, off above), sent on a second IG-Control-led datagram (CIGI 3.3 §4.1.1 requires IG Control as first packet). Repositioning handshake: IG Mode Reset for one frame on `reposition_active` rising edge, clear HAT tracker, then Operate. HOT responses gated by SOF IG Status=Operate. Runway Friction rides standard Component Control (Class=GlobalTerrainSurface, ID=100) instead of the retired 0xCB user-defined packet.
 - **IOS Backend** (FastAPI + rclpy) bridges ROS2 ↔ WebSocket. Run manually, not in launch file. Electrical config parser supports both v1 (flat sections) and v2 (nodes + connections) YAML formats.
 - **IOS Frontend** (React + Zustand + WebSocket). URL routing: `/` = IOS app, `/cockpit/c172/*` = virtual cockpit panels. Dynamic A/C page and StatusStrip radio row driven by aircraft `navigation.yaml`. Interactive CBs on IOS (3-state: IN/POPPED/LOCKED with FORCE checkbox) and virtual cockpit (horizontal CB row). CBs flow through same `switch_ids[]` command path as switches.
 
@@ -35,7 +35,7 @@
 - `flight_model_adapter` — JSBSim adapter, CapabilityMode, writeback (electrical, fuel, atmosphere), terrain refinement via RunIC, pending_ic_ gating. JSBSimAtmosphereWriteback: wind NED (fps), delta-T (Rankine), pressure (psf) into JSBSim property tree each step.
 - Runway friction: two-factor model (surface type × contamination), YAML-configurable, JSBSim writeback, XP visual wetness
 - `weather_solver` — replaces atmosphere_node. ISA model + OAT/QNH deviation + altitude-interpolated wind layers (angular shortest-arc) + MIL-F-8785C Dryden turbulence (deterministic seed, altitude-scaled) + Oseguera-Bowles microburst wind field. 19 unit tests (5 Dryden, 7 solver, 7 microburst). Standalone libraries + ROS2 node wrapper.
-- `cigi_bridge` — CIGI 3.3 host, multi-point HOT (3 gear points), IG Mode repositioning handshake, SOF parsing. Weather encoder: Atmosphere Control (0x0A) + Weather Control (0x0C) packets for cloud/wind/precip layers, dirty-flag gated.
+- `cigi_bridge` — CIGI 3.3 host via `cigi_session` (CCL-wrapped). Multi-point HOT (3 gear points), IG Mode repositioning handshake, SOF + HAT/HOT Extended Response parsing. Atmosphere / Weather Control (global + regional) / Environmental Region Control / Component Control emission, dirty-flag gated. 15 round-trip tests cover every emitter and processor.
 - `navaid_sim` — VOR/ILS/NDB/DME/Marker, terrain LOS, A424 + XP12 parsers. Airport/runway DB (SearchAirports/GetRunways/GetTerrainElevation services)
 - `sim_electrical` — pluginlib. C172 on **GraphSolver** (elec_graph): graph topology (39 nodes, 38 connections), unified connection model, failure effects (force/jam/disable/multiply), YAML validation, interactive CBs on IOS + cockpit, 15 standalone unit tests. EC135 stubbed (no-op, awaiting v2 YAML). Old ElectricalSolver deleted. Capability gating + writeback.
 - `sim_engine_systems` — pluginlib → IEnginesModel. C172 piston + EC135 turboshaft plugins. EngineCommands published (zeros for current aircraft, pre-wired for turboprop/FADEC).
@@ -46,7 +46,7 @@
 - `sim_air_data` — pluginlib → IAirDataModel. Pitot-static with icing, turbulence noise, alternate static. C172 plugin.
 - `ios_backend` — dynamic node discovery, FDM/fuel/nav/electrical/sim state WS forwarding. Panel + avionics commands. Failure catalog + injection/clear/clear_all. Navaid search API. Electrical config parser supports v1 + v2 YAML formats.
 - `ios_frontend` — map, status strip (dynamic radio row), 9 panel tabs, action bar. Electrical switches (FORCE), ground services (tri-state), radio tuning. Failure panel with ATA grouping + navaid search. REPOSITIONING badge + button lockout. Dynamic A/C page from navigation.yaml. CB pull/reset/lock on IOS A/C page and virtual cockpit panel.
-- `xplanecigi plugin` — raw CIGI 3.3 IG plugin for X-Plane 12. Entity Control + HOT Response. IG Mode-driven terrain probing (4×0.5s stability). SOF Standby→Normal reporting. Weather decoder: parses 0x0A/0x0C packets, writes to XP region datarefs (cloud/wind/vis/temp/precip) via 1Hz flight loop.
+- `xplanecigi plugin` — CIGI 3.3 IG plugin for X-Plane 12 via `cigi_session::IgSession` (CCL cross-compiled for mingw64). Implements all 7 processor interfaces (IgCtrl, EntityCtrl, HatHotReq, Atmosphere, EnvRegion, WeatherCtrl, CompCtrl). Outbound via `BeginFrame` (SOF) + `AppendHatHotXResp`. IG Mode-driven terrain probing (4×0.5s stability). SOF Standby→Operate transitions. Weather → XP region datarefs (cloud/wind/vis/temp/precip) via 1 Hz flight loop. Runway friction decoded from Component Control (Class=8, ID=100).
 
 ### Active gap — weather injection
 RESOLVED (implemented) — weather_solver_node + JSBSimAtmosphereWriteback + CIGI weather encoder + xplanecigi weather decoder. Dryden turbulence (MIL-F-8785C) and Oseguera-Bowles microburst model operational. 24 packages, 19 solver tests.
@@ -85,7 +85,7 @@ Architecture audit complete (2026-03-25). All bugs resolved (#1–#9). Bug #8 (F
   altitude visualization, XP-inspired layout)
 
 ### Open decisions
-- [ ] CIGI library: raw encoding (current) or cigicl?
+- [x] CIGI library: raw encoding or cigicl? — **RESOLVED 2026-04-23: cigicl on both sides via `cigi_session` library**
 - [ ] micro-ROS transport: serial UART or CAN?
 - [ ] IOS auth: single-user or multi-role?
 - [ ] Scenario file format: custom YAML or standard?
@@ -3537,3 +3537,68 @@ Frontend state-machine bugs discovered during end-to-end validation of 5b-iv —
   (CGF, SAF, additional entities) now means adding one
   `Append<Packet>` method on `HostSession` and one processor
   interface — no byte-offset work.
+
+
+## 2026-04-23 — Claude Code (smoke-test follow-up)
+
+- DECIDED: Session-append library API (`HostSession::BeginFrame /
+  Append* / FinishFrame`) instead of the plan's originally specified
+  free-function `BuildXxx(buf, cap, ...)` emitters.
+- REASON: Discovered during Task 1.3 that individual CCL `Pack()`
+  methods write host byte order — not wire format — and that wire-
+  format output is only produced by `CigiOutgoingMsg`, which enforces
+  "first packet must be IG Control (host) or SOF (IG)" via
+  `CigiMissingIgControlException` / `CigiMissingStartOfFrameException`.
+  A single-packet emitter function cannot satisfy that invariant, so
+  the library was restructured around the session's native assembly
+  pattern. `HostSession` / `IgSession` each own a `CigiHostSession` /
+  `CigiIGSession` and expose `BeginFrame` to append the header packet,
+  typed `Append*` methods per payload class, and `FinishFrame` to
+  `PackageMsg` the datagram. Round-trip tests (15 cases) replace the
+  per-packet emitter tests from the plan.
+- AFFECTS:
+  - Library API under `src/core/cigi_bridge/cigi_session/` matches the
+    above pattern.
+  - Phase 2/3 task execution reordered: library built out completely
+    (Phase 1+2+3) with no host/plugin integration, then atomic
+    migration committed both sides simultaneously (commits `c6050d1`
+    + `162ab91`). `test_cigi_wire_conformance` was deleted in the
+    same migration because its BE-only contract was obsolete.
+
+- DECIDED: Static-link CCL for the host node.
+- REASON: Building CCL produced `libcigicl.so.1` at
+  `references/CIGI/cigi3.3/ccl/install/lib/` — outside any system ld
+  path, so `cigi_bridge_node` failed to start with "cannot open
+  shared object file". The CCL build also produced `libcigicl.a`;
+  linking the static archive removes the runtime .so dependency.
+- AFFECTS: `src/core/cigi_bridge/CMakeLists.txt` pushes `.a` to the
+  front of `CMAKE_FIND_LIBRARY_SUFFIXES` before `find_library`.
+
+- DECIDED: Call `CigiOutgoingMsg::FreeMsg()` at the start of each
+  `BeginFrame`, and wrap `CigiIncomingMsg::ProcessIncomingMsg()` in
+  try/catch inside every `HandleDatagram`.
+- REASON: CCL's buffer queue leaves the just-packaged buffer locked
+  at the head of the queue — the next `PackageMsg` call finds that
+  locked buffer and throws `CigiCalledOutOfSequenceException`. Without
+  `FreeMsg`, the node crashed on frame 2. Separately,
+  `ProcessIncomingMsg` throws on malformed datagrams (missing header,
+  buffer overrun, unknown version); in the X-Plane plugin those
+  exceptions escaped the UDP handler and surfaced as "Forwarding
+  exception to previous handler" in the plugin log. Wrapping both
+  sides in try/catch contains the blast radius of a single bad packet.
+- AFFECTS:
+  - `HostSession::BeginFrame` and `IgSession::BeginFrame` now call
+    `FreeMsg()` if a previous frame was packaged.
+  - `HostSession::HandleDatagram` and `IgSession::HandleDatagram` now
+    return 0 on any caught CCL exception instead of propagating.
+
+- SMOKE TEST: End-to-end run (sim + X-Plane + IOS) passed 2026-04-23.
+  HAT/HOT, visibility, clouds, and runway friction all work over the
+  new CCL-based path.
+
+- MERGED: `cigi-spec-conformance` → `main` fast-forward (`7987767`
+  → `539d285`), pushed to `origin/main`. 30 commits landed:
+  library scaffold (4), host-side emitters/processors (8), IG-side
+  session + processors (6), plugin CMake + atomic host+plugin
+  migration (3), decisions doc (1), runtime fixes (2), pre-existing
+  pre-Phase-1 spec/plan commits (6).
