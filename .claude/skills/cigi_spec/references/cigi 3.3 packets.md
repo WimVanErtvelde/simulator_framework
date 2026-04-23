@@ -669,23 +669,24 @@ transition bands.
 |-------:|-----:|---------------------------------|-----------------|---------------------------------------------|-------|
 | 0      | 1    | Packet ID                       | unsigned int8   | 10                                          | fixed |
 | 1      | 1    | Packet Size                     | unsigned int8   | 32                                          | fixed |
-| 2      | 1    | Reserved                        | —               | 0                                           |       |
-| 3      | —    | Atmospheric Model Enable (\*1)  | 1-bit           | 0 Disable / 1 Enable                        | byte 3, bit 0. Default 0. Enables FASCODE/MODTRAN/SEDRIS-style sensor-spectral models |
-| 3      | —    | Reserved                        | 7-bit           | 0                                           | byte 3, bits 7..1 |
-| 4      | 1    | Global Humidity                 | unsigned int8   | 0..100 %                                    |       |
-| 5      | 3    | (padding before float)          | —               | —                                           | aligns next double / float on 8-byte boundary — Reserved |
-| 8      | 4    | Global Air Temperature          | single float    | °C                                          |       |
-| 12     | 4    | Global Visibility Range         | single float    | metres, ≥ 0                                 |       |
-| 16     | 4    | Global Horizontal Wind Speed    | single float    | m/s, ≥ 0                                    | direction in `Global Wind Direction` |
-| 20     | 4    | Global Vertical Wind Speed      | single float    | m/s; +ve = updraft, -ve = downdraft         |       |
-| 24     | 4    | Global Wind Direction           | single float    | 0..360 deg from True North (wind FROM)      |       |
-| 28     | 4    | Global Barometric Pressure      | single float    | mb / hPa, ≥ 0                               |       |
+| 2      | —    | Atmospheric Model Enable (\*1)  | 1-bit           | 0 Disable / 1 Enable                        | byte 2, bit 0. Default 0. Enables FASCODE/MODTRAN/SEDRIS-style sensor-spectral models |
+| 2      | —    | Reserved                        | 7-bit           | 0                                           | byte 2, bits 7..1 |
+| 3      | 1    | Global Humidity                 | unsigned int8   | 0..100 %                                    |       |
+| 4      | 4    | Global Air Temperature          | single float    | °C                                          |       |
+| 8      | 4    | Global Visibility Range         | single float    | metres, ≥ 0                                 |       |
+| 12     | 4    | Global Horizontal Wind Speed    | single float    | m/s, ≥ 0                                    | direction in `Global Wind Direction` |
+| 16     | 4    | Global Vertical Wind Speed      | single float    | m/s; +ve = updraft, -ve = downdraft         |       |
+| 20     | 4    | Global Wind Direction           | single float    | 0..360 deg from True North (wind FROM)      |       |
+| 24     | 4    | Global Barometric Pressure      | single float    | mb / hPa, ≥ 0                               |       |
+| 28     | 4    | Reserved                        | —               | 0                                           | 8-byte alignment |
 
-> **Note on padding** — the ICD figure shows `Reserved | *1 | Global Humidity`
-> packed in bytes 2–3, then a Reserved word at bytes 4–7 with humidity
-> placed inside it. The exact bit-packing follows the LSB-first rule:
-> `Atmospheric Model Enable` is bit 0 of one byte, with the rest of that
-> word reserved. Verify against Figure 54 (PDF page 97) when implementing.
+**Cross-reference (verified 2026-04-23)**
+Field offsets verified against Boeing's CCL `CigiAtmosCtrlV3::Pack`
+(`source/CigiAtmosCtrl.cpp:126–138`) and Wireshark's
+`cigi3_add_atmosphere_control` dissector (`packet-cigi.c:4659–4685`).
+Both place `Atmospheric Model Enable` at byte 2 (LSB), `Humidity` at
+byte 3, and `Air Temperature` at byte 4 — not at bytes 3, 4, and 8 as
+earlier revisions of this entry claimed.
 
 ### 0x0B — Environmental Region Control
 
