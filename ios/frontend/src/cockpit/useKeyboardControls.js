@@ -11,7 +11,8 @@ export default function useKeyboardControls() {
   const state = useRef({
     aileron: 0, elevator: 0, rudder: 0,
     throttle: 0, mixture: 1.0,
-    trimElevator: 0, brakeHeld: false, parkingBrake: false,
+    trimElevator: 0, brakeHeld: false, brakeLeftHeld: false, brakeRightHeld: false,
+    parkingBrake: false,
     magnetoLeft: false, magnetoRight: false, starter: false,
   })
 
@@ -31,14 +32,23 @@ export default function useKeyboardControls() {
       keysDown.current.add(k)
       if (k === ' ') { state.current.aileron = 0; state.current.elevator = 0; state.current.rudder = 0; e.preventDefault() }
       if (k === 'b') state.current.brakeHeld = true
+      if (k === 'v') state.current.brakeLeftHeld = true
+      if (k === 'n') state.current.brakeRightHeld = true
       if (k === 'p') state.current.parkingBrake = !state.current.parkingBrake  // toggle on press
     }
     const onKeyUp = (e) => {
       const k = e.key.toLowerCase()
       keysDown.current.delete(k)
       if (k === 'b') state.current.brakeHeld = false
+      if (k === 'v') state.current.brakeLeftHeld = false
+      if (k === 'n') state.current.brakeRightHeld = false
     }
-    const onBlur = () => { keysDown.current.clear(); state.current.brakeHeld = false }
+    const onBlur = () => {
+      keysDown.current.clear()
+      state.current.brakeHeld = false
+      state.current.brakeLeftHeld = false
+      state.current.brakeRightHeld = false
+    }
 
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
@@ -73,8 +83,8 @@ export default function useKeyboardControls() {
         data: {
           aileron_norm: s.aileron, elevator_norm: s.elevator, rudder_norm: s.rudder,
           collective_norm: 0, trim_aileron_norm: 0, trim_elevator_norm: s.trimElevator, trim_rudder_norm: 0,
-          brake_left_norm: s.brakeHeld ? 1.0 : 0.0,
-          brake_right_norm: s.brakeHeld ? 1.0 : 0.0,
+          brake_left_norm:  (s.brakeHeld || s.brakeLeftHeld)  ? 1.0 : 0.0,
+          brake_right_norm: (s.brakeHeld || s.brakeRightHeld) ? 1.0 : 0.0,
           parking_brake: s.parkingBrake,
         }
       }))
