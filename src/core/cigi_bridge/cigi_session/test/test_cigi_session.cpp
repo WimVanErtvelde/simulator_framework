@@ -26,6 +26,7 @@
 #include "cigi_session/processors/IHatHotRespProcessor.h"
 #include "cigi_session/processors/IIgCtrlProcessor.h"
 #include "cigi_session/processors/IHatHotReqProcessor.h"
+#include "cigi_session/processors/IEntityCtrlProcessor.h"
 #include <cstring>
 #include <optional>
 
@@ -378,6 +379,36 @@ TEST(CigiSession, IgSessionHatHotReqDispatchesToTarget) {
     EXPECT_TRUE(spy.got->geodetic);
     EXPECT_DOUBLE_EQ(spy.got->lat_deg, 47.0);
     EXPECT_DOUBLE_EQ(spy.got->lon_deg, 9.0);
+}
+
+namespace {
+struct EntitySpy : cigi_session::IEntityCtrlProcessor {
+    std::optional<cigi_session::EntityCtrlFields> got;
+    void OnEntityCtrl(const cigi_session::EntityCtrlFields & f) override { got = f; }
+};
+}
+
+TEST(CigiSession, IgSessionEntityCtrlDispatchesToTarget) {
+    cigi_session::HostSession host;
+    host.BeginFrame(1, 1, 0.0);
+    host.AppendEntityCtrl(/*id=*/0, 3.0f, -2.0f, 180.0f, 50.0, 4.0, 100.0);
+    auto [buf, len] = host.FinishFrame();
+
+    cigi_session::IgSession ig;
+    EntitySpy spy;
+    ig.SetEntityCtrlProcessor(&spy);
+    ig.HandleDatagram(buf, len);
+
+    ASSERT_TRUE(spy.got.has_value());
+    EXPECT_EQ(spy.got->entity_id, 0);
+    EXPECT_EQ(spy.got->entity_state, 1);
+    EXPECT_FALSE(spy.got->attached);
+    EXPECT_FLOAT_EQ(spy.got->roll_deg, 3.0f);
+    EXPECT_FLOAT_EQ(spy.got->pitch_deg, -2.0f);
+    EXPECT_FLOAT_EQ(spy.got->yaw_deg, 180.0f);
+    EXPECT_DOUBLE_EQ(spy.got->lat_deg, 50.0);
+    EXPECT_DOUBLE_EQ(spy.got->lon_deg, 4.0);
+    EXPECT_DOUBLE_EQ(spy.got->alt_m, 100.0);
 }
 
 TEST(CigiSession, IgSessionHatHotXRespRoundTrip) {

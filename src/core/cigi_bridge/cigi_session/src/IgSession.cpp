@@ -1,6 +1,7 @@
 #include "cigi_session/IgSession.h"
 #include "cigi_session/processors/IIgCtrlProcessor.h"
 #include "cigi_session/processors/IHatHotReqProcessor.h"
+#include "cigi_session/processors/IEntityCtrlProcessor.h"
 
 #include <CigiIGSession.h>
 #include <CigiOutgoingMsg.h>
@@ -12,6 +13,9 @@
 #include <CigiBaseHatHotResp.h>
 #include <CigiHatHotReqV3_2.h>
 #include <CigiBaseHatHotReq.h>
+#include <CigiEntityCtrlV3_3.h>
+#include <CigiBaseEntityCtrl.h>
+#include <CigiAnimationTable.h>
 #include <CigiIGCtrlV3_3.h>
 #include <CigiBaseIGCtrl.h>
 
@@ -63,6 +67,30 @@ private:
     IHatHotReqProcessor * const * target_;
 };
 
+class EntityCtrlAdapter : public CigiBaseEventProcessor {
+public:
+    explicit EntityCtrlAdapter(IEntityCtrlProcessor * const * t) : target_(t) {}
+    void OnPacketReceived(CigiBasePacket * pkt) override {
+        if (!*target_ || !pkt) return;
+        auto * e = dynamic_cast<CigiEntityCtrlV3_3 *>(pkt);
+        if (!e) return;
+        EntityCtrlFields f;
+        f.entity_id    = e->GetEntityID();
+        f.entity_state = static_cast<std::uint8_t>(e->GetEntityState());
+        f.attached     = (e->GetAttachState() == CigiBaseEntityCtrl::Attach);
+        f.alpha        = e->GetAlpha();
+        f.roll_deg     = e->GetRoll();
+        f.pitch_deg    = e->GetPitch();
+        f.yaw_deg      = e->GetYaw();
+        f.lat_deg      = e->GetLat();
+        f.lon_deg      = e->GetLon();
+        f.alt_m        = e->GetAlt();
+        (*target_)->OnEntityCtrl(f);
+    }
+private:
+    IEntityCtrlProcessor * const * target_;
+};
+
 }  // namespace
 
 struct IgSession::Impl {
@@ -76,18 +104,26 @@ struct IgSession::Impl {
     ICompCtrlProcessor *    comp    = nullptr;
     IgCtrlAdapter           ig_ctrl_adapter;
     HatHotReqAdapter        hat_hot_adapter;
+    EntityCtrlAdapter       entity_adapter;
+    CigiAnimationTable      animation_table;
     Cigi_uint8 *            last_msg = nullptr;
     int                     last_len = 0;
 
     Impl()
       : ig_ctrl_adapter(&ig_ctrl),
-        hat_hot_adapter(&hat_hot) {
+        hat_hot_adapter(&hat_hot),
+        entity_adapter(&entity) {
         ccl.SetCigiVersion(3, 3);
         ccl.GetIncomingMsgMgr().SetReaderCigiVersion(3, 3);
+        // Entity Control's Unpack takes a CigiAnimationTable spec pointer;
+        // store ours and register it via RegisterUserPacket... but for this
+        // read-only case the default table works.
         ccl.GetIncomingMsgMgr().RegisterEventProcessor(
             CIGI_IG_CTRL_PACKET_ID_V3, &ig_ctrl_adapter);
         ccl.GetIncomingMsgMgr().RegisterEventProcessor(
             CIGI_HAT_HOT_REQ_PACKET_ID_V3, &hat_hot_adapter);
+        ccl.GetIncomingMsgMgr().RegisterEventProcessor(
+            CIGI_ENTITY_CTRL_PACKET_ID_V3, &entity_adapter);
     }
 };
 
