@@ -3484,3 +3484,56 @@ Frontend state-machine bugs discovered during end-to-end validation of 5b-iv —
   Optional future work: retire the X-Plane plugin's hand-written
   CIGI encode/decode in favour of a CCL-based one under
   `~/CIGI_IG_Interface`.
+
+## 2026-04-23 — Claude Code
+
+- DECIDED: Retire all hand-rolled CIGI 3.3 wire handling on both
+  sides. Host node and X-Plane plugin now route every outbound and
+  inbound packet through a shared `cigi_session` library that wraps
+  Boeing's CCL 3.3.3 (`CigiHostSession`/`CigiIGSession`).
+- REASON: The prior hand-rolled encoders wrote big-endian unconditionally
+  and the plugin parsed big-endian unconditionally — compatible by
+  accident, but non-standard (CIGI actually specifies "sender-native
+  byte order plus Byte Swap Magic 0x8000 for the recipient to detect
+  swap"). Every attempt to extend the catalog (weather, runway friction,
+  future CGF/SAF/entities) required re-auditing byte offsets against the
+  ICD. Using CCL on both sides makes the wire format spec-conformant by
+  construction and adding new packet types stops requiring byte-level
+  audits.
+- AFFECTS:
+  - Created `src/core/cigi_bridge/cigi_session/` — HostSession,
+    IgSession, 7 processor interfaces, 15 gtest round-trip cases.
+    Linked from both the ROS2 host node (Linux native) and the plugin
+    (mingw64 cross-compile) via CCL built at
+    `references/CIGI/cigi3.3/ccl/install/` + `install-mingw/`.
+  - Rewrote `src/core/cigi_bridge/src/cigi_host_node.cpp`:
+    `send_cigi_frame` assembles one datagram via
+    `session_.BeginFrame/Append*/FinishFrame`; `recv_pending` calls
+    `session_.HandleDatagram` and dispatches SOF / HAT-HOT-response
+    through `ISofProcessor` / `IHatHotRespProcessor`.
+  - Rewrote `x-plane_plugins/xplanecigi/XPluginMain.cpp`: plugin
+    implements all 7 IgSession processor interfaces; `send_sof` and
+    HAT/HOT Extended Response emission go through `IgSession::BeginFrame` /
+    `AppendHatHotXResp`.
+  - Deleted `weather_encoder.cpp`/`.hpp`, `test_weather_encoder.cpp`,
+    `test_weather_sync.cpp`, `test_cigi_wire_conformance.cpp`, and
+    the plugin's `read_be*`/`write_be*` helpers. CCL round-trip tests
+    under `cigi_session/test/` replace the conformance suite.
+  - Runway Friction previously used a non-standard `0xCB` packet;
+    now rides standard Component Control (Class=GlobalTerrainSurface,
+    ID=100, State=friction 0..15). Every CCL-based IG can dispatch it
+    without a custom handler.
+  - HOT Requests now ride a second session-owned datagram (required
+    because CIGI 3.3 §4.1.1 mandates IG Control as the first packet of
+    every Host→IG datagram; previous code sent HOT requests as
+    headerless datagrams).
+  - CCL is now a hard dependency of `sim_cigi_bridge`
+    (`FATAL_ERROR` if not found).
+
+- FOLLOW-UP: Run the end-to-end smoke test with X-Plane connected to
+  confirm runway friction, HAT/HOT, visibility, clouds, and
+  repositioning all still work after the big-bang migration; then
+  merge `cigi-spec-conformance` → `main`. Adding new packet types
+  (CGF, SAF, additional entities) now means adding one
+  `Append<Packet>` method on `HostSession` and one processor
+  interface — no byte-offset work.
