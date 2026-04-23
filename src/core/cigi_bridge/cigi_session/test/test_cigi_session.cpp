@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "cigi_session/HostSession.h"
+#include "cigi_session/IgSession.h"
 #include "cigi_session/ComponentIds.h"
 
 #include <CigiAtmosCtrl.h>
@@ -10,6 +11,9 @@
 #include <CigiBaseEnvRgnCtrl.h>
 #include <CigiCompCtrlV3_3.h>
 #include <CigiBaseCompCtrl.h>
+#include <CigiSOFV3_2.h>
+#include <CigiBaseSOF.h>
+#include <CigiHatHotXRespV3_2.h>
 #include <CigiIGCtrlV3_3.h>
 #include <CigiBaseIGCtrl.h>
 #include <CigiEntityCtrlV3_3.h>
@@ -302,6 +306,43 @@ TEST(CigiSession, ComponentControlRunwayFriction) {
     EXPECT_EQ(cigi.GetCompClassV3(), CigiBaseCompCtrl::GlobalTerrainSurfaceV3);
     EXPECT_EQ(cigi.GetCompID(), 100);
     EXPECT_EQ(cigi.GetCompState(), 7);
+}
+
+TEST(CigiSession, IgSessionBeginFrameEmitsSof) {
+    cigi_session::IgSession ig;
+    ig.BeginFrame(/*ig_mode=*/1, /*db_id=*/0, /*ig_frame=*/99,
+                  /*last_host_frame=*/100);
+    auto [buf, len] = ig.FinishFrame();
+    ASSERT_NE(buf, nullptr);
+    ASSERT_GE(len, 24u);
+
+    CigiSOFV3_2 pkt;
+    ASSERT_GE(pkt.Unpack(const_cast<std::uint8_t *>(buf), kSameEndianSwap, nullptr), 0);
+    EXPECT_EQ(pkt.GetIGMode(), CigiBaseSOF::Operate);
+    EXPECT_EQ(pkt.GetFrameCntr(), 99u);
+    EXPECT_EQ(pkt.GetLastRcvdHostFrame(), 100u);
+}
+
+TEST(CigiSession, IgSessionHatHotXRespRoundTrip) {
+    cigi_session::IgSession ig;
+    ig.BeginFrame(1, 0, 1, 0);
+    ig.AppendHatHotXResp(/*id=*/77, /*valid=*/true,
+                          /*hat=*/40.5, /*hot=*/41.7,
+                          /*material=*/0xDEu,
+                          /*az=*/10.0f, /*el=*/80.0f);
+    auto [buf, len] = ig.FinishFrame();
+    ASSERT_NE(buf, nullptr);
+    ASSERT_GE(len, 24u + 40u);
+
+    CigiHatHotXRespV3_2 resp;
+    ASSERT_GE(resp.Unpack(const_cast<std::uint8_t *>(buf + 24), kSameEndianSwap, nullptr), 0);
+    EXPECT_EQ(resp.GetHatHotID(), 77);
+    EXPECT_TRUE(resp.GetValid());
+    EXPECT_DOUBLE_EQ(resp.GetHat(), 40.5);
+    EXPECT_DOUBLE_EQ(resp.GetHot(), 41.7);
+    EXPECT_EQ(resp.GetMaterial(), 0xDEu);
+    EXPECT_FLOAT_EQ(resp.GetNormAz(), 10.0f);
+    EXPECT_FLOAT_EQ(resp.GetNormEl(), 80.0f);
 }
 
 TEST(CigiSession, HatHotRequestRoundTrip) {
