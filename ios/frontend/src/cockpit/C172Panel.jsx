@@ -244,6 +244,10 @@ export default function C172Panel() {
               activeColor="#ff3b30" />
             <BrakeIndicator label="BRAKE" shortcut="B" active={kb.brakeHeld}
               activeColor="#f59e0b" />
+            <BrakeIndicator label="L BRK" shortcut="V" active={kb.brakeHeld || kb.brakeLeftHeld}
+              activeColor="#f59e0b" />
+            <BrakeIndicator label="R BRK" shortcut="N" active={kb.brakeHeld || kb.brakeRightHeld}
+              activeColor="#f59e0b" />
           </div>
         </Section>
 
