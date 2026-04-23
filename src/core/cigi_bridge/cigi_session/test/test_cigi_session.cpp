@@ -24,6 +24,7 @@
 
 #include "cigi_session/processors/ISofProcessor.h"
 #include "cigi_session/processors/IHatHotRespProcessor.h"
+#include "cigi_session/processors/IIgCtrlProcessor.h"
 #include <cstring>
 #include <optional>
 
@@ -321,6 +322,35 @@ TEST(CigiSession, IgSessionBeginFrameEmitsSof) {
     EXPECT_EQ(pkt.GetIGMode(), CigiBaseSOF::Operate);
     EXPECT_EQ(pkt.GetFrameCntr(), 99u);
     EXPECT_EQ(pkt.GetLastRcvdHostFrame(), 100u);
+}
+
+namespace {
+struct IgCtrlSpy : cigi_session::IIgCtrlProcessor {
+    std::optional<cigi_session::IgCtrlFields> got;
+    void OnIgCtrl(const cigi_session::IgCtrlFields & f) override { got = f; }
+};
+}
+
+// IG session receiving a Host→IG datagram: a HostSession emits a frame
+// whose IG Control header carries known fields; an IgSession parses it and
+// hands the result to the spy processor. The loopback proves CCL's byte
+// swap detection works end-to-end (host-emitted native bytes, IG reads via
+// Byte Swap Magic).
+TEST(CigiSession, IgSessionIgCtrlDispatchesToTarget) {
+    cigi_session::HostSession host;
+    host.BeginFrame(/*frame=*/123, /*mode=*/1, /*ts=*/0.5);
+    auto [buf, len] = host.FinishFrame();
+    ASSERT_NE(buf, nullptr);
+
+    cigi_session::IgSession ig;
+    IgCtrlSpy spy;
+    ig.SetIgCtrlProcessor(&spy);
+    ig.HandleDatagram(buf, len);
+
+    ASSERT_TRUE(spy.got.has_value());
+    EXPECT_EQ(spy.got->ig_mode, 1);
+    EXPECT_EQ(spy.got->host_frame_number, 123u);
+    EXPECT_EQ(spy.got->timestamp_10us_ticks, 500000u);  // 0.5 s × 1e6 µs
 }
 
 TEST(CigiSession, IgSessionHatHotXRespRoundTrip) {

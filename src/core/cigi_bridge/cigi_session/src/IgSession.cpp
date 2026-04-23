@@ -1,14 +1,44 @@
 #include "cigi_session/IgSession.h"
+#include "cigi_session/processors/IIgCtrlProcessor.h"
 
 #include <CigiIGSession.h>
 #include <CigiOutgoingMsg.h>
 #include <CigiIncomingMsg.h>
+#include <CigiBaseEventProcessor.h>
 #include <CigiSOFV3_2.h>
 #include <CigiBaseSOF.h>
 #include <CigiHatHotXRespV3_2.h>
 #include <CigiBaseHatHotResp.h>
+#include <CigiIGCtrlV3_3.h>
+#include <CigiBaseIGCtrl.h>
 
 namespace cigi_session {
+
+namespace {
+
+class IgCtrlAdapter : public CigiBaseEventProcessor {
+public:
+    explicit IgCtrlAdapter(IIgCtrlProcessor * const * t) : target_(t) {}
+    void OnPacketReceived(CigiBasePacket * pkt) override {
+        if (!*target_ || !pkt) return;
+        auto * ig = dynamic_cast<CigiBaseIGCtrl *>(pkt);
+        if (!ig) return;
+        IgCtrlFields f;
+        f.ig_mode              = static_cast<std::uint8_t>(ig->GetIGMode());
+        f.database_id          = ig->GetDatabaseID();
+        f.host_frame_number    = ig->GetFrameCntr();
+        // TimeStamp accessor is V3-specific; guard dynamic_cast.
+        f.timestamp_10us_ticks = 0;
+        if (auto * ig33 = dynamic_cast<CigiIGCtrlV3_3 *>(ig)) {
+            f.timestamp_10us_ticks = ig33->GetTimeStamp();
+        }
+        (*target_)->OnIgCtrl(f);
+    }
+private:
+    IIgCtrlProcessor * const * target_;
+};
+
+}  // namespace
 
 struct IgSession::Impl {
     CigiIGSession ccl;
@@ -19,12 +49,15 @@ struct IgSession::Impl {
     IEnvRegionProcessor *   env     = nullptr;
     IWeatherCtrlProcessor * wx      = nullptr;
     ICompCtrlProcessor *    comp    = nullptr;
+    IgCtrlAdapter           ig_ctrl_adapter;
     Cigi_uint8 *            last_msg = nullptr;
     int                     last_len = 0;
 
-    Impl() {
+    Impl() : ig_ctrl_adapter(&ig_ctrl) {
         ccl.SetCigiVersion(3, 3);
         ccl.GetIncomingMsgMgr().SetReaderCigiVersion(3, 3);
+        ccl.GetIncomingMsgMgr().RegisterEventProcessor(
+            CIGI_IG_CTRL_PACKET_ID_V3, &ig_ctrl_adapter);
     }
 };
 
