@@ -51,7 +51,7 @@ find_path(CCL_INCLUDE_DIR
     /usr/include/cigicl
     /usr/local/include/cigicl
     /usr/local/include
-    /tmp/cigi-install/include/cigicl
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../references/CIGI/cigi3.3/ccl/install/include/cigicl
     ${CCL_ROOT}/include/cigicl
     ${CMAKE_CURRENT_SOURCE_DIR}/cigi_ig_interface
   NO_DEFAULT_PATH
@@ -65,7 +65,7 @@ if(CCL_INCLUDE_DIR)
     PATHS
       /usr/lib
       /usr/local/lib
-      /tmp/cigi-install/lib
+      ${CMAKE_CURRENT_SOURCE_DIR}/../../../references/CIGI/cigi3.3/ccl/install/lib
       ${CCL_ROOT}/lib
   )
 endif()
@@ -144,8 +144,9 @@ if(BUILD_TESTING)
   else()
     message(STATUS
       "CCL not found — test_cigi_wire_conformance skipped.\n"
-      "  Install CCL (e.g. cmake --install /tmp/cigi-ccl/build --prefix /tmp/cigi-install)\n"
-      "  to enable wire-format round-trip checks.")
+      "  Install CCL by unzipping and building references/CIGI/cigi3.3/ccl/:\n"
+      "    cd references/CIGI/cigi3.3/ccl && cmake -B build && cmake --build build\n"
+      "    cmake --install build --prefix \"$(pwd)/install\"")
   endif()
 endif()
 
