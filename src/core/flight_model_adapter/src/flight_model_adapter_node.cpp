@@ -390,8 +390,10 @@ public:
           adapter_->set_property("fcs/rudder-cmd-norm",        fc.rudder_norm);
           // Ground steering: drive the nose-gear bogey from the same rudder
           // input. JSBSim scales by each bogey's <max_steer>, so aircraft
-          // without steering (max_steer=0) are unaffected.
-          adapter_->set_property("fcs/steer-cmd-norm",         fc.rudder_norm);
+          // without steering (max_steer=0) are unaffected. Sign is inverted
+          // so framework convention (rudder_norm > 0 = right pedal) turns
+          // the nose wheel to the right in JSBSim body frame.
+          adapter_->set_property("fcs/steer-cmd-norm",        -fc.rudder_norm);
           adapter_->set_property("fcs/aileron-trim-cmd-norm",  fc.trim_aileron_norm);
           adapter_->set_property("fcs/pitch-trim-cmd-norm",    fc.trim_elevator_norm);
           adapter_->set_property("fcs/yaw-trim-cmd-norm",      fc.trim_rudder_norm);

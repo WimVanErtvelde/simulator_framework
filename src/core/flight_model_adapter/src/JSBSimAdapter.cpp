@@ -645,10 +645,14 @@ sim_msgs::msg::FlightModelState JSBSimAdapter::get_state() const
     std::string wow_prop = "gear/unit[" + std::to_string(i) + "]/WOW";
     state.gear_on_ground[i] = exec_->GetPropertyValue(wow_prop) > 0.5;
     state.gear_status[i] = 1;  // always down
-    // Per-bogey actual steering angle (degrees). Non-steering bogeys
-    // (main/tail) naturally read 0 since max_steer=0 in their XML.
-    std::string steer_prop = "gear/unit[" + std::to_string(i) + "]/steering-angle-deg";
-    state.wheel_angle_deg[i] = static_cast<float>(exec_->GetPropertyValue(steer_prop));
+    // Per-bogey actual steering angle (degrees). JSBSim registers
+    // fcs/steer-pos-deg[i] for non-castered steerable gear (FGLGear.cpp
+    // §844); castered gear uses gear/unit[i]/steering-angle-deg; fixed
+    // gear has neither. Fixed bogeys therefore read 0, correctly.
+    // Sign is inverted to match the sign flip on fcs/steer-cmd-norm, so
+    // rudder_norm > 0 yields wheel_angle_deg > 0 end-to-end.
+    std::string steer_prop = "fcs/steer-pos-deg[" + std::to_string(i) + "]";
+    state.wheel_angle_deg[i] = -static_cast<float>(exec_->GetPropertyValue(steer_prop));
   }
   for (int i = 3; i < 5; ++i) {
     state.gear_position_norm[i] = 0.0f;
