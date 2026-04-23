@@ -51,18 +51,31 @@ find_path(CCL_INCLUDE_DIR
     /usr/include/cigicl
     /usr/local/include/cigicl
     /usr/local/include
+    /tmp/cigi-install/include/cigicl
+    ${CCL_ROOT}/include/cigicl
     ${CMAKE_CURRENT_SOURCE_DIR}/cigi_ig_interface
   NO_DEFAULT_PATH
 )
 
 if(CCL_INCLUDE_DIR)
-  message(STATUS "CCL found at ${CCL_INCLUDE_DIR} — building vendored CIGI_IG_Interface")
+  message(STATUS "CCL found at ${CCL_INCLUDE_DIR}")
 
   find_library(CCL_LIBRARY
     NAMES cigicl CigiCCL
-    PATHS /usr/lib /usr/local/lib
+    PATHS
+      /usr/lib
+      /usr/local/lib
+      /tmp/cigi-install/lib
+      ${CCL_ROOT}/lib
   )
+endif()
 
+# Vendored CIGI_IG_Interface — only build when explicitly requested. Contains
+# example IG-side code with vendored TinyXML that has pre-existing missing
+# <cstring> includes; off by default so the package builds cleanly with CCL
+# present. Set -DBUILD_CIGI_IG_INTERFACE=ON to enable.
+option(BUILD_CIGI_IG_INTERFACE "Build the vendored CIGI_IG_Interface example library" OFF)
+if(CCL_INCLUDE_DIR AND BUILD_CIGI_IG_INTERFACE)
   add_library(cigi_ig_interface STATIC
     cigi_ig_interface/CIGI_IG_Interface.cpp
     cigi_ig_interface/DefaultProc.cpp
@@ -87,10 +100,13 @@ if(CCL_INCLUDE_DIR)
   if(CCL_LIBRARY)
     target_link_libraries(cigi_ig_interface PUBLIC ${CCL_LIBRARY})
   endif()
-else()
+endif()
+
+if(NOT CCL_INCLUDE_DIR)
   message(STATUS
-    "CCL (CigiIGSession.h) not found — vendored CIGI_IG_Interface skipped.\n"
-    "  Install CCL headers to /usr/local/include and re-run cmake to enable.\n"
+    "CCL (CigiIGSession.h) not found — vendored CIGI_IG_Interface and"
+    " test_cigi_wire_conformance skipped.\n"
+    "  Install CCL headers to /usr/local/include (or set -DCCL_ROOT=) to enable.\n"
     "  The cigi_bridge_node still builds and sends raw CIGI 3.3 packets without CCL.")
 endif()
 
@@ -111,6 +127,26 @@ if(BUILD_TESTING)
   )
   target_include_directories(test_weather_sync PRIVATE include)
   ament_target_dependencies(test_weather_sync rclcpp sim_msgs)
+
+  # ── CIGI wire-format conformance test (round-trips against Boeing CCL) ───
+  # Built only when CCL is available. Without CCL this skill-bundled test is
+  # skipped — the host node still builds and runs.
+  if(CCL_INCLUDE_DIR AND CCL_LIBRARY)
+    message(STATUS "CCL found — building test_cigi_wire_conformance")
+    ament_add_gtest(test_cigi_wire_conformance
+      test/test_cigi_wire_conformance.cpp
+    )
+    target_include_directories(test_cigi_wire_conformance PRIVATE
+      include
+      ${CCL_INCLUDE_DIR}
+    )
+    target_link_libraries(test_cigi_wire_conformance ${CCL_LIBRARY})
+  else()
+    message(STATUS
+      "CCL not found — test_cigi_wire_conformance skipped.\n"
+      "  Install CCL (e.g. cmake --install /tmp/cigi-ccl/build --prefix /tmp/cigi-install)\n"
+      "  to enable wire-format round-trip checks.")
+  endif()
 endif()
 
 ament_package()
