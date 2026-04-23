@@ -27,6 +27,10 @@
 #include "cigi_session/processors/IIgCtrlProcessor.h"
 #include "cigi_session/processors/IHatHotReqProcessor.h"
 #include "cigi_session/processors/IEntityCtrlProcessor.h"
+#include "cigi_session/processors/IAtmosphereProcessor.h"
+#include "cigi_session/processors/IEnvRegionProcessor.h"
+#include "cigi_session/processors/IWeatherCtrlProcessor.h"
+#include "cigi_session/processors/ICompCtrlProcessor.h"
 #include <cstring>
 #include <optional>
 
@@ -409,6 +413,81 @@ TEST(CigiSession, IgSessionEntityCtrlDispatchesToTarget) {
     EXPECT_DOUBLE_EQ(spy.got->lat_deg, 50.0);
     EXPECT_DOUBLE_EQ(spy.got->lon_deg, 4.0);
     EXPECT_DOUBLE_EQ(spy.got->alt_m, 100.0);
+}
+
+namespace {
+struct AtmosSpy : cigi_session::IAtmosphereProcessor {
+    std::optional<cigi_session::AtmosphereRxFields> got;
+    void OnAtmosphere(const cigi_session::AtmosphereRxFields & f) override { got = f; }
+};
+struct EnvSpy : cigi_session::IEnvRegionProcessor {
+    std::optional<cigi_session::EnvRegionFields> got;
+    void OnEnvRegion(const cigi_session::EnvRegionFields & f) override { got = f; }
+};
+struct WxSpy : cigi_session::IWeatherCtrlProcessor {
+    std::optional<cigi_session::WeatherCtrlRxFields> got;
+    void OnWeatherCtrl(const cigi_session::WeatherCtrlRxFields & f) override { got = f; }
+};
+struct CompSpy : cigi_session::ICompCtrlProcessor {
+    std::optional<cigi_session::CompCtrlFields> got;
+    void OnCompCtrl(const cigi_session::CompCtrlFields & f) override { got = f; }
+};
+}
+
+TEST(CigiSession, IgSessionWeatherPacketsDispatchToTarget) {
+    cigi_session::HostSession host;
+    host.BeginFrame(1, 1, 0.0);
+    cigi_session::HostSession::AtmosphereFields af{75, 15.0f, 10000.0f, 5.0f, 0.0f, 270.0f, 1013.25f};
+    host.AppendAtmosphereControl(af);
+    host.AppendEnvRegionControl(5,
+        cigi_session::HostSession::RegionState::Active, /*merge=*/true,
+        50.0, 4.0, 1000.0f, 500.0f, 50.0f, 45.0f, 20.0f);
+    cigi_session::HostSession::WeatherCtrlFields wf{};
+    wf.region_id = 5; wf.layer_id = 2; wf.humidity_pct = 70;
+    wf.weather_enable = true; wf.cloud_type = 7; /* Cumulus */
+    wf.scope = cigi_session::HostSession::WeatherScope::Regional;
+    wf.severity = 2; wf.air_temp_c = 20.0f; wf.visibility_m = 5000.0f;
+    wf.coverage_pct = 0.5f; wf.base_elevation_m = 2000.0f;
+    wf.thickness_m = 300.0f; wf.transition_band_m = 50.0f;
+    wf.horiz_wind_ms = 10.0f; wf.wind_direction_deg = 90.0f;
+    wf.barometric_pressure_hpa = 1005.0f;
+    host.AppendWeatherControl(wf);
+    host.AppendComponentControl(
+        cigi_session::HostSession::ComponentClass::GlobalTerrainSurface,
+        0,
+        static_cast<std::uint16_t>(cigi_session::GlobalTerrainComponentId::RunwayFriction),
+        /*state=*/7);
+    auto [buf, len] = host.FinishFrame();
+
+    cigi_session::IgSession ig;
+    AtmosSpy atmos; EnvSpy env; WxSpy wx; CompSpy comp;
+    ig.SetAtmosphereProcessor(&atmos);
+    ig.SetEnvRegionProcessor(&env);
+    ig.SetWeatherCtrlProcessor(&wx);
+    ig.SetCompCtrlProcessor(&comp);
+    ig.HandleDatagram(buf, len);
+
+    ASSERT_TRUE(atmos.got.has_value());
+    EXPECT_EQ(atmos.got->humidity_pct, 75);
+    EXPECT_FLOAT_EQ(atmos.got->visibility_m, 10000.0f);
+
+    ASSERT_TRUE(env.got.has_value());
+    EXPECT_EQ(env.got->region_id, 5);
+    EXPECT_EQ(env.got->region_state, 1);
+    EXPECT_TRUE(env.got->merge_weather);
+    EXPECT_DOUBLE_EQ(env.got->lat_deg, 50.0);
+
+    ASSERT_TRUE(wx.got.has_value());
+    EXPECT_EQ(wx.got->region_id, 5);
+    EXPECT_EQ(wx.got->layer_id, 2);
+    EXPECT_TRUE(wx.got->weather_enable);
+    EXPECT_EQ(wx.got->cloud_type, 7);  // Cumulus
+    EXPECT_EQ(wx.got->scope, 1);       // Regional
+
+    ASSERT_TRUE(comp.got.has_value());
+    EXPECT_EQ(comp.got->component_class, 8);  // GlobalTerrainSurface
+    EXPECT_EQ(comp.got->component_id, 100);
+    EXPECT_EQ(comp.got->component_state, 7);
 }
 
 TEST(CigiSession, IgSessionHatHotXRespRoundTrip) {

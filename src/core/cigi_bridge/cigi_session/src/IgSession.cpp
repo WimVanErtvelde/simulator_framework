@@ -2,6 +2,10 @@
 #include "cigi_session/processors/IIgCtrlProcessor.h"
 #include "cigi_session/processors/IHatHotReqProcessor.h"
 #include "cigi_session/processors/IEntityCtrlProcessor.h"
+#include "cigi_session/processors/IAtmosphereProcessor.h"
+#include "cigi_session/processors/IEnvRegionProcessor.h"
+#include "cigi_session/processors/IWeatherCtrlProcessor.h"
+#include "cigi_session/processors/ICompCtrlProcessor.h"
 
 #include <CigiIGSession.h>
 #include <CigiOutgoingMsg.h>
@@ -16,6 +20,14 @@
 #include <CigiEntityCtrlV3_3.h>
 #include <CigiBaseEntityCtrl.h>
 #include <CigiAnimationTable.h>
+#include <CigiAtmosCtrl.h>
+#include <CigiBaseEnvCtrl.h>
+#include <CigiEnvRgnCtrlV3.h>
+#include <CigiBaseEnvRgnCtrl.h>
+#include <CigiWeatherCtrlV3.h>
+#include <CigiBaseWeatherCtrl.h>
+#include <CigiCompCtrlV3_3.h>
+#include <CigiBaseCompCtrl.h>
 #include <CigiIGCtrlV3_3.h>
 #include <CigiBaseIGCtrl.h>
 
@@ -91,6 +103,107 @@ private:
     IEntityCtrlProcessor * const * target_;
 };
 
+class AtmosphereAdapter : public CigiBaseEventProcessor {
+public:
+    explicit AtmosphereAdapter(IAtmosphereProcessor * const * t) : target_(t) {}
+    void OnPacketReceived(CigiBasePacket * pkt) override {
+        if (!*target_ || !pkt) return;
+        auto * a = dynamic_cast<CigiAtmosCtrlV3 *>(pkt);
+        if (!a) return;
+        AtmosphereRxFields f;
+        f.atmos_enable            = a->GetAtmosEn();
+        f.humidity_pct            = a->GetHumidity();
+        f.temperature_c           = a->GetAirTemp();
+        f.visibility_m            = a->GetVisibility();
+        f.horiz_wind_ms           = a->GetHorizWindSp();
+        f.vert_wind_ms            = a->GetVertWindSp();
+        f.wind_direction_deg      = a->GetWindDir();
+        f.barometric_pressure_hpa = a->GetBaroPress();
+        (*target_)->OnAtmosphere(f);
+    }
+private:
+    IAtmosphereProcessor * const * target_;
+};
+
+class EnvRegionAdapter : public CigiBaseEventProcessor {
+public:
+    explicit EnvRegionAdapter(IEnvRegionProcessor * const * t) : target_(t) {}
+    void OnPacketReceived(CigiBasePacket * pkt) override {
+        if (!*target_ || !pkt) return;
+        auto * r = dynamic_cast<CigiEnvRgnCtrlV3 *>(pkt);
+        if (!r) return;
+        EnvRegionFields f;
+        f.region_id              = r->GetRegionID();
+        f.region_state           = static_cast<std::uint8_t>(r->GetRgnState());
+        f.merge_weather          = (r->GetWeatherProp() == CigiBaseEnvRgnCtrl::Merge);
+        f.lat_deg                = r->GetLat();
+        f.lon_deg                = r->GetLon();
+        f.size_x_m               = r->GetXSize();
+        f.size_y_m               = r->GetYSize();
+        f.corner_radius_m        = r->GetCornerRadius();
+        f.rotation_deg           = r->GetRotation();
+        f.transition_perimeter_m = r->GetTransition();
+        (*target_)->OnEnvRegion(f);
+    }
+private:
+    IEnvRegionProcessor * const * target_;
+};
+
+class WeatherCtrlAdapter : public CigiBaseEventProcessor {
+public:
+    explicit WeatherCtrlAdapter(IWeatherCtrlProcessor * const * t) : target_(t) {}
+    void OnPacketReceived(CigiBasePacket * pkt) override {
+        if (!*target_ || !pkt) return;
+        auto * w = dynamic_cast<CigiWeatherCtrlV3 *>(pkt);
+        if (!w) return;
+        WeatherCtrlRxFields f;
+        f.region_id                 = w->GetRegionID();
+        f.layer_id                  = w->GetLayerID();
+        f.humidity_pct              = w->GetHumidity();
+        f.weather_enable            = w->GetWeatherEn();
+        f.scud_enable               = w->GetScudEn();
+        f.cloud_type                = static_cast<std::uint8_t>(w->GetCloudType());
+        f.scope                     = static_cast<std::uint8_t>(w->GetScope());
+        f.severity                  = w->GetSeverity();
+        f.air_temp_c                = w->GetAirTemp();
+        f.visibility_m              = w->GetVisibilityRng();
+        f.scud_frequency_pct        = w->GetScudFreq();
+        f.coverage_pct              = w->GetCoverage();
+        f.base_elevation_m          = w->GetBaseElev();
+        f.thickness_m               = w->GetThickness();
+        f.transition_band_m         = w->GetTransition();
+        f.horiz_wind_ms             = w->GetHorizWindSp();
+        f.vert_wind_ms              = w->GetVertWindSp();
+        f.wind_direction_deg        = w->GetWindDir();
+        f.barometric_pressure_hpa   = w->GetBaroPress();
+        f.aerosol_concentration_gm3 = w->GetAerosol();
+        (*target_)->OnWeatherCtrl(f);
+    }
+private:
+    IWeatherCtrlProcessor * const * target_;
+};
+
+class CompCtrlAdapter : public CigiBaseEventProcessor {
+public:
+    explicit CompCtrlAdapter(ICompCtrlProcessor * const * t) : target_(t) {}
+    void OnPacketReceived(CigiBasePacket * pkt) override {
+        if (!*target_ || !pkt) return;
+        auto * c = dynamic_cast<CigiCompCtrlV3_3 *>(pkt);
+        if (!c) return;
+        CompCtrlFields f{};
+        f.component_class = static_cast<std::uint8_t>(c->GetCompClassV3());
+        f.instance_id     = c->GetInstanceID();
+        f.component_id    = c->GetCompID();
+        f.component_state = c->GetCompState();
+        for (int i = 0; i < 6; ++i) {
+            f.data[i] = c->GetLongCompData(i);
+        }
+        (*target_)->OnCompCtrl(f);
+    }
+private:
+    ICompCtrlProcessor * const * target_;
+};
+
 }  // namespace
 
 struct IgSession::Impl {
@@ -105,6 +218,10 @@ struct IgSession::Impl {
     IgCtrlAdapter           ig_ctrl_adapter;
     HatHotReqAdapter        hat_hot_adapter;
     EntityCtrlAdapter       entity_adapter;
+    AtmosphereAdapter       atmos_adapter;
+    EnvRegionAdapter        env_adapter;
+    WeatherCtrlAdapter      wx_adapter;
+    CompCtrlAdapter         comp_adapter;
     CigiAnimationTable      animation_table;
     Cigi_uint8 *            last_msg = nullptr;
     int                     last_len = 0;
@@ -112,18 +229,21 @@ struct IgSession::Impl {
     Impl()
       : ig_ctrl_adapter(&ig_ctrl),
         hat_hot_adapter(&hat_hot),
-        entity_adapter(&entity) {
+        entity_adapter(&entity),
+        atmos_adapter(&atmos),
+        env_adapter(&env),
+        wx_adapter(&wx),
+        comp_adapter(&comp) {
         ccl.SetCigiVersion(3, 3);
         ccl.GetIncomingMsgMgr().SetReaderCigiVersion(3, 3);
-        // Entity Control's Unpack takes a CigiAnimationTable spec pointer;
-        // store ours and register it via RegisterUserPacket... but for this
-        // read-only case the default table works.
-        ccl.GetIncomingMsgMgr().RegisterEventProcessor(
-            CIGI_IG_CTRL_PACKET_ID_V3, &ig_ctrl_adapter);
-        ccl.GetIncomingMsgMgr().RegisterEventProcessor(
-            CIGI_HAT_HOT_REQ_PACKET_ID_V3, &hat_hot_adapter);
-        ccl.GetIncomingMsgMgr().RegisterEventProcessor(
-            CIGI_ENTITY_CTRL_PACKET_ID_V3, &entity_adapter);
+        auto & in = ccl.GetIncomingMsgMgr();
+        in.RegisterEventProcessor(CIGI_IG_CTRL_PACKET_ID_V3,      &ig_ctrl_adapter);
+        in.RegisterEventProcessor(CIGI_HAT_HOT_REQ_PACKET_ID_V3,  &hat_hot_adapter);
+        in.RegisterEventProcessor(CIGI_ENTITY_CTRL_PACKET_ID_V3,  &entity_adapter);
+        in.RegisterEventProcessor(CIGI_ATMOS_CTRL_PACKET_ID_V3,   &atmos_adapter);
+        in.RegisterEventProcessor(CIGI_ENV_RGN_CTRL_PACKET_ID_V3, &env_adapter);
+        in.RegisterEventProcessor(CIGI_WEATHER_CTRL_PACKET_ID_V3, &wx_adapter);
+        in.RegisterEventProcessor(CIGI_COMP_CTRL_PACKET_ID_V3,    &comp_adapter);
     }
 };
 
