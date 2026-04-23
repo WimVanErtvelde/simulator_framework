@@ -872,13 +872,224 @@ coefficients on landing rollout).
 | 7      | 1    | Coverage                        | unsigned int8   | 0..100 %                                                    |       |
 
 ### 0x10 — View Control
-*TODO*
+
+- **Direction**: Host → IG
+- **Opcode**: 16 / 0x10
+- **Total size**: 32 bytes
+- **ICD section**: §4.1.16 (PDF page 129)
+- **Mandatory each frame**: no
+
+Attaches a view (or view group) to an entity and positions/orients its eyepoint
+relative to the entity's reference point. Order of operation: translate along
+entity X/Y/Z, then rotate yaw → pitch → roll about the eyepoint.
+
+**Fields**
+
+| Offset | Size | Name              | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID         | unsigned int8   | 16                                              | fixed |
+| 1      | 1    | Packet Size       | unsigned int8   | 32                                              | fixed |
+| 2      | 2    | View ID           | unsigned int16  | individual view; ignored if Group ID ≠ 0        |       |
+| 4      | 1    | Group ID          | unsigned int8   | 0 None, 1..255 view group                       | non-zero → packet applies to group, View ID ignored |
+| 5      | —    | X Offset Enable (\*1)  | 1-bit       | 0 Disable / 1 Enable                            | byte 5, bit 0 |
+| 5      | —    | Y Offset Enable (\*2)  | 1-bit       | 0/1                                             | byte 5, bit 1 |
+| 5      | —    | Z Offset Enable (\*3)  | 1-bit       | 0/1                                             | byte 5, bit 2 |
+| 5      | —    | Roll Enable (\*4)      | 1-bit       | 0/1                                             | byte 5, bit 3 |
+| 5      | —    | Pitch Enable (\*5)     | 1-bit       | 0/1                                             | byte 5, bit 4 |
+| 5      | —    | Yaw Enable (\*6)       | 1-bit       | 0/1                                             | byte 5, bit 5 |
+| 5      | —    | Reserved (\*7)         | 2-bit       | 0                                               | byte 5, bits 7..6 |
+| 6      | 2    | Entity ID         | unsigned int16  | parent entity to which view/group is attached   |       |
+| 8      | 4    | X Offset          | single float    | metres along entity +X                          | datum: entity reference point |
+| 12     | 4    | Y Offset          | single float    | metres along entity +Y                          |       |
+| 16     | 4    | Z Offset          | single float    | metres along entity +Z                          |       |
+| 20     | 4    | Roll              | single float    | -180.0 .. +180.0 deg                            | applied after yaw + pitch |
+| 24     | 4    | Pitch             | single float    | -90.0 .. +90.0 deg                              | applied after yaw |
+| 28     | 4    | Yaw               | single float    | 0.0 .. 360.0 deg                                | rotation about Z |
+
+**Usage notes**
+- Per-DoF Enable flags gate which fields the IG honours; cleared values leave
+  the view at its current value. Lets the Host stream only the deltas.
+- A sensor (§4.1.17) cannot be assigned to a view group — only to a single view.
 
 ### 0x11 — Sensor Control
-*TODO*
+
+- **Direction**: Host → IG
+- **Opcode**: 17 / 0x11
+- **Total size**: 24 bytes
+- **ICD section**: §4.1.17 (PDF page 134)
+- **Mandatory each frame**: no
+
+Controls a sensor (FLIR / Maverick seeker / generic camera) attached to a
+view. Drives on/off, polarity (white-hot vs black-hot), gain/level, AC coupling,
+noise, track mode, and selects which response packet (Sensor Response or
+Sensor Extended Response) the IG returns each frame.
+
+**Fields**
+
+| Offset | Size | Name                          | Type            | Range / Values                                              | Notes |
+|-------:|-----:|-------------------------------|-----------------|-------------------------------------------------------------|-------|
+| 0      | 1    | Packet ID                     | unsigned int8   | 17                                                          | fixed |
+| 1      | 1    | Packet Size                   | unsigned int8   | 24                                                          | fixed |
+| 2      | 2    | View ID                       | unsigned int16  | view to which sensor is assigned (cannot be a view group)   |       |
+| 4      | 1    | Sensor ID                     | unsigned int8   | host-assigned sensor index                                  |       |
+| 5      | —    | Sensor On/Off (\*1)           | 1-bit           | 0 Off / 1 On                                                | byte 5, bit 0 |
+| 5      | —    | Polarity (\*2)                | 1-bit           | 0 White hot / 1 Black hot                                   | byte 5, bit 1 |
+| 5      | —    | Line-by-Line Dropout Enable (\*3) | 1-bit       | 0 Disable / 1 Enable                                        | byte 5, bit 2 |
+| 5      | —    | Automatic Gain (\*4)          | 1-bit           | 0 Disable / 1 Enable                                        | byte 5, bit 3 |
+| 5      | —    | Track White/Black (\*5)       | 1-bit           | 0 White / 1 Black                                           | byte 5, bit 4 |
+| 5      | —    | Track Mode                    | unsigned 3-bit  | 0 Off, 1 Force Correlate, 2 Scene, 3 Target, 4 Ship, 5..7 Defined by IG | byte 5, bits 7..5 |
+| 6      | —    | Response Type (\*6)           | unsigned 1-bit  | 0 Normal (gate position) / 1 Extended (gate + target)       | byte 6, bit 0 |
+| 6      | —    | Reserved                      | 7-bit           | 0                                                           | byte 6, bits 7..1 |
+| 7      | 1    | Reserved                      | —               | 0                                                           |       |
+| 8      | 4    | Gain                          | single float    | 0.0 .. 1.0                                                  | contrast |
+| 12     | 4    | Level                         | single float    | 0.0 .. 1.0                                                  | brightness |
+| 16     | 4    | AC Coupling                   | single float    | µs, ≥ 0.0                                                   | decay constant |
+| 20     | 4    | Noise                         | single float    | 0.0 .. 1.0                                                  | detector noise |
+
+**Usage notes**
+- IG returns Sensor Response (§4.2.6) or Sensor Extended Response (§4.2.7)
+  every frame while `Sensor On/Off` = On AND `Track Mode` ≠ Off. Switch by
+  flipping `Response Type`.
+- Track Mode = Force Correlate is the canonical Maverick lock; Scene is
+  typical FLIR; Target is contrast lock; Ship adjusts to waterline.
 
 ### 0x12 — Motion Tracker Control
-*TODO*
+
+- **Direction**: Host → IG
+- **Opcode**: 18 / 0x12
+- **Total size**: 8 bytes
+- **ICD section**: §4.1.18 (PDF page 141)
+- **Mandatory each frame**: no
+
+Initialises and updates a tracked input device (head tracker, eye tracker, wand,
+trackball) connected to the IG. Per-DoF enables gate which axes the IG honours;
+boresight resets the tracker centre.
+
+**Fields**
+
+| Offset | Size | Name                          | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-------------------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID                     | unsigned int8   | 18                                              | fixed |
+| 1      | 1    | Packet Size                   | unsigned int8   | 8                                               | fixed |
+| 2      | 2    | View/View Group ID            | unsigned int16  | view or group to which tracker is attached      | meaning per View/View Group Select |
+| 4      | 1    | Tracker ID                    | unsigned int8   | host-assigned tracker index                     |       |
+| 5      | —    | Tracker Enable (\*1)          | 1-bit           | 0 Disable / 1 Enable                            | byte 5, bit 0 |
+| 5      | —    | Boresight Enable (\*2)        | 1-bit           | 0 Disable / 1 Enable                            | byte 5, bit 1. Hold high to keep recentring; clear to release |
+| 5      | —    | X Enable (\*3)                | 1-bit           | 0/1                                             | byte 5, bit 2 |
+| 5      | —    | Y Enable (\*4)                | 1-bit           | 0/1                                             | byte 5, bit 3 |
+| 5      | —    | Z Enable (\*5)                | 1-bit           | 0/1                                             | byte 5, bit 4 |
+| 5      | —    | Roll Enable (\*6)             | 1-bit           | 0/1                                             | byte 5, bit 5 |
+| 5      | —    | Pitch Enable (\*7)            | 1-bit           | 0/1                                             | byte 5, bit 6 |
+| 5      | —    | Yaw Enable (\*8)              | 1-bit           | 0/1                                             | byte 5, bit 7 |
+| 6      | —    | View/View Group Select (\*9)  | 1-bit           | 0 View / 1 View Group                           | byte 6, bit 0 |
+| 6      | —    | Reserved                      | 7-bit           | 0                                               | byte 6, bits 7..1 |
+| 7      | 1    | Reserved                      | —               | 0                                               |       |
+
+**Usage notes**
+- The Host can request the instantaneous tracker pose by sending a Position
+  Request (§4.1.27) with `Object Class` = Motion Tracker (4).
+- If a head tracker is wired through the *Host* rather than the IG, the Host
+  should consume its data and translate it into View Control packets — this
+  packet is only for trackers physically attached to the IG.
+
+### 0x13 — Earth Reference Model Definition
+
+- **Direction**: Host → IG
+- **Opcode**: 19 / 0x13
+- **Total size**: 24 bytes
+- **ICD section**: §4.1.19 (PDF page 145)
+- **Mandatory each frame**: no
+
+Overrides the default WGS 84 reference ellipsoid with a host-supplied
+equatorial radius and flattening. Used for non-Earth simulations or
+non-standard geodetic models.
+
+**Fields**
+
+| Offset | Size | Name              | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID         | unsigned int8   | 19                                              | fixed |
+| 1      | 1    | Packet Size       | unsigned int8   | 24                                              | fixed |
+| 2      | 2    | Reserved          | —               | 0                                               |       |
+| 4      | —    | Custom ERM Enable (\*1) | 1-bit     | 0 Disable (use WGS 84) / 1 Enable               | byte 4, bit 0. Default 0 |
+| 4      | —    | Reserved          | 7-bit           | 0                                               | byte 4, bits 7..1 |
+| 5      | 3    | Reserved          | —               | 0                                               | 8-byte alignment |
+| 8      | 8    | Equatorial Radius | double float    | metres; default 6 378 137.0                     | semi-major axis |
+| 16     | 8    | Flattening        | double float    | metres; default 1/298.257223563                 | f = (a − b) / a; 0.0 → spherical Earth |
+
+**Usage notes**
+- IG echoes the active ERM via the `Earth Reference Model` field of SOF
+  (0 = WGS 84, 1 = Host-Defined). If the IG cannot honour the custom ERM it
+  reverts to WGS 84 silently.
+
+### 0x14 — Trajectory Definition
+
+- **Direction**: Host → IG
+- **Opcode**: 20 / 0x14
+- **Total size**: 24 bytes
+- **ICD section**: §4.1.20 (PDF page 147)
+- **Mandatory each frame**: no
+
+Specifies an acceleration vector + retardation + terminal velocity for an
+IG-driven entity (tracer round, particulate debris). Combined with Rate Control
+(§4.1.8) for ballistic motion under gravity and drag.
+
+**Fields**
+
+| Offset | Size | Name              | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID         | unsigned int8   | 20                                              | fixed |
+| 1      | 1    | Packet Size       | unsigned int8   | 24                                              | fixed |
+| 2      | 2    | Entity ID         | unsigned int16  | target entity                                   |       |
+| 4      | 4    | Acceleration X    | single float    | m/s² along NED X                                | datum: ellipsoid-tangential NED |
+| 8      | 4    | Acceleration Y    | single float    | m/s² along NED Y                                |       |
+| 12     | 4    | Acceleration Z    | single float    | m/s² along NED Z                                | gravity goes here (+9.81 down) |
+| 16     | 4    | Retardation Rate  | single float    | m/s², ≥ 0                                       | applied opposite to instantaneous velocity (drag) |
+| 20     | 4    | Terminal Velocity | single float    | m/s, ≥ 0                                        | speed clamp |
+
+### 0x15 — View Definition
+
+- **Direction**: Host → IG
+- **Opcode**: 21 / 0x15
+- **Total size**: 32 bytes
+- **ICD section**: §4.1.21 (PDF page 149)
+- **Mandatory each frame**: no
+
+Overrides the IG's default view configuration: projection (perspective vs
+ortho), frustum half-angles, near/far clipping, mirror mode, pixel replication,
+view group assignment.
+
+**Fields**
+
+| Offset | Size | Name                          | Type            | Range / Values                                  | Notes |
+|-------:|-----:|-------------------------------|-----------------|-------------------------------------------------|-------|
+| 0      | 1    | Packet ID                     | unsigned int8   | 21                                              | fixed |
+| 1      | 1    | Packet Size                   | unsigned int8   | 32                                              | fixed |
+| 2      | 2    | View ID                       | unsigned int16  | view to apply                                   |       |
+| 4      | 1    | Group ID                      | unsigned int8   | 0 None, 1..255 group                            |       |
+| 5      | —    | Near Enable (\*1)             | 1-bit           | 0 Disable / 1 Enable                            | byte 5, bit 0 |
+| 5      | —    | Far Enable (\*2)              | 1-bit           | 0/1                                             | byte 5, bit 1 |
+| 5      | —    | Left Enable (\*3)             | 1-bit           | 0/1                                             | byte 5, bit 2 |
+| 5      | —    | Right Enable (\*4)            | 1-bit           | 0/1                                             | byte 5, bit 3 |
+| 5      | —    | Top Enable (\*5)              | 1-bit           | 0/1                                             | byte 5, bit 4 |
+| 5      | —    | Bottom Enable (\*6)           | 1-bit           | 0/1                                             | byte 5, bit 5 |
+| 5      | —    | Mirror Mode (\*7)             | unsigned 2-bit  | 0 None, 1 Horizontal, 2 Vertical, 3 Both        | byte 5, bits 7..6 |
+| 6      | —    | Pixel Replication Mode (\*8)  | unsigned 3-bit  | 0 None, 1 1×2, 2 2×1, 3 2×2, 4..7 Defined by IG | byte 6, bits 2..0 |
+| 6      | —    | Projection Type (\*9)         | 1-bit           | 0 Perspective / 1 Orthographic Parallel         | byte 6, bit 3 |
+| 6      | —    | Reorder (\*10)                | 1-bit           | 0 No Reorder / 1 Bring to Top                   | byte 6, bit 4 |
+| 6      | —    | View Type                     | unsigned 3-bit  | 0..7 IG-defined                                 | byte 6, bits 7..5 |
+| 7      | 1    | Reserved                      | —               | 0                                               |       |
+| 8      | 4    | Near                          | single float    | metres, > 0 to < Far                            | clipping plane |
+| 12     | 4    | Far                           | single float    | metres, > Near                                  |       |
+| 16     | 4    | Left                          | single float    | deg, > -90.0 to < Right                         | frustum half-angle |
+| 20     | 4    | Right                         | single float    | deg, > Left to < 90.0                           |       |
+| 24     | 4    | Top                           | single float    | deg, > Bottom to < 90.0                         |       |
+| 28     | 4    | Bottom                        | single float    | deg, > -90.0 to < Top                           |       |
+
+**Usage notes**
+- If multiple View Definition packets in the same frame target the same view,
+  the *last* one in the message wins.
+- View Type lets the host switch a channel between e.g. out-the-window and IR.
 
 ### 0x13 — Earth Reference Model Definition
 *TODO*
