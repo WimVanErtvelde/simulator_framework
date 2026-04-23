@@ -1,5 +1,6 @@
 #include "cigi_session/IgSession.h"
 #include "cigi_session/processors/IIgCtrlProcessor.h"
+#include "cigi_session/processors/IHatHotReqProcessor.h"
 
 #include <CigiIGSession.h>
 #include <CigiOutgoingMsg.h>
@@ -9,6 +10,8 @@
 #include <CigiBaseSOF.h>
 #include <CigiHatHotXRespV3_2.h>
 #include <CigiBaseHatHotResp.h>
+#include <CigiHatHotReqV3_2.h>
+#include <CigiBaseHatHotReq.h>
 #include <CigiIGCtrlV3_3.h>
 #include <CigiBaseIGCtrl.h>
 
@@ -38,6 +41,28 @@ private:
     IIgCtrlProcessor * const * target_;
 };
 
+class HatHotReqAdapter : public CigiBaseEventProcessor {
+public:
+    explicit HatHotReqAdapter(IHatHotReqProcessor * const * t) : target_(t) {}
+    void OnPacketReceived(CigiBasePacket * pkt) override {
+        if (!*target_ || !pkt) return;
+        auto * req = dynamic_cast<CigiHatHotReqV3_2 *>(pkt);
+        if (!req) return;
+        HatHotReqFields f;
+        f.request_id    = req->GetHatHotID();
+        f.extended      = (req->GetReqType() == CigiBaseHatHotReq::Extended);
+        f.geodetic      = (req->GetSrcCoordSys() == CigiBaseHatHotReq::Geodetic);
+        f.update_period = req->GetUpdatePeriod();
+        f.entity_id     = req->GetEntityID();
+        f.lat_deg       = req->GetLat();
+        f.lon_deg       = req->GetLon();
+        f.alt_m         = req->GetAlt();
+        (*target_)->OnHatHotReq(f);
+    }
+private:
+    IHatHotReqProcessor * const * target_;
+};
+
 }  // namespace
 
 struct IgSession::Impl {
@@ -50,14 +75,19 @@ struct IgSession::Impl {
     IWeatherCtrlProcessor * wx      = nullptr;
     ICompCtrlProcessor *    comp    = nullptr;
     IgCtrlAdapter           ig_ctrl_adapter;
+    HatHotReqAdapter        hat_hot_adapter;
     Cigi_uint8 *            last_msg = nullptr;
     int                     last_len = 0;
 
-    Impl() : ig_ctrl_adapter(&ig_ctrl) {
+    Impl()
+      : ig_ctrl_adapter(&ig_ctrl),
+        hat_hot_adapter(&hat_hot) {
         ccl.SetCigiVersion(3, 3);
         ccl.GetIncomingMsgMgr().SetReaderCigiVersion(3, 3);
         ccl.GetIncomingMsgMgr().RegisterEventProcessor(
             CIGI_IG_CTRL_PACKET_ID_V3, &ig_ctrl_adapter);
+        ccl.GetIncomingMsgMgr().RegisterEventProcessor(
+            CIGI_HAT_HOT_REQ_PACKET_ID_V3, &hat_hot_adapter);
     }
 };
 

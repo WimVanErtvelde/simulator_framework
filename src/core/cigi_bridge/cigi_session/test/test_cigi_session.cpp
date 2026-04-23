@@ -25,6 +25,7 @@
 #include "cigi_session/processors/ISofProcessor.h"
 #include "cigi_session/processors/IHatHotRespProcessor.h"
 #include "cigi_session/processors/IIgCtrlProcessor.h"
+#include "cigi_session/processors/IHatHotReqProcessor.h"
 #include <cstring>
 #include <optional>
 
@@ -351,6 +352,32 @@ TEST(CigiSession, IgSessionIgCtrlDispatchesToTarget) {
     EXPECT_EQ(spy.got->ig_mode, 1);
     EXPECT_EQ(spy.got->host_frame_number, 123u);
     EXPECT_EQ(spy.got->timestamp_10us_ticks, 500000u);  // 0.5 s × 1e6 µs
+}
+
+namespace {
+struct HatHotReqSpy : cigi_session::IHatHotReqProcessor {
+    std::optional<cigi_session::HatHotReqFields> got;
+    void OnHatHotReq(const cigi_session::HatHotReqFields & f) override { got = f; }
+};
+}
+
+TEST(CigiSession, IgSessionHatHotReqDispatchesToTarget) {
+    cigi_session::HostSession host;
+    host.BeginFrame(1, 1, 0.0);
+    host.AppendHatHotRequest(/*id=*/55, /*lat=*/47.0, /*lon=*/9.0);
+    auto [buf, len] = host.FinishFrame();
+
+    cigi_session::IgSession ig;
+    HatHotReqSpy spy;
+    ig.SetHatHotReqProcessor(&spy);
+    ig.HandleDatagram(buf, len);
+
+    ASSERT_TRUE(spy.got.has_value());
+    EXPECT_EQ(spy.got->request_id, 55);
+    EXPECT_TRUE(spy.got->extended);
+    EXPECT_TRUE(spy.got->geodetic);
+    EXPECT_DOUBLE_EQ(spy.got->lat_deg, 47.0);
+    EXPECT_DOUBLE_EQ(spy.got->lon_deg, 9.0);
 }
 
 TEST(CigiSession, IgSessionHatHotXRespRoundTrip) {
