@@ -2014,7 +2014,8 @@ sends one packet per active condition.
 | 1      | 1    | Packet Size           | unsigned int8   | 8                                               | fixed |
 | 2      | 1    | Request ID            | unsigned int8   | echo of request                                 |       |
 | 3      | 1    | Reserved              | —               | 0                                               |       |
-| 4      | 4    | Surface Condition ID  | unsigned int32  | 0..65535 (IG-defined; 0 = Dry)                  |       |
+| 4      | 2    | Surface Condition ID  | unsigned int16  | 0..65535 (IG-defined; 0 = Dry); matches §4.1.15 Control packet | |
+| 6      | 2    | Reserved              | —               | 0                                                | 8-byte alignment |
 
 ### 0x71 — Collision Detection Segment Notification
 
