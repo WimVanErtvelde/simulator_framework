@@ -198,22 +198,19 @@ These are deviations or quirks specific to `simulator_framework`'s
 current CIGI integration. They do **not** describe the standard — they
 warn about places where standard 3.3 and our wire reality differ.
 
-1. **Non-standard IG→Host packet IDs in `cigi_host_node.cpp`.** As of
-   commit `880c490`, `src/core/cigi_bridge/src/cigi_host_node.cpp`
-   parses incoming SOF as packet ID `0x01` (lines 643–656) and HAT/HOT
-   Response as packet ID `0x02` (lines 570–642). The accompanying
-   comments label these as "Standard CIGI 3.3", but standard SOF is
-   `0x65` and HAT/HOT Response is `0x66`.
-
-   Possible explanations:
-   - the X-Plane CIGI plugin (`x-plane_plugins/xplanecigi/`) emits
-     non-standard IDs that the host node is matched against, or
-   - the host node was written against a misread of the spec.
-
-   When integrating a third-party IG (any IG that uses the CCL or any
-   conformant CIGI 3.3 stack), the host node will need to accept the
-   standard `0x65` / `0x66` IDs as well. Verify against the actual
-   wire traffic before assuming either set.
+1. **`cigi_host_node.cpp` accepts standard CIGI 3.3 inbound IDs.** As
+   of commit `a95b0b0a`,
+   `src/core/cigi_bridge/include/cigi_bridge/cigi_host_node.hpp:51–52`
+   defines `CIGI_PKT_SOF = 0x65` (101) and
+   `CIGI_PKT_HAT_HOT_EXT_RESPONSE = 0x67` (103); the receive path
+   dispatches on those constants at `cigi_host_node.cpp:599` and
+   `:633`. Earlier revisions (≤ commit `880c490`) parsed SOF as
+   `0x01` and HAT/HOT Response as `0x02` to match the X-Plane CIGI
+   plugin's non-standard wire IDs. When integrating a different IG
+   (especially any CCL-based or otherwise conformant CIGI 3.3 stack),
+   verify on the wire that the standard IDs are being emitted; the
+   X-Plane plugin under `x-plane_plugins/xplanecigi/` may still send
+   the legacy `0x01`/`0x02` if not rebuilt.
 
 2. **Raw encoder, no CCL on the host side.** `cigi_host_node.cpp` writes
    IG Control, Entity Control, HAT/HOT Request and weather packets
