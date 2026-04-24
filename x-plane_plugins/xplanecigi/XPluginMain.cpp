@@ -325,21 +325,15 @@ enum class PatchZone : uint8_t { Outside = 0, Transition = 1, Inside = 2 };
 static std::map<uint16_t, PatchZone> g_patch_last_zone;
 
 // Set by patch mutations / global weather mutations. Cleared when the blend
-// runs. "Dirty" does not guarantee the blend will actually fire — the 2s
-// rate limit may defer it — but it guarantees the blend will run on the next
-// permitted tick.
-static bool   g_blend_dirty       = true;   // true on startup so first tick runs the blend
-static double g_last_blend_time   = -1e9;   // wall time
-static double g_last_blend_lat    = 0.0;
-static double g_last_blend_lon    = 0.0;
+// runs. With the flight loop running every frame, any tick after a dirty
+// signal will re-blend; no deferral logic is needed.
+static bool g_blend_dirty = true;   // true on startup so first tick runs the blend
 
-// Rate limits. The blend cap prevents thrashing during fast transitions; the
-// regen debounce is only to coalesce multiple cloud-layer mutations into one
-// regen fire when the gate flips (e.g. instant of ground contact).
-static constexpr double BLEND_MIN_INTERVAL_S       = 2.0;
+// Regen debounce only — coalesces multiple cloud-layer mutations into one
+// regen fire when the gate flips (e.g. instant of ground contact). Blend
+// itself has no rate limit; it runs at the flight-loop cadence (every
+// frame) and lets X-Plane's native framerate govern smoothness.
 static constexpr double REGEN_DEBOUNCE_S           = 2.0;
-static constexpr double BLEND_SMOOTH_RECOMPUTE_S   = 5.0;
-static constexpr double BLEND_SMOOTH_MIN_MOVE_M    = 100.0;
 
 static double g_last_regen_time = -1e9;
 
@@ -1102,6 +1096,19 @@ static bool any_patch_active_at_ownship()
     return false;
 }
 
+// True if at least one patch currently has partial influence (0 < w < 1) —
+// i.e. ownship is mid-transition and the blend weight is actively changing
+// with position. Used to enable per-frame blend recomputes so vis/cloud
+// changes interpolate smoothly instead of stepping every 5 s.
+static bool any_patch_in_transition_at_ownship()
+{
+    for (const auto & kv : g_pending_patches) {
+        const float w = patch_influence(kv.second, g_ownship_lat, g_ownship_lon).weight;
+        if (w > 0.0f && w < 1.0f) return true;
+    }
+    return false;
+}
+
 // Pick the patch (and its weight) with the largest influence at ownship.
 // Returns nullptr if no patch is active. Deterministic on overlap because
 // std::map iterates in sorted region_id order — equal-weight ties resolve to
@@ -1154,9 +1161,6 @@ static PendingWeather blend_weather_at_ownship()
     const PendingPatch * patch = dominant_patch_at_ownship(w);
     if (patch == nullptr || w <= 0.0f) {
         // Outside all patches — global state is the answer.
-        g_last_blend_lat  = g_ownship_lat;
-        g_last_blend_lon  = g_ownship_lon;
-        g_last_blend_time = XPLMGetElapsedTime();
         return eff;
     }
 
@@ -1235,9 +1239,6 @@ static PendingWeather blend_weather_at_ownship()
         if (changed) eff.cloud_changed = true;
     }
 
-    g_last_blend_lat  = g_ownship_lat;
-    g_last_blend_lon  = g_ownship_lon;
-    g_last_blend_time = XPLMGetElapsedTime();
     return eff;
 }
 
@@ -1295,26 +1296,20 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     PendingWeather effective = pending_wx;
 
     if (g_plugin_weather_mode == PluginWeatherMode::BlendAtOwnship) {
-        const double now = XPLMGetElapsedTime();
-
         bool trigger = g_blend_dirty;
-        if (!trigger && ownship_crossed_zone_boundary()) trigger = true;
-        if (!trigger && (now - g_last_blend_time) > BLEND_SMOOTH_RECOMPUTE_S) {
-            const double dmoved = approx_distance_m(
-                g_last_blend_lat, g_last_blend_lon,
-                g_ownship_lat,    g_ownship_lon);
-            if (dmoved > BLEND_SMOOTH_MIN_MOVE_M && any_patch_active_at_ownship()) {
-                trigger = true;
-            }
-        }
+        if (!trigger && ownship_crossed_zone_boundary())    trigger = true;
+        // Continuous recompute while ownship is mid-transition — drives
+        // smooth vis/cloud interpolation. The flight loop now runs every
+        // frame (see XPLMScheduleFlightLoop below), so "every frame we're
+        // in transition" is the interpolation rate.
+        if (!trigger && any_patch_in_transition_at_ownship()) trigger = true;
 
-        if (trigger && (now - g_last_blend_time) >= BLEND_MIN_INTERVAL_S) {
+        if (trigger) {
             effective = blend_weather_at_ownship();
             pending_wx.dirty = true;
             if (effective.cloud_changed) pending_wx.cloud_changed = true;
             g_blend_dirty = false;
         }
-        // else: g_blend_dirty stays set; next permitted tick retries.
     }
 
     // Global weather writes — gated on pending_wx.dirty (existing behavior).
@@ -1473,18 +1468,23 @@ static float WeatherFlightLoopCb(float, float, int, void *)
         // satisfies the gate.
     }
 
-    // Log once on change — values reflect what was actually written to
-    // X-Plane (effective), so the log shows blended values inside a patch
-    // instead of the global cache.
-    char dbg[256];
-    snprintf(dbg, sizeof(dbg),
-        "xplanecigi: WX applied — vis=%.0fm temp=%.1fC wind=%03.0f/%.1fms clouds=%d rain=%.0f%% rwy_fric=%u\n",
-        effective.visibility_m, effective.temperature_c,
-        pending_wx.wind_dir_deg, pending_wx.wind_speed_ms,
-        (int)(effective.cloud[0].valid + effective.cloud[1].valid + effective.cloud[2].valid),
-        effective.rain_pct * 100.0f,
-        (unsigned)pending_wx.runway_condition_idx);
-    XPLMDebugString(dbg);
+    // Log at 1 Hz max — the flight loop runs every frame now, and writes
+    // happen on every blend tick during a transition. Logging at
+    // framerate spams Log.txt; 1 Hz is plenty for diagnostics.
+    static double g_last_wx_log_t = -1e9;
+    const double now_log = XPLMGetElapsedTime();
+    if (now_log - g_last_wx_log_t >= 1.0) {
+        g_last_wx_log_t = now_log;
+        char dbg[256];
+        snprintf(dbg, sizeof(dbg),
+            "xplanecigi: WX applied — vis=%.0fm temp=%.1fC wind=%03.0f/%.1fms clouds=%d rain=%.0f%% rwy_fric=%u\n",
+            effective.visibility_m, effective.temperature_c,
+            pending_wx.wind_dir_deg, pending_wx.wind_speed_ms,
+            (int)(effective.cloud[0].valid + effective.cloud[1].valid + effective.cloud[2].valid),
+            effective.rain_pct * 100.0f,
+            (unsigned)pending_wx.runway_condition_idx);
+        XPLMDebugString(dbg);
+    }
 
     pending_wx.dirty = false;
     }  // end if (pending_wx.dirty)
@@ -1571,7 +1571,7 @@ static float WeatherFlightLoopCb(float, float, int, void *)
         }
     }
 
-    return 1.0f;
+    return -1.0f;   // reschedule every frame so blend can track XP framerate
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1750,7 +1750,7 @@ PLUGIN_API int XPluginStart(char * outName, char * outSig, char * outDesc)
     wx_fl.callbackFunc = WeatherFlightLoopCb;
     wx_fl.refcon       = nullptr;
     weather_flight_loop_id = XPLMCreateFlightLoop(&wx_fl);
-    XPLMScheduleFlightLoop(weather_flight_loop_id, 1.0f, true);
+    XPLMScheduleFlightLoop(weather_flight_loop_id, -1.0f, true);  // every frame
 
     // Override X-Plane's FDM so it doesn't overwrite our position each frame
     g_override_planepath = XPLMFindDataRef("sim/operation/override/override_planepath");
