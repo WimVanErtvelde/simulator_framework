@@ -1286,10 +1286,14 @@ static void cleanup_regional_weather()
 static float WeatherFlightLoopCb(float, float, int, void *)
 {
     // ── Blend-at-ownship evaluation (PluginWeatherMode::BlendAtOwnship) ──
-    // Re-blends effective weather from global + active patches at ownship
-    // whenever a trigger fires and the blend rate limit allows. On success
-    // overwrites pending_wx with the blended result and forces a dataref
-    // write via the dirty flag below.
+    // Computes the effective weather at ownship from global + active patches.
+    // pending_wx is the AUTHORED-GLOBAL cache (decoders write here); 'effective'
+    // is what actually gets written to X-Plane datarefs this tick. Keeping
+    // them separate is what lets the visibility revert to global when the
+    // ownship leaves a patch — the blend re-derives effective from the
+    // intact global cache instead of the previous (patched) effective.
+    PendingWeather effective = pending_wx;
+
     if (g_plugin_weather_mode == PluginWeatherMode::BlendAtOwnship) {
         const double now = XPLMGetElapsedTime();
 
@@ -1305,11 +1309,9 @@ static float WeatherFlightLoopCb(float, float, int, void *)
         }
 
         if (trigger && (now - g_last_blend_time) >= BLEND_MIN_INTERVAL_S) {
-            const bool prev_cloud_changed = pending_wx.cloud_changed;
-            PendingWeather eff = blend_weather_at_ownship();
-            pending_wx = eff;
-            pending_wx.cloud_changed = prev_cloud_changed || eff.cloud_changed;
+            effective = blend_weather_at_ownship();
             pending_wx.dirty = true;
+            if (effective.cloud_changed) pending_wx.cloud_changed = true;
             g_blend_dirty = false;
         }
         // else: g_blend_dirty stays set; next permitted tick retries.
@@ -1321,24 +1323,26 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     if (dr_update_immediately)
         XPLMSetDatai(dr_update_immediately, 1);
 
-    // Global atmosphere
+    // Global atmosphere — written from 'effective' so blended values reach
+    // X-Plane in BlendAtOwnship mode; in SdkRegional mode effective ==
+    // pending_wx so behaviour is unchanged.
     if (dr_sealevel_temp_c)
-        XPLMSetDataf(dr_sealevel_temp_c, pending_wx.temperature_c);
+        XPLMSetDataf(dr_sealevel_temp_c, effective.temperature_c);
     if (dr_sealevel_pressure_pas)
-        XPLMSetDataf(dr_sealevel_pressure_pas, pending_wx.pressure_hpa * 100.0f);
+        XPLMSetDataf(dr_sealevel_pressure_pas, effective.pressure_hpa * 100.0f);
     if (dr_visibility_sm)
-        XPLMSetDataf(dr_visibility_sm, pending_wx.visibility_m / 1609.34f);
+        XPLMSetDataf(dr_visibility_sm, effective.visibility_m / 1609.34f);
     if (dr_rain_percent)
-        XPLMSetDataf(dr_rain_percent, pending_wx.rain_pct);
+        XPLMSetDataf(dr_rain_percent, effective.rain_pct);
 
     // Cloud layers [3]
     float cloud_base[3] = {}, cloud_top[3] = {}, cloud_cov[3] = {}, cloud_tp[3] = {};
     for (int i = 0; i < 3; i++) {
-        if (pending_wx.cloud[i].valid) {
-            cloud_base[i] = pending_wx.cloud[i].base_m;
-            cloud_top[i]  = pending_wx.cloud[i].top_m;
-            cloud_cov[i]  = pending_wx.cloud[i].coverage;
-            cloud_tp[i]   = pending_wx.cloud[i].type_xp;
+        if (effective.cloud[i].valid) {
+            cloud_base[i] = effective.cloud[i].base_m;
+            cloud_top[i]  = effective.cloud[i].top_m;
+            cloud_cov[i]  = effective.cloud[i].coverage;
+            cloud_tp[i]   = effective.cloud[i].type_xp;
         }
     }
     if (dr_cloud_base)     XPLMSetDatavf(dr_cloud_base,     cloud_base, 0, 3);
@@ -1346,7 +1350,9 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     if (dr_cloud_coverage) XPLMSetDatavf(dr_cloud_coverage, cloud_cov,  0, 3);
     if (dr_cloud_type)     XPLMSetDatavf(dr_cloud_type,     cloud_tp,   0, 3);
 
-    // Wind layers [13]
+    // Wind layers [13] — wind is intentionally global-only on the visual
+    // path, so reading from pending_wx (== effective in non-blend mode) is
+    // correct in both modes.
     struct AuthoredWind {
         float alt_m;
         float dir_deg;
@@ -1392,6 +1398,9 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     }
 
     // Runway friction — direct passthrough (XP enum matches our 0-15).
+    // Not blended: X-Plane's runway_friction dataref is a single global
+    // scalar, and the host already resolves patch overrides on the FDM
+    // path via AtmosphereState.
     if (dr_runway_friction)
         XPLMSetDataf(dr_runway_friction, static_cast<float>(pending_wx.runway_condition_idx));
 
@@ -1430,14 +1439,16 @@ static float WeatherFlightLoopCb(float, float, int, void *)
         // satisfies the gate.
     }
 
-    // Log once on change
+    // Log once on change — values reflect what was actually written to
+    // X-Plane (effective), so the log shows blended values inside a patch
+    // instead of the global cache.
     char dbg[256];
     snprintf(dbg, sizeof(dbg),
         "xplanecigi: WX applied — vis=%.0fm temp=%.1fC wind=%03.0f/%.1fms clouds=%d rain=%.0f%% rwy_fric=%u\n",
-        pending_wx.visibility_m, pending_wx.temperature_c,
+        effective.visibility_m, effective.temperature_c,
         pending_wx.wind_dir_deg, pending_wx.wind_speed_ms,
-        (int)(pending_wx.cloud[0].valid + pending_wx.cloud[1].valid + pending_wx.cloud[2].valid),
-        pending_wx.rain_pct * 100.0f,
+        (int)(effective.cloud[0].valid + effective.cloud[1].valid + effective.cloud[2].valid),
+        effective.rain_pct * 100.0f,
         (unsigned)pending_wx.runway_condition_idx);
     XPLMDebugString(dbg);
 
