@@ -1195,6 +1195,17 @@ static PendingWeather blend_weather_at_ownship()
     //   silhouette doesn't morph mid-frame.
     // Far-outside (w < 0.1): fall back to global layers; this is the cutover
     //   that prevents lingering wisps of patch cloud type far from the patch.
+    // Two cases, different thresholds:
+    //   Global already has a cloud in this slot — both-sides-present blend.
+    //     Keep patch base/top/type throughout to avoid silhouette morph
+    //     (e.g. cumulus turning into stratus mid-transition), and coverage
+    //     fades only inside the [CLOUD_PATCH_MIN_W, CLOUD_PATCH_FULL_W]
+    //     band. Outside that band we stick with global so the patch cloud
+    //     type doesn't linger far from the patch.
+    //   Global has no cloud in this slot — birth-from-nothing blend.
+    //     No lower threshold; coverage scales linearly with w from 0 to
+    //     patch_cov. A cloud fading in smoothly looks correct; popping in
+    //     at w=0.1 does not.
     constexpr float CLOUD_PATCH_FULL_W = 0.9f;
     constexpr float CLOUD_PATCH_MIN_W  = 0.1f;
     const auto & pcl = patch->cloud_layers;
@@ -1208,11 +1219,14 @@ static PendingWeather blend_weather_at_ownship()
         const float patch_base_m  = src.base_elevation_m;
         const float patch_top_m   = src.base_elevation_m + src.thickness_m;
 
-        bool prev_valid = dst.valid;
-        float prev_type = dst.type_xp;
-        float prev_cov  = dst.coverage;
-        float prev_base = dst.base_m;
-        float prev_top  = dst.top_m;
+        const bool  global_has_layer = dst.valid;
+        const float global_cov       = dst.coverage;
+
+        const bool  prev_valid = dst.valid;
+        const float prev_type  = dst.type_xp;
+        const float prev_cov   = dst.coverage;
+        const float prev_base  = dst.base_m;
+        const float prev_top   = dst.top_m;
 
         if (w >= CLOUD_PATCH_FULL_W) {
             dst.type_xp  = patch_type_xp;
@@ -1220,16 +1234,26 @@ static PendingWeather blend_weather_at_ownship()
             dst.base_m   = patch_base_m;
             dst.top_m    = patch_top_m;
             dst.valid    = true;
-        } else if (w >= CLOUD_PATCH_MIN_W) {
-            // Coverage fades; base/top/type pinned to patch to avoid morph.
-            const float global_cov = eff.cloud[i].valid ? eff.cloud[i].coverage : 0.0f;
-            dst.type_xp  = patch_type_xp;
-            dst.coverage = global_cov * (1.0f - w) + patch_cov * w;
-            dst.base_m   = patch_base_m;
-            dst.top_m    = patch_top_m;
-            dst.valid    = true;
+        } else if (w > 0.0f) {
+            if (global_has_layer) {
+                if (w >= CLOUD_PATCH_MIN_W) {
+                    dst.type_xp  = patch_type_xp;
+                    dst.coverage = global_cov * (1.0f - w) + patch_cov * w;
+                    dst.base_m   = patch_base_m;
+                    dst.top_m    = patch_top_m;
+                    dst.valid    = true;
+                }
+                // else leave dst as the global copy
+            } else {
+                // Birth-from-nothing: coverage fades in linearly with w.
+                dst.type_xp  = patch_type_xp;
+                dst.coverage = patch_cov * w;
+                dst.base_m   = patch_base_m;
+                dst.top_m    = patch_top_m;
+                dst.valid    = true;
+            }
         }
-        // else (w < CLOUD_PATCH_MIN_W): leave eff.cloud[i] as-copied-from-global
+        // else (w == 0): leave dst as the global copy
 
         const bool changed = (dst.valid != prev_valid)
             || dst.type_xp  != prev_type
