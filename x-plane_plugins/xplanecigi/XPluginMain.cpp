@@ -1320,8 +1320,28 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     // Global weather writes — gated on pending_wx.dirty (existing behavior).
     if (pending_wx.dirty) {
 
+    // Apply-now gate — same shape as the regen_weather gate below. Setting
+    // sim/weather/region/update_immediately=1 forces X-Plane to rebuild the
+    // weather region model in the next frame, which is the source of the
+    // multi-second freeze on big deltas (vis 50km → 800m on patch entry,
+    // cloud type change, etc.). In flight under ground_only / ground_or_frozen,
+    // skip the immediate flag so X-Plane applies the new dataref values on
+    // its natural cadence (~5-30s smooth fade) instead of one frozen frame.
+    bool apply_now_ok = false;
+    switch (g_regen_mode) {
+        case RegenMode::Always:         apply_now_ok = true;  break;
+        case RegenMode::Never:          apply_now_ok = false; break;
+        case RegenMode::GroundOnly:
+            apply_now_ok = dr_onground_any
+                && XPLMGetDatai(dr_onground_any) != 0;
+            break;
+        case RegenMode::GroundOrFrozen:
+            apply_now_ok = (dr_onground_any && XPLMGetDatai(dr_onground_any) != 0)
+                        || g_sim_frozen;
+            break;
+    }
     if (dr_update_immediately)
-        XPLMSetDatai(dr_update_immediately, 1);
+        XPLMSetDatai(dr_update_immediately, apply_now_ok ? 1 : 0);
 
     // Global atmosphere — written from 'effective' so blended values reach
     // X-Plane in BlendAtOwnship mode; in SdkRegional mode effective ==
@@ -1404,6 +1424,8 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     if (dr_runway_friction)
         XPLMSetDataf(dr_runway_friction, static_cast<float>(pending_wx.runway_condition_idx));
 
+    // Always flip back to 0 after the writes, regardless of apply_now_ok —
+    // this is the "I'm done writing for now" handshake. Idempotent.
     if (dr_update_immediately)
         XPLMSetDatai(dr_update_immediately, 0);
 
