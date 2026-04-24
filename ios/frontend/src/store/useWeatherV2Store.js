@@ -21,6 +21,14 @@ const _pendingPatchActions = []
 // when the broadcast stops containing that client_id.
 const _suppressedClientIds = new Set()
 
+// Last-seen activeWeather.patches reference. Used by syncFromBroadcast to
+// distinguish "broadcast updated patches" from "broadcast updated only
+// globals (patches spread-copied unchanged)". When the ref is unchanged we
+// skip patch reconciliation — otherwise a weather_state broadcast arriving
+// between a local Accept and the follow-up 'patches' broadcast would
+// overwrite the just-accepted draft with the stale pre-Accept patches.
+let _lastSyncedPatchesRef = null
+
 function _sendWs(message) {
   const { ws, wsConnected } = useSimStore.getState()
   if (!wsConnected || !ws) return false
@@ -298,6 +306,32 @@ export const useWeatherV2Store = create((set, get) => ({
     const state = get()
     const groundM      = aircraftGroundM()
     const freshGlobal  = activeWeatherToGlobalDraft(activeWeather, groundM)
+
+    // Only reconcile patches when the 'patches' WS message actually
+    // updated activeWeather.patches this cycle. The 'weather_state'
+    // handler spreads s.activeWeather so it preserves the patches array
+    // reference — a stable ref means no new patches broadcast arrived,
+    // so treating the (stale) cached list as authoritative would stomp
+    // a just-accepted local edit.
+    const patchesRef   = activeWeather?.patches
+    const patchesReady = patchesRef !== _lastSyncedPatchesRef
+    _lastSyncedPatchesRef = patchesRef
+
+    if (!patchesReady) {
+      // Global-only update path: touch freshGlobal only.
+      const wasClean = draftEquals(state.draft, state.serverState)
+      set({
+        serverState: {
+          ...state.serverState,
+          global: { ...state.serverState.global, ...freshGlobal },
+        },
+        draft: wasClean
+          ? { ...state.draft, global: { ...state.draft.global, ...freshGlobal } }
+          : state.draft,
+      })
+      return
+    }
+
     const rawPatches   = patchesFromBroadcast(activeWeather?.patches)
 
     // Suppress locally-removed patches. Prune entries whose client_ids the
