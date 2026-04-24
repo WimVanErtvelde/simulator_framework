@@ -1353,13 +1353,36 @@ static float WeatherFlightLoopCb(float, float, int, void *)
         XPLMSetDataf(dr_visibility_sm, effective.visibility_m / 1609.34f);
     }
 
+    // ── Cloud materialization detection ────────────────────────────────
+    // X-Plane 12 won't spawn cloud puffs from dataref writes alone — when
+    // a cloud slot goes from empty to populated (flying into a cloudy
+    // patch), or populated to empty (flying out), the renderer needs a
+    // push: either update_immediately=1 this tick, or a regen_weather
+    // command. Without one of those, the datarefs show the right values
+    // forever but no clouds appear.
+    //
+    // Detect the transition by tracking per-slot validity tick-over-tick.
+    // Cloud materialization is a rare discrete event (once per patch
+    // entry/exit) so a one-time hitch on transition is an acceptable
+    // price for visible clouds.
+    static bool prev_cloud_valid[3] = { false, false, false };
+    bool cloud_materializing = false;
+    for (int i = 0; i < 3; i++) {
+        if (effective.cloud[i].valid != prev_cloud_valid[i]) {
+            cloud_materializing = true;
+        }
+        prev_cloud_valid[i] = effective.cloud[i].valid;
+    }
+
     // ── Pass 2: everything else — gated on apply_now_ok ────────────────
     // Setting sim/weather/region/update_immediately=1 forces X-Plane to
     // rebuild the weather region in the next frame — multi-second freeze
     // when cloud layers regenerate. In flight under ground_only /
     // ground_or_frozen, skip the immediate flag so X-Plane applies the
     // new dataref values on its natural cadence (~5-30s smooth fade)
-    // instead of one frozen frame.
+    // instead of one frozen frame. Exception: cloud materialization
+    // bypasses the gate so clouds actually appear/disappear on patch
+    // entry/exit.
     bool apply_now_ok = false;
     switch (g_regen_mode) {
         case RegenMode::Always:         apply_now_ok = true;  break;
@@ -1373,6 +1396,8 @@ static float WeatherFlightLoopCb(float, float, int, void *)
                         || g_sim_frozen;
             break;
     }
+    if (cloud_materializing) apply_now_ok = true;
+
     if (dr_update_immediately)
         XPLMSetDatai(dr_update_immediately, apply_now_ok ? 1 : 0);
 
@@ -1466,19 +1491,26 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     // ground_or_frozen), cloud_changed is KEPT — deferred until next ground
     // touch or freeze. The debounce only guards against a gate-flip double
     // fire when multiple mutations accumulated before gate opened.
+    //
+    // Exception: cloud_materializing bypasses the gate. A slot going
+    // invalid↔valid means cloud puffs need to be spawned or despawned —
+    // without a regen they'll never render, so we accept the one-time
+    // hitch regardless of ground/freeze status.
     if (pending_wx.cloud_changed && cmd_regen_weather) {
-        bool gate_ok = false;
-        switch (g_regen_mode) {
-            case RegenMode::Always:         gate_ok = true;  break;
-            case RegenMode::Never:          gate_ok = false; break;
-            case RegenMode::GroundOnly:
-                gate_ok = dr_onground_any
-                    && XPLMGetDatai(dr_onground_any) != 0;
-                break;
-            case RegenMode::GroundOrFrozen:
-                gate_ok = (dr_onground_any && XPLMGetDatai(dr_onground_any) != 0)
-                       || g_sim_frozen;
-                break;
+        bool gate_ok = cloud_materializing;
+        if (!gate_ok) {
+            switch (g_regen_mode) {
+                case RegenMode::Always:         gate_ok = true;  break;
+                case RegenMode::Never:          gate_ok = false; break;
+                case RegenMode::GroundOnly:
+                    gate_ok = dr_onground_any
+                        && XPLMGetDatai(dr_onground_any) != 0;
+                    break;
+                case RegenMode::GroundOrFrozen:
+                    gate_ok = (dr_onground_any && XPLMGetDatai(dr_onground_any) != 0)
+                           || g_sim_frozen;
+                    break;
+            }
         }
         const double now = XPLMGetElapsedTime();
         const bool debounced = (now - g_last_regen_time) >= REGEN_DEBOUNCE_S;
@@ -1486,7 +1518,9 @@ static float WeatherFlightLoopCb(float, float, int, void *)
             XPLMCommandOnce(cmd_regen_weather);
             g_last_regen_time = now;
             pending_wx.cloud_changed = false;   // fired; deferral cleared
-            XPLMDebugString("xplanecigi: regen_weather fired\n");
+            XPLMDebugString(cloud_materializing
+                ? "xplanecigi: regen_weather fired (cloud materializing)\n"
+                : "xplanecigi: regen_weather fired\n");
         }
         // else: keep cloud_changed=true; retried on the next tick that
         // satisfies the gate.
