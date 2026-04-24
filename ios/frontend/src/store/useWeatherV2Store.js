@@ -150,6 +150,16 @@ function overridesDiffer(dp, sp) {
   return normalizePatchOverridesForDiff(dp) !== normalizePatchOverridesForDiff(sp)
 }
 
+// Identity fields that are authored in the patch UI without an immediate
+// side effect on the backend (unlike icao/lat/lon which trigger SRTM
+// resolution). These get batched to Accept like overrides so the user
+// sees the Accept button light up and can review before commit.
+function deferredIdentityDiff(dp, sp) {
+  const diff = {}
+  if (dp.radius_m !== sp.radius_m) diff.radius_m = dp.radius_m
+  return Object.keys(diff).length > 0 ? diff : null
+}
+
 // Microburst diff — authored fields only (hazard_id / activation_time are
 // server-assigned and excluded). Note: normalizePatchForDiff intentionally
 // does NOT include microburst — microbursts flow over their own wire
@@ -404,6 +414,18 @@ export const useWeatherV2Store = create((set, get) => ({
       if (dp.patch_id == null) continue
       const sp = serverById.get(dp.patch_id)
       if (!sp) continue
+
+      // Deferred identity fields (radius_m) — Accept is the commit point,
+      // same as overrides. icao/lat/lon commit immediately via
+      // updatePatchIdentity so they don't reach here.
+      const idDiff = deferredIdentityDiff(dp, sp)
+      if (idDiff) {
+        ws.send(JSON.stringify({
+          type: 'update_patch_identity',
+          data: { patch_id: dp.patch_id, ...idDiff },
+        }))
+      }
+
       if (overridesDiffer(dp, sp)) {
         ws.send(JSON.stringify({
           type: 'update_patch_overrides',

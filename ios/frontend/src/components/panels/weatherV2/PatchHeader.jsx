@@ -11,19 +11,24 @@ const RADIUS_MAX_NM = 50
 // picker, ground elevation readout, radius slider, (custom-only) label
 // input, and a delete button.
 //
-// Identity fields (icao, radius, label) commit on user-release events.
-// During a drag or typing burst, the in-flight value lives in LOCAL
-// component state only — draft and serverState are never touched until
-// the user releases. This keeps the global Accept button from flickering
-// active/inactive on every slider tick. On commit, updatePatchIdentity
-// fires update_patch_identity and mirrors to both draft and serverState
-// in one step, so creation never registers as a dirty edit.
-//   - AirportSearch onSelect             (discrete event; fires immediately)
-//   - Radius slider onMouseUp/onTouchEnd (fires on drag release)
-//   - Label input onBlur / Enter         (fires on focus loss)
-// removePatch fires remove_patch immediately.
+// Commit behaviour is split by field:
+//   - AirportSearch onSelect  → updatePatchIdentity (immediate WS +
+//                               serverState mirror; kicks off backend
+//                               SRTM resolution).
+//   - Label input onBlur/Enter → updatePatchIdentity (immediate).
+//   - Radius slider onRelease → updatePatch (draft only). Radius is
+//                               batched to Accept so the user sees the
+//                               Accept button light up, can review
+//                               before commit, and can Discard to
+//                               revert. The Accept flow fires
+//                               update_patch_identity for the radius
+//                               diff; see deferredIdentityDiff in the
+//                               store.
+// During a drag or typing burst, in-flight values live in LOCAL
+// component state only. removePatch fires remove_patch immediately.
 export default function PatchHeader({ patch }) {
   const updatePatchIdentity = useWeatherV2Store(s => s.updatePatchIdentity)
+  const updatePatch         = useWeatherV2Store(s => s.updatePatch)
   const removePatch         = useWeatherV2Store(s => s.removePatch)
 
   // Transient local state for in-flight edits. `null` means "follow store
@@ -49,12 +54,12 @@ export default function PatchHeader({ patch }) {
 
   const onDelete = () => removePatch(patch.client_id)
 
-  // Commit the in-flight radius on drag release. If the user didn't move
-  // the slider at all (pendingRadiusNm still null), skip — no change to
-  // commit and no redundant WS message.
+  // Commit the in-flight radius on drag release. Writes to draft only;
+  // the Accept flow fires update_patch_identity with the radius diff.
+  // No-op if the user didn't move the slider.
   const commitRadius = () => {
     if (pendingRadiusNm == null) return
-    updatePatchIdentity(patch.client_id, { radius_m: pendingRadiusNm * NM_TO_M })
+    updatePatch(patch.client_id, { radius_m: pendingRadiusNm * NM_TO_M })
     setPendingRadiusNm(null)
   }
 
