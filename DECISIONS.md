@@ -3602,3 +3602,160 @@ Frontend state-machine bugs discovered during end-to-end validation of 5b-iv —
   session + processors (6), plugin CMake + atomic host+plugin
   migration (3), decisions doc (1), runtime fixes (2), pre-existing
   pre-Phase-1 spec/plan commits (6).
+
+## 2026-04-24 — Claude Code (xplanecigi blend-at-ownship workaround for KL-1)
+
+- DECIDED: Add `plugin_weather_mode` config flag to xplanecigi with
+  default `blend_at_ownship`; legacy spec-compliant
+  `XPLMSetWeatherAtLocation` path retained behind `sdk_regional`.
+- REASON: Slice 5b shipped regional weather patches end-to-end through
+  the spec-compliant CIGI 3.3 path (Env Region + Weather Control
+  Scope=Regional + XPLMSetWeatherAtLocation). The X-Plane 12 SDK call
+  fires correctly but its weather engine blends regional samples against
+  global to invisibility at training-relevant radii (10–50 NM) — bug
+  KL-1, accepted as SDK limitation 2026-04-20. Customer demos need
+  visible patch effects (fog at one airport, clear at another). The
+  workaround is plugin-side: compute the effective weather at ownship
+  from global + patches and write the result to the existing global
+  `sim/weather/region/*` datarefs. Framework-side CIGI wire format and
+  host code stay unchanged; the spec-compliant path stays available
+  behind a flag for future SDK fix or non-XP IG integration.
+- AFFECTS:
+  - `xplanecigi.ini`: new key `plugin_weather_mode` (`blend_at_ownship`
+    | `sdk_regional`, default `blend_at_ownship`).
+  - `xplanecigi`: `WeatherFlightLoopCb` now blends global + active
+    patches at ownship via `blend_weather_at_ownship()`. Effective
+    state is local; `pending_wx` remains the authored-global cache.
+    Slice 3b SDK regional apply/erase is gated to `sdk_regional` mode.
+  - Blended fields (lerp at ownship): visibility, cloud layers 1-3
+    (with smooth-transition rule: w ≥ 0.9 → patch wholesale, 0.1 ≤ w
+    < 0.9 → coverage-fade w/ pinned base/top/type to avoid silhouette
+    morph, < 0.1 → global), precipitation rate.
+  - Global-only on visual path: temperature, pressure, wind, humidity,
+    runway condition. Runway is intentionally not blended — the
+    X-Plane `runway_friction` dataref is a single global scalar with no
+    spatial behaviour, and the host already resolves patch overrides
+    on the FDM path via AtmosphereState.runway_condition_idx.
+  - Multi-patch overlap: highest-weight wins (deterministic; std::map
+    iteration order breaks region_id ties).
+  - Triggers: g_blend_dirty (patch/global mutation, freeze edge),
+    ownship-crossed-zone-boundary, smooth-recompute (5s + 100m + active
+    patch). Rate-limit: 2s minimum between blend evaluations.
+
+- DECIDED: Sim freeze state is signalled host→IG via Component Control
+  with `Class = System (13)`, `ID = 200 (SimFreezeState)`, State = 0
+  (RUNNING) / 1 (FROZEN). Emitted every frame (32 bytes, idempotent)
+  for UDP packet-loss resilience.
+- REASON: CIGI 3.3 has no spec-defined "sim paused" signal. Of the
+  available extension points, ComponentClass::System (13) is the
+  spec's IG-wide-behaviour slot (Instance ID ignored), making it the
+  natural home for a global flag. Reusing IG Mode Standby would
+  conflate "host paused" with "IG scene not yet trustworthy" (loading,
+  init) — semantically distinct states. The plugin uses the freeze
+  flag to gate the new `regen_weather=ground_or_frozen` mode and may
+  in future use it to schedule other expensive operations during
+  natural pause windows.
+- AFFECTS:
+  - `cigi_session/ComponentIds.h`: new enum `SystemComponentId` with
+    `SimFreezeState = 200`. Existing `GlobalTerrainComponentId`
+    namespace 100-199 retained for terrain overrides; System namespace
+    200-299 reserved for framework system-level flags.
+  - `cigi_host_node`: subscribes to `/sim/state`, computes
+    `sim_frozen_ = (STATE_FROZEN || reposition_active)`, emits
+    Component Control every frame in `send_cigi_frame()`.
+  - `xplanecigi`: `OnCompCtrl` dispatches the new (Class=13, ID=200)
+    pair to `g_sim_frozen`, which gates the `ground_or_frozen` regen
+    mode below.
+
+- DECIDED: Extend `regen_weather` config with `ground_or_frozen` mode,
+  and rewrite the regen firing rule:
+  `fire ⟺ cloud_changed AND gate_ok AND ≥2s since last regen`.
+- REASON: Old rule fired regen unconditionally on cloud change subject
+  only to the gate; deferred fires were dropped if the gate happened
+  to be false at the moment cloud_changed flipped. New rule keeps
+  cloud_changed set across deferred ticks — accumulated cloud edits
+  during flight commit on the next ground touch or freeze instead of
+  vanishing. The 2s debounce only prevents a double-fire when the
+  gate flips not-satisfied → satisfied with multiple mutations
+  pending; it is NOT a mid-flight rate limit (the gate already
+  prevents that).
+- AFFECTS:
+  - `xplanecigi.ini`: `regen_weather` accepts new value
+    `ground_or_frozen`. Existing values (`always`, `ground_only`,
+    `never`) keep their old semantics. Default unchanged
+    (`ground_only`).
+  - Plugin regen path: gate evaluated once per dirty tick; on miss,
+    `cloud_changed` is preserved (deferred fire), not cleared.
+
+- DECIDED: Visibility writes always immediate-apply; everything else
+  gated by the same `g_regen_mode` gate as `regen_weather`.
+- REASON: `sim/weather/region/update_immediately = 1` forces X-Plane
+  to rebuild the weather region in the next frame. On big deltas
+  (vis 50 km → 800 m on patch entry; cloud type change) this causes a
+  multi-second freeze that's indistinguishable from a regen hitch.
+  In flight under `ground_only` (default), the regen gate already
+  prevents `regen_weather` from firing — but `update_immediately = 1`
+  was still firing on every dirty tick, so the freeze persisted.
+  Visibility specifically is cheap to apply (no cloud-puff regen),
+  and snap-update on vis is the most common instructor expectation
+  ("fog rolls in immediately when I dial it in"). Two-pass approach:
+  vis writes use their own `update_immediately = 1` transaction,
+  unconditionally; everything else (temp, pressure, rain, clouds,
+  wind, runway) uses the gated `update_immediately`.
+- AFFECTS:
+  - Plugin `WeatherFlightLoopCb`: vis written first inside its own
+    `update_immediately` 1→0 transaction, then the bulk writes run
+    under the gated transaction. In flight under `ground_only`,
+    cloud/wind/temp/pressure changes fade in over X-Plane's natural
+    cadence (~5–30 s) instead of one frozen frame.
+
+- DECIDED: Runway-condition patch override is FDM-only on the X-Plane
+  path; not visually blended in the plugin. UI follow-up (separate
+  task) to either hide patch-level runway override or annotate it as
+  "FDM only".
+- REASON: X-Plane's `sim/weather/region/runway_friction` dataref is
+  a single global scalar — there is no per-region runway condition in
+  X-Plane's data model. The host already resolves patch runway
+  overrides for JSBSim via `weather_solver` →
+  `AtmosphereState.runway_condition_idx`, and that path works
+  correctly. Adding patch runway to the wire (which would require
+  modifying `weather_sync.cpp`, on the plan's DO-NOT list) wouldn't
+  help X-Plane render anything regional anyway.
+- AFFECTS:
+  - Plugin: runway friction read from `pending_wx.runway_condition_idx`
+    (the global), not blended.
+  - IOS: WeatherPatch UI still exposes a runway override that affects
+    only the FDM. Worth a follow-up to either remove or label.
+
+- DECIDED: Reposition continues to use IG Mode Reset/Standby for one
+  frame on `reposition_active` rising edge; not changed in this task.
+- REASON: CIGI 3.3 §2.8 + §4.1.1 specify that the spec-canonical way
+  to signal "IG please reload scenery" is the Database Number
+  handshake (`Database Number = +n` → IG echoes `-n` while loading →
+  Host acks with `0` → IG reports `+n` when done). Our reposition
+  shortcut uses Standby instead because X-Plane has a single
+  continuous terrain DB (no database-number model). The X-Plane
+  plugin's terrain-stability probe (4×0.5s) on the receiving side
+  gives the right "IG loading → ready" semantic. Worth a follow-up
+  if we ever integrate a spec-strict IG.
+
+- VERIFIED: User confirmed visibility patches now render visibly when
+  ownship is inside the patch (mid-flight tested at EBAW with patch
+  at 51.189444,4.460278, radius 18.5 km / 10 NM, vis 800 m). Earlier
+  symptom — vis stayed at patch value after flying out — root-caused
+  to a Step 6 wiring error that overwrote `pending_wx` (the authored
+  global) with the blended result. Fix in commit `8a367b7`: blend
+  result lives in a local `effective` struct, `pending_wx` stays the
+  authored cache.
+
+- COMMITS (this work, on `main`):
+  - `f242ece` host: emit sim-freeze CompCtrl every frame
+  - `d1c276e` plugin: OnCompCtrl handles System/SimFreezeState
+  - `21d7030` plugin: plugin_weather_mode flag + ground_or_frozen regen
+  - `a938dfd` plugin: rename g_prev_lat/lon → g_ownship_lat/lon
+  - `ff1b2b6` plugin: blend-at-ownship state + standalone scaffold
+  - `275de1a` plugin: wire blend into flight loop, new regen rule
+  - `8a367b7` plugin fix: keep pending_wx as authored cache; effective
+    is the local that gets dataref-written
+  - `214847e` plugin: gate update_immediately the same as regen_weather
+  - `23e4227` plugin: visibility always immediate, others gated

@@ -232,18 +232,23 @@
 
 **Scope**: X-Plane 12 visual rendering
 **Slice observed**: 5b (WeatherPanelV2 patches)
-**Status**: Accepted as SDK limitation. No framework fix.
-**Documented in**: DECISIONS.md entry 2026-04-20 (Weather Step 11)
+**Status (2026-04-24)**: **Workaround shipped in plugin** (`blend_at_ownship` mode, default for all new builds). Spec-compliant `sdk_regional` mode retained behind config flag for future SDK fix or non-XP IG integration.
+**Documented in**: DECISIONS.md entries 2026-04-20 (original analysis) and 2026-04-24 (blend-at-ownship workaround).
 
-**Symptom**: Patch authored in WX2 with visibility or cloud override, aircraft positioned inside the patch radius (tested at 10 NM and 30+ NM), no visible difference from global weather.
+**Symptom (original)**: Patch authored in WX2 with visibility or cloud override, aircraft positioned inside the patch radius (tested at 10 NM and 30+ NM), no visible difference from global weather.
 
-**Verified healthy path**: Authoring UI → store → WS → ios_backend → WeatherState.patches[] → cigi_bridge Region Control + Weather Control emission → xplanecigi plugin decode → XPLMSetWeatherAtLocation SDK call with correct XPLMWeatherInfo_t. Plugin log confirms each step.
+**Verified healthy path (original)**: Authoring UI → store → WS → ios_backend → WeatherState.patches[] → cigi_bridge Region Control + Weather Control emission → xplanecigi plugin decode → XPLMSetWeatherAtLocation SDK call with correct XPLMWeatherInfo_t. Plugin log confirms each step.
 
-**Suspected cause**: X-Plane 12 sample blending appears to smooth small regional samples against global weather. Third-party XP12 weather plugins (Active Sky, VisualXP) do not use this API for localized visibility/fog.
+**Root cause**: X-Plane 12's weather engine blends regional samples against global to invisibility at training-relevant radii. The SDK call fires correctly with valid data; X-Plane's renderer simply doesn't honour small regional samples. Third-party XP12 weather plugins (Active Sky, VisualXP) avoid this API for localized visibility/fog for the same reason.
 
-**Workaround if needed**: FDM path works (Slice 5b-iv-a). Aircraft physical behavior — OAT, wind — responds to patches correctly. Only the visual is affected.
+**Workaround (`blend_at_ownship` mode, default)**: Plugin computes the effective weather at ownship from global + active patches and writes the result to the existing global `sim/weather/region/*` datarefs. Patches now render visibly when the aircraft is inside one. Visibility was confirmed working end-to-end on 2026-04-24 (EBAW patch, vis 800m, mid-flight). Trade-offs:
+- Cloud regen on patch-exit is deferred to X-Plane's natural ~60s cadence (no regen scheduled because the global cloud values themselves didn't change).
+- Visibility writes are immediate-apply (snap update); other writes (clouds, wind, temp, pressure) are gated by `regen_weather` mode to avoid multi-second freezes from `update_immediately` on big deltas.
+- Runway-condition patch override is FDM-only on the X-Plane visual path: `sim/weather/region/runway_friction` is a single global scalar with no spatial behaviour. FDM friction differentiation between airports continues to work via `weather_solver` → `AtmosphereState`.
 
-**Revisit if**: Customer requirement, SDK change, or standalone test plugin confirms/denies the SDK-limitation hypothesis.
+**Spec-compliant fallback**: `xplanecigi.ini` → `plugin_weather_mode = sdk_regional` reactivates the per-patch `XPLMSetWeatherAtLocation` path. Same behaviour as before: spec-correct CIGI traffic, no visible patch rendering. Useful when (a) Laminar fixes the SDK or (b) integrating a spec-strict non-XP IG.
+
+**Revisit if**: Laminar fixes XP12 SDK to render small regional samples; OR a customer requires per-patch rendering with multiple aircraft (current workaround only blends at ownship — other entities still see global).
 
 (Supersedes Limitation #1 above with richer structure; Limitation #1 retained for append-only log continuity.)
 
