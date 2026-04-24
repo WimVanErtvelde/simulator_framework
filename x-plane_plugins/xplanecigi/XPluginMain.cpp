@@ -1320,13 +1320,27 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     // Global weather writes — gated on pending_wx.dirty (existing behavior).
     if (pending_wx.dirty) {
 
-    // Apply-now gate — same shape as the regen_weather gate below. Setting
-    // sim/weather/region/update_immediately=1 forces X-Plane to rebuild the
-    // weather region model in the next frame, which is the source of the
-    // multi-second freeze on big deltas (vis 50km → 800m on patch entry,
-    // cloud type change, etc.). In flight under ground_only / ground_or_frozen,
-    // skip the immediate flag so X-Plane applies the new dataref values on
-    // its natural cadence (~5-30s smooth fade) instead of one frozen frame.
+    // ── Pass 1: visibility — always immediate-apply ────────────────────
+    // Vis changes are cheap (no cloud-puff regen) and the most common
+    // instructor edit where snap-update matters (fog rolling in over a
+    // patch). Run vis in its own update_immediately transaction so it
+    // lands instantly even mid-flight, while the expensive writes below
+    // stay gated.
+    if (dr_update_immediately && dr_visibility_sm) {
+        XPLMSetDatai(dr_update_immediately, 1);
+        XPLMSetDataf(dr_visibility_sm, effective.visibility_m / 1609.34f);
+        XPLMSetDatai(dr_update_immediately, 0);
+    } else if (dr_visibility_sm) {
+        XPLMSetDataf(dr_visibility_sm, effective.visibility_m / 1609.34f);
+    }
+
+    // ── Pass 2: everything else — gated on apply_now_ok ────────────────
+    // Setting sim/weather/region/update_immediately=1 forces X-Plane to
+    // rebuild the weather region in the next frame — multi-second freeze
+    // when cloud layers regenerate. In flight under ground_only /
+    // ground_or_frozen, skip the immediate flag so X-Plane applies the
+    // new dataref values on its natural cadence (~5-30s smooth fade)
+    // instead of one frozen frame.
     bool apply_now_ok = false;
     switch (g_regen_mode) {
         case RegenMode::Always:         apply_now_ok = true;  break;
@@ -1350,8 +1364,6 @@ static float WeatherFlightLoopCb(float, float, int, void *)
         XPLMSetDataf(dr_sealevel_temp_c, effective.temperature_c);
     if (dr_sealevel_pressure_pas)
         XPLMSetDataf(dr_sealevel_pressure_pas, effective.pressure_hpa * 100.0f);
-    if (dr_visibility_sm)
-        XPLMSetDataf(dr_visibility_sm, effective.visibility_m / 1609.34f);
     if (dr_rain_percent)
         XPLMSetDataf(dr_rain_percent, effective.rain_pct);
 
