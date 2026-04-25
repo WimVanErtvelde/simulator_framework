@@ -1651,6 +1651,32 @@ static float WeatherFlightLoopCb(float, float, int, void *)
                    walk_age,
                    g_pending_patches.size(),
                    g_blend_dirty ? 1 : 0);
+
+            // Ownship position + per-patch geometry vs ownship — answers
+            // "is the aircraft actually inside the patch?" without having
+            // to cross-reference EnvRegion log lines and FDM lat/lon by
+            // hand. Distances in NM (1852 m).
+            wx_log("WX ownship lat=%.6f lon=%.6f\n",
+                   g_ownship_lat, g_ownship_lon);
+            for (const auto & kv : g_pending_patches) {
+                const auto & p = kv.second;
+                const double d_m = approx_distance_m(
+                    p.lat_deg, p.lon_deg, g_ownship_lat, g_ownship_lon);
+                const auto inf = patch_influence(p, g_ownship_lat, g_ownship_lon);
+                const char * zone =
+                    inf.zone == PatchZone::Inside     ? "INSIDE"  :
+                    inf.zone == PatchZone::Transition ? "TRANS"   : "OUTSIDE";
+                wx_log("WX patch[%u] zone=%s weight=%.2f lat=%.4f lon=%.4f "
+                       "r=%.1fNM trans=%.1fNM ownship_dist=%.1fNM "
+                       "cloud_layers=%zu scalar_overrides=%zu\n",
+                       kv.first, zone, inf.weight,
+                       p.lat_deg, p.lon_deg,
+                       p.corner_radius_m / 1852.0,
+                       p.transition_perimeter_m / 1852.0,
+                       d_m / 1852.0,
+                       p.cloud_layers.size(),
+                       p.scalar_overrides.size());
+            }
         }
     }
 
