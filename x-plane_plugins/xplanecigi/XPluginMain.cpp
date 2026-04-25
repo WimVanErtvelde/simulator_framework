@@ -1361,17 +1361,28 @@ static float WeatherFlightLoopCb(float, float, int, void *)
 
     // Mode flags — hoisted outside the dirty block so the 1Hz snapshot
     // below can read them even on idle ticks.
+    const bool on_ground_now = dr_onground_any
+        && XPLMGetDatai(dr_onground_any) != 0;
+
+    // Edge-log on-ground transitions so a "regen fired but I wasn't on
+    // ground" can be cross-checked against XP's WoW signal in real time.
+    static bool g_last_on_ground = false;
+    if (on_ground_now != g_last_on_ground) {
+        wx_log("XP onground edge: %s → %s\n",
+               g_last_on_ground ? "GROUND" : "AIR",
+               on_ground_now    ? "GROUND" : "AIR");
+        g_last_on_ground = on_ground_now;
+    }
+
     bool apply_now_ok = false;
     switch (g_regen_mode) {
         case RegenMode::Always:         apply_now_ok = true;  break;
         case RegenMode::Never:          apply_now_ok = false; break;
         case RegenMode::GroundOnly:
-            apply_now_ok = dr_onground_any
-                && XPLMGetDatai(dr_onground_any) != 0;
+            apply_now_ok = on_ground_now;
             break;
         case RegenMode::GroundOrFrozen:
-            apply_now_ok = (dr_onground_any && XPLMGetDatai(dr_onground_any) != 0)
-                        || g_sim_frozen;
+            apply_now_ok = on_ground_now || g_sim_frozen;
             break;
     }
     const bool in_overlap = any_patch_in_transition_at_ownship();
@@ -1564,13 +1575,24 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     if (dr_update_immediately)
         XPLMSetDatai(dr_update_immediately, 0);
 
-    // Regen_weather firing rule (per DECISIONS.md 2026-04-23 design). Fires
-    // only when cloud_changed AND gate satisfied AND ≥REGEN_DEBOUNCE_S since
-    // last regen. When the gate isn't satisfied (e.g. mid-flight under
-    // ground_or_frozen), cloud_changed is KEPT — deferred until next ground
-    // touch or freeze. The debounce only guards against a gate-flip double
-    // fire when multiple mutations accumulated before gate opened.
-    if (pending_wx.cloud_changed && cmd_regen_weather) {
+    // Regen_weather firing rule (per DECISIONS.md 2026-04-25 walker design).
+    // Fires only when:
+    //   1. pending_wx.cloud_changed (the blend or a decoder flagged a real
+    //      cloud delta this tick).
+    //   2. !in_overlap (we are NOT crossing a patch transition zone).
+    //      During transition the walker is intentionally writing slow
+    //      gradual steps; firing regen would force-reset the cloud field
+    //      X-Plane is mid-way through absorbing — defeats the walker's
+    //      purpose AND causes a hitch every REGEN_DEBOUNCE_S. The blend
+    //      sets cloud_changed every transition tick because the lerped
+    //      coverage value differs from the prior eff value, so without
+    //      this guard regen would fire continuously while crossing.
+    //   3. Existing apply_now_ok gate (g_regen_mode + ground/frozen).
+    //   4. ≥REGEN_DEBOUNCE_S since last regen.
+    //
+    // When (2) or (3) blocks, cloud_changed is KEPT — the next snap-mode
+    // tick under a satisfied gate will fire it.
+    if (pending_wx.cloud_changed && cmd_regen_weather && !in_overlap) {
         bool gate_ok = false;
         switch (g_regen_mode) {
             case RegenMode::Always:         gate_ok = true;  break;
@@ -1590,7 +1612,8 @@ static float WeatherFlightLoopCb(float, float, int, void *)
             XPLMCommandOnce(cmd_regen_weather);
             g_last_regen_time = now;
             pending_wx.cloud_changed = false;   // fired; deferral cleared
-            XPLMDebugString("xplanecigi: regen_weather fired\n");
+            wx_log("regen_weather fired (overlap=0 ground=%d frozen=%d)\n",
+                   on_ground_now ? 1 : 0, g_sim_frozen ? 1 : 0);
         }
         // else: keep cloud_changed=true; retried on the next tick that
         // satisfies the gate.
@@ -1611,8 +1634,6 @@ static float WeatherFlightLoopCb(float, float, int, void *)
         if (now_snap - g_last_wx_snapshot >= 1.0) {
             g_last_wx_snapshot = now_snap;
 
-            const bool on_ground = dr_onground_any
-                                && XPLMGetDatai(dr_onground_any) != 0;
             const double walk_age = now_snap - g_last_cloud_write_time;
 
             wx_log("WX scal vis=%.0fm temp=%.1fC pres=%.1fhPa hum=%u%% "
@@ -1647,7 +1668,7 @@ static float WeatherFlightLoopCb(float, float, int, void *)
                    in_overlap ? 1 : 0,
                    apply_now_ok ? 1 : 0,
                    g_sim_frozen ? 1 : 0,
-                   on_ground ? 1 : 0,
+                   on_ground_now ? 1 : 0,
                    walk_age,
                    g_pending_patches.size(),
                    g_blend_dirty ? 1 : 0);
