@@ -35,6 +35,7 @@
 #include <cstring>
 #include <cstdint>
 #include <cstdio>
+#include <cstdarg>
 #include <cmath>
 #include <string>
 #include <fstream>
@@ -352,14 +353,27 @@ static constexpr float  CLOUD_ALT_STEP_M      = 200.0f;  // ~2.5 min for 1000m s
 static PendingWeather::CloudLayer g_rendered_cloud[3] = {};
 static double g_last_cloud_write_time = -1e9;
 
-// Set true by cloud-relevant decoders (global cloud edits, patch cloud
-// edits, patch creation / destruction). Consumed by the cloud writer to
-// distinguish AUTHOR-driven target changes (instructor edits — snap to
-// target instantly) from MOVEMENT-driven target changes (ownship crossing
-// the patch boundary — walk slowly per the rate limiter). Without this
-// distinction every Accept that touches a patch's cloud config would take
-// ~5 minutes to take visual effect.
-static bool g_cloud_authored = false;
+// Timestamped variant of XPLMDebugString. Prefixes each line with the
+// X-Plane elapsed-time clock so log entries can be cross-referenced with
+// instructor actions and frame events. Use this for any weather-pipeline
+// trace; XPLMDebugString remains for non-debug paths.
+static void wx_log(const char * fmt, ...)
+{
+    char body[768];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(body, sizeof(body), fmt, args);
+    va_end(args);
+
+    char line[896];
+    snprintf(line, sizeof(line), "[%9.3f] %s", XPLMGetElapsedTime(), body);
+    XPLMDebugString(line);
+}
+
+// 1Hz weather state snapshot — driven from WeatherFlightLoopCb, dumps the
+// effective values written to X-Plane this tick plus the mode flags so the
+// pipeline can be diagnosed from Log.txt alone.
+static double g_last_wx_snapshot = -1e9;
 
 // Forward declaration — defined below near build_weather_info.
 static void cleanup_regional_weather();
@@ -643,11 +657,9 @@ public:
             // Destroyed — remove from pending map (Slice 3b fires XPLMEraseWeatherAtLocation)
             auto it = g_pending_patches.find(f.region_id);
             if (it != g_pending_patches.end()) {
-                const bool had_clouds = !it->second.cloud_layers.empty();
                 g_pending_patches.erase(it);
                 g_patch_last_zone.erase(f.region_id);
                 g_blend_dirty = true;
-                if (had_clouds) g_cloud_authored = true;   // patch removal → snap
                 char msg[128];
                 snprintf(msg, sizeof msg,
                     "xplanecigi: Region %u destroyed (pending erase)\n", f.region_id);
@@ -712,7 +724,6 @@ public:
                 auto it = std::find_if(p.cloud_layers.begin(), p.cloud_layers.end(),
                     [&](const PendingCloudLayer & x){ return x.layer_id == f.layer_id; });
                 if (it != p.cloud_layers.end()) *it = cl; else p.cloud_layers.push_back(cl);
-                g_cloud_authored = true;   // patch cloud edit → snap
 
                 char msg[192];
                 snprintf(msg, sizeof msg,
@@ -790,15 +801,9 @@ public:
                     slot.base_m   = f.base_elevation_m;
                     slot.top_m    = new_top;
                     slot.valid    = true;
-                    if (differs) {
-                        pending_wx.cloud_changed = true;
-                        g_cloud_authored         = true;   // global cloud edit → snap
-                    }
+                    if (differs) pending_wx.cloud_changed = true;
                 } else {
-                    if (slot.valid) {
-                        pending_wx.cloud_changed = true;
-                        g_cloud_authored         = true;   // global cloud disable → snap
-                    }
+                    if (slot.valid) pending_wx.cloud_changed = true;
                     slot.type_xp  = 0.0f;
                     slot.coverage = 0.0f;
                     slot.base_m   = 0.0f;
@@ -1345,6 +1350,23 @@ static float WeatherFlightLoopCb(float, float, int, void *)
         }
     }
 
+    // Mode flags — hoisted outside the dirty block so the 1Hz snapshot
+    // below can read them even on idle ticks.
+    bool apply_now_ok = false;
+    switch (g_regen_mode) {
+        case RegenMode::Always:         apply_now_ok = true;  break;
+        case RegenMode::Never:          apply_now_ok = false; break;
+        case RegenMode::GroundOnly:
+            apply_now_ok = dr_onground_any
+                && XPLMGetDatai(dr_onground_any) != 0;
+            break;
+        case RegenMode::GroundOrFrozen:
+            apply_now_ok = (dr_onground_any && XPLMGetDatai(dr_onground_any) != 0)
+                        || g_sim_frozen;
+            break;
+    }
+    const bool in_overlap = any_patch_in_transition_at_ownship();
+
     // Global weather writes — gated on pending_wx.dirty (existing behavior).
     if (pending_wx.dirty) {
 
@@ -1362,26 +1384,13 @@ static float WeatherFlightLoopCb(float, float, int, void *)
         XPLMSetDataf(dr_visibility_sm, effective.visibility_m / 1609.34f);
     }
 
-    // ── Pass 2: everything else — gated on apply_now_ok ────────────────
+    // ── Pass 2: everything else — gated on apply_now_ok (computed above)
     // Setting sim/weather/region/update_immediately=1 forces X-Plane to
     // rebuild the weather region in the next frame — multi-second freeze
     // when cloud layers regenerate. In flight under ground_only /
     // ground_or_frozen, skip the immediate flag so X-Plane applies the
     // new dataref values on its natural cadence (~5-30s smooth fade)
     // instead of one frozen frame.
-    bool apply_now_ok = false;
-    switch (g_regen_mode) {
-        case RegenMode::Always:         apply_now_ok = true;  break;
-        case RegenMode::Never:          apply_now_ok = false; break;
-        case RegenMode::GroundOnly:
-            apply_now_ok = dr_onground_any
-                && XPLMGetDatai(dr_onground_any) != 0;
-            break;
-        case RegenMode::GroundOrFrozen:
-            apply_now_ok = (dr_onground_any && XPLMGetDatai(dr_onground_any) != 0)
-                        || g_sim_frozen;
-            break;
-    }
     if (dr_update_immediately)
         XPLMSetDatai(dr_update_immediately, apply_now_ok ? 1 : 0);
 
@@ -1395,33 +1404,33 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     if (dr_rain_percent)
         XPLMSetDataf(dr_rain_percent, effective.rain_pct);
 
-    // Cloud layers [3] — rate-limited walker (see DECISIONS.md 2026-04-25
+    // Cloud layers [3] — geometry-based rule (see DECISIONS.md 2026-04-25
     // and docs/superpowers/specs/2026-04-25-xplanecigi-cloud-walker-design.md).
     //
-    // Snap mode (apply_now_ok OR g_cloud_authored): write target directly.
-    //   - apply_now_ok: pre-flight or under freeze — existing regen_weather
-    //     rule fires, X-Plane materialises puffs immediately.
-    //   - g_cloud_authored: an instructor edit (global cloud or patch
-    //     cloud) just landed via a CIGI decoder. Even in flight we want
-    //     the new target to land NOW, not crawl over 5 minutes. X-Plane's
-    //     own ~1-min GPU pipeline still applies, but at least the target
-    //     is stable and not chasing a moving walker.
+    // Snap mode (default): the target isn't being shifted by ownship
+    //   movement, so write target directly to g_rendered_cloud. Used when:
+    //   - apply_now_ok (pre-flight under ground_only, or pre-flight /
+    //     frozen under ground_or_frozen) — existing regen_weather rule
+    //     also fires here so X-Plane materialises puffs.
+    //   - or in flight with no patch in transition at ownship — instructor
+    //     edits land instantly, X-Plane's own ~1-min GPU pipeline gates
+    //     visible result.
     //
-    // Walk mode (in flight, no fresh authoring): the target is moving
-    //   because of ownship geometry (zone crossing, in-transition smooth
-    //   recompute). Throttle writes to one step per CLOUD_WALK_INTERVAL_S,
-    //   walking g_rendered_cloud toward the target by at most
-    //   CLOUD_COVERAGE_STEP / CLOUD_ALT_STEP_M. Skips writes entirely if
-    //   the interval hasn't elapsed.
+    // Walk mode: ONLY when ownship is inside a patch transition zone
+    //   (any patch with 0 < weight < 1). The blend output moves
+    //   continuously with position; writing every frame would prevent
+    //   X-Plane's renderer from converging. Throttle to one step per
+    //   CLOUD_WALK_INTERVAL_S, stepping g_rendered_cloud toward target by
+    //   at most CLOUD_COVERAGE_STEP / CLOUD_ALT_STEP_M.
+    // (in_overlap and apply_now_ok are computed above the dirty block.)
     {
         const double now_cloud = XPLMGetElapsedTime();
         bool do_write = false;
-        const bool snap_mode = apply_now_ok || g_cloud_authored;
 
-        if (snap_mode) {
+        if (!in_overlap) {
+            // Snap to target.
             for (int i = 0; i < 3; i++) g_rendered_cloud[i] = effective.cloud[i];
             do_write = true;
-            g_cloud_authored = false;
         } else if ((now_cloud - g_last_cloud_write_time) >= CLOUD_WALK_INTERVAL_S) {
             // Walk one step per slot toward target.
             for (int i = 0; i < 3; i++) {
@@ -1578,26 +1587,63 @@ static float WeatherFlightLoopCb(float, float, int, void *)
         // satisfies the gate.
     }
 
-    // Log at 1 Hz max — the flight loop runs every frame now, and writes
-    // happen on every blend tick during a transition. Logging at
-    // framerate spams Log.txt; 1 Hz is plenty for diagnostics.
-    static double g_last_wx_log_t = -1e9;
-    const double now_log = XPLMGetElapsedTime();
-    if (now_log - g_last_wx_log_t >= 1.0) {
-        g_last_wx_log_t = now_log;
-        char dbg[256];
-        snprintf(dbg, sizeof(dbg),
-            "xplanecigi: WX applied — vis=%.0fm temp=%.1fC wind=%03.0f/%.1fms clouds=%d rain=%.0f%% rwy_fric=%u\n",
-            effective.visibility_m, effective.temperature_c,
-            pending_wx.wind_dir_deg, pending_wx.wind_speed_ms,
-            (int)(effective.cloud[0].valid + effective.cloud[1].valid + effective.cloud[2].valid),
-            effective.rain_pct * 100.0f,
-            (unsigned)pending_wx.runway_condition_idx);
-        XPLMDebugString(dbg);
-    }
-
     pending_wx.dirty = false;
     }  // end if (pending_wx.dirty)
+
+    // ── 1 Hz weather snapshot (timestamped) ─────────────────────────────
+    // Always logs, even on ticks with no dirty writes — gives a heartbeat
+    // of "what is X-Plane being asked to render right now" so the
+    // pipeline can be debugged from Log.txt alone. Cloud values come from
+    // g_rendered_cloud (what was actually written, not the per-tick
+    // target) so the rate-limited walk and snap modes show their state
+    // honestly.
+    {
+        const double now_snap = XPLMGetElapsedTime();
+        if (now_snap - g_last_wx_snapshot >= 1.0) {
+            g_last_wx_snapshot = now_snap;
+
+            const bool on_ground = dr_onground_any
+                                && XPLMGetDatai(dr_onground_any) != 0;
+            const double walk_age = now_snap - g_last_cloud_write_time;
+
+            wx_log("WX scal vis=%.0fm temp=%.1fC pres=%.1fhPa hum=%u%% "
+                   "rain=%.0f%% rwy=%u\n",
+                   pending_wx.visibility_m, pending_wx.temperature_c,
+                   pending_wx.pressure_hpa, (unsigned)pending_wx.humidity_pct,
+                   pending_wx.rain_pct * 100.0f,
+                   (unsigned)pending_wx.runway_condition_idx);
+
+            for (int i = 0; i < 3; i++) {
+                const auto & c = g_rendered_cloud[i];
+                if (c.valid) {
+                    wx_log("WX cloud[%d] V type=%.0f cov=%.2f base=%.0fm top=%.0fm\n",
+                           i, c.type_xp, c.coverage, c.base_m, c.top_m);
+                } else {
+                    wx_log("WX cloud[%d] -\n", i);
+                }
+            }
+
+            int wind_count = 0;
+            for (int i = 0; i < 13; i++) if (pending_wx.wind[i].valid) wind_count++;
+            wx_log("WX wind layers=%d (alt0/dir/spd m/s/turb)\n", wind_count);
+            for (int i = 0; i < 13; i++) {
+                const auto & w = pending_wx.wind[i];
+                if (!w.valid) continue;
+                wx_log("WX wind[%d] alt=%.0fm dir=%.0f spd=%.1fm/s vert=%.1fm/s turb=%.2f\n",
+                       i, w.alt_m, w.dir_deg, w.speed_ms, w.vert_ms, w.turb);
+            }
+
+            wx_log("WX mode overlap=%d apply_now=%d frozen=%d ground=%d "
+                   "walk_age=%.1fs patches=%zu blend_dirty=%d\n",
+                   in_overlap ? 1 : 0,
+                   apply_now_ok ? 1 : 0,
+                   g_sim_frozen ? 1 : 0,
+                   on_ground ? 1 : 0,
+                   walk_age,
+                   g_pending_patches.size(),
+                   g_blend_dirty ? 1 : 0);
+        }
+    }
 
     // ── Slice 3b: Regional weather patch apply / erase ──────────────────────
     // Only runs in PluginWeatherMode::SdkRegional. In BlendAtOwnship mode the

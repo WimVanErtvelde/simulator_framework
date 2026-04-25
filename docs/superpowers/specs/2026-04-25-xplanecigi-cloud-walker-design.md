@@ -23,15 +23,16 @@ User confirmed empirically: writing `cloud_coverage_percent` 0.0 → 1.0 in 0.1 
 
 ## Design
 
-### Two write modes for clouds
+### Two write modes for clouds (revision 2026-04-25)
 
 | Condition | Mode | Behaviour |
 |-----------|------|-----------|
-| `apply_now_ok` true (`g_regen_mode` gate satisfied: pre-flight under `ground_only`, or pre-flight / frozen under `ground_or_frozen`) | **Snap** | Write target cloud values directly. Existing `regen_weather` rule fires. Instructor at preflight / under freeze sees instant results. |
-| `g_cloud_authored` true (a CIGI decoder just landed an instructor cloud edit — global or patch) | **Snap** | Write target cloud values directly. X-Plane's own ~1-min GPU pipeline still gates how fast pixels move, but the *target* is now stable and not chasing a moving walker. Flag is consumed (cleared) by the snap. |
-| Otherwise (in flight, no fresh authoring) | **Walk** | Movement-driven target change (zone crossing, in-transition recompute). Throttle to one step per `CLOUD_WALK_INTERVAL_S`, walking `g_rendered_cloud` toward target by at most `CLOUD_COVERAGE_STEP` / `CLOUD_ALT_STEP_M`. Skip writes entirely if interval hasn't elapsed. |
+| `in_overlap` true (any patch with `0 < weight < 1` at ownship — i.e. flying through a transition zone) | **Walk** | Throttle to one step per `CLOUD_WALK_INTERVAL_S`, walking `g_rendered_cloud` toward target by at most `CLOUD_COVERAGE_STEP` / `CLOUD_ALT_STEP_M`. Skip writes entirely if interval hasn't elapsed. |
+| Otherwise (no patch in transition at ownship — fully outside, fully inside, or no patches) | **Snap** | Write target cloud values directly to `g_rendered_cloud` and the datarefs. |
 
-The snap-on-authored rule is essential: without it, an Accept that touches a patch's cloud config would take ~5 minutes to take visible effect, which is unacceptable UX even if "physically realistic."
+This is purely **geometry-based**, not author-based. Author edits land via the snap path because the target shifts but the geometry hasn't. Movement through a patch boundary engages the walker because the target is sweeping continuously and X-Plane's renderer can't track a moving target.
+
+`regen_weather` still fires under the existing `g_regen_mode` rule (pre-flight or freeze). In flight it never fires — the walker handles cloud rendering by writing slowly enough for X-Plane's pipeline to absorb.
 
 Visibility, temp, pressure, rain, wind and runway writes are unchanged — every frame, gated by `update_immediately` per the existing `g_regen_mode` rule.
 
@@ -50,18 +51,11 @@ For each of the 3 cloud slots, per write event:
 ```cpp
 static PendingWeather::CloudLayer g_rendered_cloud[3] = {};
 static double g_last_cloud_write_time = -1e9;
-static bool   g_cloud_authored = false;   // set by decoders, consumed by walker
 ```
 
 `g_rendered_cloud` mirrors the value most recently written to X-Plane's `sim/weather/region/cloud_*` datarefs — the walker's source of truth, separate from `pending_wx` (authored global) and `effective` (per-frame blend target).
 
-`g_cloud_authored` is set true wherever a CIGI decoder modifies cloud-relevant state:
-
-- `OnWeatherCtrl` scope=Global, layer 1-3 (global cloud edit) — both the "differs" and "disable existing" branches.
-- `OnWeatherCtrl` scope=Regional, layer 1-3 (patch cloud edit) — every accepted regional cloud layer.
-- `OnEnvRegion` patch destroyed where the destroyed patch had cloud_layers (its clouds vanish from the blend output, instructor-driven).
-
-Movement-driven target changes (zone crossing, in-transition smooth recompute) do NOT set this flag — those go through the walker.
+The earlier `g_cloud_authored` flag was removed (revision 2026-04-25): the simpler geometry-only rule (`in_overlap`) covers all the same cases without needing decoder hooks.
 
 ### Constants (new, hardcoded)
 
@@ -75,13 +69,12 @@ static constexpr float  CLOUD_ALT_STEP_M      = 200.0f; // max base/top delta pe
 
 ```text
 target = effective.cloud[3]   // already computed by blend_weather_at_ownship
-snap_mode = apply_now_ok || g_cloud_authored
+in_overlap = any_patch_in_transition_at_ownship()  // hoisted, also used by snapshot
 
-if snap_mode:
+if !in_overlap:
     snap g_rendered_cloud := target
     write all four cloud datarefs from g_rendered_cloud
     g_last_cloud_write_time := now
-    g_cloud_authored := false           // consumed
 else:
     if (now - g_last_cloud_write_time) < CLOUD_WALK_INTERVAL_S:
         skip cloud writes this tick
@@ -129,9 +122,26 @@ auto walk_slot = [](PendingWeather::CloudLayer & dst,
 
 ## Files touched
 
-- **`x-plane_plugins/xplanecigi/XPluginMain.cpp`** — only file. Adds two state vars, three constants, one `walk_slot` helper, and replaces the cloud-write code inside the Pass 2 block of `WeatherFlightLoopCb`. Estimated ~60 LoC.
+- **`x-plane_plugins/xplanecigi/XPluginMain.cpp`** — only file. Adds two state vars, three constants, the cloud writer, a `wx_log()` timestamped log helper, and a 1Hz weather snapshot block.
 
 No other files (frontend, backend, message defs, cigi_bridge, weather_solver) are touched.
+
+### Debug logging
+
+All log lines from the weather pipeline get an X-Plane-elapsed-time prefix `[%9.3f]` via `wx_log()`. Once per second, regardless of whether the dirty block ran, a snapshot dumps the complete state being asked of X-Plane:
+
+```
+[ 12345.678] WX scal vis=800m temp=15.0C pres=1013.2hPa hum=50% rain=10% rwy=0
+[ 12345.678] WX cloud[0] V type=2 cov=0.80 base=1500m top=2000m
+[ 12345.678] WX cloud[1] -
+[ 12345.678] WX cloud[2] -
+[ 12345.678] WX wind layers=3 (alt0/dir/spd m/s/turb)
+[ 12345.678] WX wind[0] alt=0m dir=270 spd=5.0m/s vert=0.0m/s turb=0.00
+[ 12345.678] WX wind[1] alt=1000m dir=280 spd=12.0m/s vert=0.0m/s turb=0.10
+[ 12345.678] WX mode overlap=1 apply_now=0 frozen=0 ground=0 walk_age=12.3s patches=2 blend_dirty=0
+```
+
+Cloud values come from `g_rendered_cloud` (what was actually written), so the snapshot honestly reflects walker state vs target.
 
 ## What stays the same
 
@@ -147,10 +157,12 @@ No other files (frontend, backend, message defs, cigi_bridge, weather_solver) ar
 
 - **Patch entry while in flight**: clouds gradually appear over ~5 min as `g_rendered_cloud` walks toward the patch's coverage. No hitch.
 - **Patch exit while in flight**: clouds gradually fade over ~5 min.
-- **Inside patch, instructor edits cloud cover via IOS while in flight**: snap-on-authored fires — target lands instantly. X-Plane's own ~1-min GPU pipeline still applies between dataref write and visible pixels, but the value isn't crawling. No hitch from us.
+- **Inside patch (fully, w=1), instructor edits cloud cover via IOS while in flight**: snap path — target lands instantly. X-Plane's own ~1-min GPU pipeline still applies between dataref write and visible pixels, but the value isn't crawling. No hitch from us.
+
+- **In transition zone (0 < w < 1) when an edit lands**: walker continues, target moves to new value, walker walks toward it. Slow but acceptable corner case — instructor isn't usually editing while crossing the boundary at speed.
 - **Same edit on ground or under freeze**: instant — `apply_now_ok` is true, snap + regen fires, X-Plane renders within a few seconds.
 - **Global cloud edit on ground / freeze**: instant (unchanged from today).
-- **Global cloud edit in flight**: snap-on-authored fires — written instantly, X-Plane fades it in over its own ~1 min cadence. (Before this design: per-frame writes that XP largely ignored. Before the snap-on-authored refinement: would have walked over 5 min, slow.)
+- **Global cloud edit in flight**: snap path — written instantly, X-Plane fades it in over its own ~1 min cadence. The geometry-based rule covers this: `in_overlap` is false because the change is global, not patch-related, so snap.
 
 ## Acceptance criteria
 
