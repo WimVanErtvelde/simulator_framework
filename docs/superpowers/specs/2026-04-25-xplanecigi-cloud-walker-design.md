@@ -27,8 +27,11 @@ User confirmed empirically: writing `cloud_coverage_percent` 0.0 → 1.0 in 0.1 
 
 | Condition | Mode | Behaviour |
 |-----------|------|-----------|
-| `apply_now_ok` true (current `g_regen_mode` gate is satisfied — pre-flight under `ground_only`, or pre-flight / frozen under `ground_or_frozen`) | **Snap** | Write target cloud values directly, snap `g_rendered_cloud := target`, allow existing `regen_weather` rule to fire. Instructor authoring at preflight or under freeze sees instant results. |
-| `apply_now_ok` false (in flight) | **Walk** | Time-throttled walk toward target. Skip cloud writes entirely if `< CLOUD_WALK_INTERVAL_S` since last write. Otherwise write one step toward target and reset the clock. |
+| `apply_now_ok` true (`g_regen_mode` gate satisfied: pre-flight under `ground_only`, or pre-flight / frozen under `ground_or_frozen`) | **Snap** | Write target cloud values directly. Existing `regen_weather` rule fires. Instructor at preflight / under freeze sees instant results. |
+| `g_cloud_authored` true (a CIGI decoder just landed an instructor cloud edit — global or patch) | **Snap** | Write target cloud values directly. X-Plane's own ~1-min GPU pipeline still gates how fast pixels move, but the *target* is now stable and not chasing a moving walker. Flag is consumed (cleared) by the snap. |
+| Otherwise (in flight, no fresh authoring) | **Walk** | Movement-driven target change (zone crossing, in-transition recompute). Throttle to one step per `CLOUD_WALK_INTERVAL_S`, walking `g_rendered_cloud` toward target by at most `CLOUD_COVERAGE_STEP` / `CLOUD_ALT_STEP_M`. Skip writes entirely if interval hasn't elapsed. |
+
+The snap-on-authored rule is essential: without it, an Accept that touches a patch's cloud config would take ~5 minutes to take visible effect, which is unacceptable UX even if "physically realistic."
 
 Visibility, temp, pressure, rain, wind and runway writes are unchanged — every frame, gated by `update_immediately` per the existing `g_regen_mode` rule.
 
@@ -47,9 +50,18 @@ For each of the 3 cloud slots, per write event:
 ```cpp
 static PendingWeather::CloudLayer g_rendered_cloud[3] = {};
 static double g_last_cloud_write_time = -1e9;
+static bool   g_cloud_authored = false;   // set by decoders, consumed by walker
 ```
 
 `g_rendered_cloud` mirrors the value most recently written to X-Plane's `sim/weather/region/cloud_*` datarefs — the walker's source of truth, separate from `pending_wx` (authored global) and `effective` (per-frame blend target).
+
+`g_cloud_authored` is set true wherever a CIGI decoder modifies cloud-relevant state:
+
+- `OnWeatherCtrl` scope=Global, layer 1-3 (global cloud edit) — both the "differs" and "disable existing" branches.
+- `OnWeatherCtrl` scope=Regional, layer 1-3 (patch cloud edit) — every accepted regional cloud layer.
+- `OnEnvRegion` patch destroyed where the destroyed patch had cloud_layers (its clouds vanish from the blend output, instructor-driven).
+
+Movement-driven target changes (zone crossing, in-transition smooth recompute) do NOT set this flag — those go through the walker.
 
 ### Constants (new, hardcoded)
 
@@ -63,11 +75,13 @@ static constexpr float  CLOUD_ALT_STEP_M      = 200.0f; // max base/top delta pe
 
 ```text
 target = effective.cloud[3]   // already computed by blend_weather_at_ownship
+snap_mode = apply_now_ok || g_cloud_authored
 
-if apply_now_ok:
+if snap_mode:
     snap g_rendered_cloud := target
     write all four cloud datarefs from g_rendered_cloud
     g_last_cloud_write_time := now
+    g_cloud_authored := false           // consumed
 else:
     if (now - g_last_cloud_write_time) < CLOUD_WALK_INTERVAL_S:
         skip cloud writes this tick
@@ -133,10 +147,10 @@ No other files (frontend, backend, message defs, cigi_bridge, weather_solver) ar
 
 - **Patch entry while in flight**: clouds gradually appear over ~5 min as `g_rendered_cloud` walks toward the patch's coverage. No hitch.
 - **Patch exit while in flight**: clouds gradually fade over ~5 min.
-- **Inside patch, instructor edits cloud cover via IOS while in flight**: target jumps to new value, walker walks toward it over the next ~5 min. No hitch.
+- **Inside patch, instructor edits cloud cover via IOS while in flight**: snap-on-authored fires — target lands instantly. X-Plane's own ~1-min GPU pipeline still applies between dataref write and visible pixels, but the value isn't crawling. No hitch from us.
 - **Same edit on ground or under freeze**: instant — `apply_now_ok` is true, snap + regen fires, X-Plane renders within a few seconds.
 - **Global cloud edit on ground / freeze**: instant (unchanged from today).
-- **Global cloud edit in flight**: walks slowly (was per-frame writes that XP largely ignored anyway; now explicit ~5 min ramp).
+- **Global cloud edit in flight**: snap-on-authored fires — written instantly, X-Plane fades it in over its own ~1 min cadence. (Before this design: per-frame writes that XP largely ignored. Before the snap-on-authored refinement: would have walked over 5 min, slow.)
 
 ## Acceptance criteria
 

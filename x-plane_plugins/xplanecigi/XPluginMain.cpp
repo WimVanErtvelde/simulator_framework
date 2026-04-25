@@ -352,6 +352,15 @@ static constexpr float  CLOUD_ALT_STEP_M      = 200.0f;  // ~2.5 min for 1000m s
 static PendingWeather::CloudLayer g_rendered_cloud[3] = {};
 static double g_last_cloud_write_time = -1e9;
 
+// Set true by cloud-relevant decoders (global cloud edits, patch cloud
+// edits, patch creation / destruction). Consumed by the cloud writer to
+// distinguish AUTHOR-driven target changes (instructor edits — snap to
+// target instantly) from MOVEMENT-driven target changes (ownship crossing
+// the patch boundary — walk slowly per the rate limiter). Without this
+// distinction every Accept that touches a patch's cloud config would take
+// ~5 minutes to take visual effect.
+static bool g_cloud_authored = false;
+
 // Forward declaration — defined below near build_weather_info.
 static void cleanup_regional_weather();
 
@@ -634,9 +643,11 @@ public:
             // Destroyed — remove from pending map (Slice 3b fires XPLMEraseWeatherAtLocation)
             auto it = g_pending_patches.find(f.region_id);
             if (it != g_pending_patches.end()) {
+                const bool had_clouds = !it->second.cloud_layers.empty();
                 g_pending_patches.erase(it);
                 g_patch_last_zone.erase(f.region_id);
                 g_blend_dirty = true;
+                if (had_clouds) g_cloud_authored = true;   // patch removal → snap
                 char msg[128];
                 snprintf(msg, sizeof msg,
                     "xplanecigi: Region %u destroyed (pending erase)\n", f.region_id);
@@ -701,6 +712,7 @@ public:
                 auto it = std::find_if(p.cloud_layers.begin(), p.cloud_layers.end(),
                     [&](const PendingCloudLayer & x){ return x.layer_id == f.layer_id; });
                 if (it != p.cloud_layers.end()) *it = cl; else p.cloud_layers.push_back(cl);
+                g_cloud_authored = true;   // patch cloud edit → snap
 
                 char msg[192];
                 snprintf(msg, sizeof msg,
@@ -778,9 +790,15 @@ public:
                     slot.base_m   = f.base_elevation_m;
                     slot.top_m    = new_top;
                     slot.valid    = true;
-                    if (differs) pending_wx.cloud_changed = true;
+                    if (differs) {
+                        pending_wx.cloud_changed = true;
+                        g_cloud_authored         = true;   // global cloud edit → snap
+                    }
                 } else {
-                    if (slot.valid) pending_wx.cloud_changed = true;
+                    if (slot.valid) {
+                        pending_wx.cloud_changed = true;
+                        g_cloud_authored         = true;   // global cloud disable → snap
+                    }
                     slot.type_xp  = 0.0f;
                     slot.coverage = 0.0f;
                     slot.base_m   = 0.0f;
@@ -1380,22 +1398,30 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     // Cloud layers [3] — rate-limited walker (see DECISIONS.md 2026-04-25
     // and docs/superpowers/specs/2026-04-25-xplanecigi-cloud-walker-design.md).
     //
-    // apply_now_ok branch: pre-flight or under freeze — snap g_rendered_cloud
-    //   directly to the target. Existing regen_weather rule fires, X-Plane
-    //   materialises puffs immediately. Instructor authoring feels instant.
+    // Snap mode (apply_now_ok OR g_cloud_authored): write target directly.
+    //   - apply_now_ok: pre-flight or under freeze — existing regen_weather
+    //     rule fires, X-Plane materialises puffs immediately.
+    //   - g_cloud_authored: an instructor edit (global cloud or patch
+    //     cloud) just landed via a CIGI decoder. Even in flight we want
+    //     the new target to land NOW, not crawl over 5 minutes. X-Plane's
+    //     own ~1-min GPU pipeline still applies, but at least the target
+    //     is stable and not chasing a moving walker.
     //
-    // else branch: in flight — throttle cloud writes to one step per
-    //   CLOUD_WALK_INTERVAL_S, walking g_rendered_cloud toward the target by
-    //   at most CLOUD_COVERAGE_STEP / CLOUD_ALT_STEP_M. Skips writes
-    //   entirely if the interval hasn't elapsed.
+    // Walk mode (in flight, no fresh authoring): the target is moving
+    //   because of ownship geometry (zone crossing, in-transition smooth
+    //   recompute). Throttle writes to one step per CLOUD_WALK_INTERVAL_S,
+    //   walking g_rendered_cloud toward the target by at most
+    //   CLOUD_COVERAGE_STEP / CLOUD_ALT_STEP_M. Skips writes entirely if
+    //   the interval hasn't elapsed.
     {
         const double now_cloud = XPLMGetElapsedTime();
         bool do_write = false;
+        const bool snap_mode = apply_now_ok || g_cloud_authored;
 
-        if (apply_now_ok) {
-            // Snap mode — target lands in g_rendered_cloud unchanged.
+        if (snap_mode) {
             for (int i = 0; i < 3; i++) g_rendered_cloud[i] = effective.cloud[i];
             do_write = true;
+            g_cloud_authored = false;
         } else if ((now_cloud - g_last_cloud_write_time) >= CLOUD_WALK_INTERVAL_S) {
             // Walk one step per slot toward target.
             for (int i = 0; i < 3; i++) {
