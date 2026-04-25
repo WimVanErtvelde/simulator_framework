@@ -1107,11 +1107,28 @@ class IosBackendNode(Node):
             msg.patches.append(wp)
 
         self._weather_pub.publish(msg)
+        # Header line — global only.
         self.get_logger().info(
             f'Published WeatherState v2: station={msg.station_icao or "none"} '
             f'T={msg.temperature_sl_k:.1f}K P={msg.pressure_sl_pa:.0f}Pa '
             f'vis={msg.visibility_m:.0f}m clouds={len(msg.cloud_layers)} '
-            f'wind_layers={len(msg.wind_layers)} microbursts={len(msg.microbursts)}')
+            f'wind_layers={len(msg.wind_layers)} microbursts={len(msg.microbursts)} '
+            f'patches={len(msg.patches)}')
+        # Per-patch summary so the backend log alone reveals whether overrides
+        # / clouds / winds reach the wire. Without this, "patches=N" hides
+        # whether each patch is actually carrying authored content.
+        for wp in msg.patches:
+            ovr = []
+            if wp.override_visibility:    ovr.append(f'vis={wp.visibility_m:.0f}m')
+            if wp.override_temperature:   ovr.append(f'temp={wp.temperature_k - 273.15:.1f}C')
+            if wp.override_precipitation: ovr.append(f'precip={wp.precipitation_rate:.2f}/{wp.precipitation_type}')
+            if wp.override_humidity:      ovr.append(f'hum={wp.humidity_pct}%')
+            if wp.override_pressure:      ovr.append(f'pres={wp.pressure_sl_pa:.0f}Pa')
+            if wp.override_runway:        ovr.append(f'rwy={wp.runway_condition_idx}')
+            ovr_s = ','.join(ovr) if ovr else '(none)'
+            self.get_logger().info(
+                f'  patch[{wp.patch_id}] {wp.icao or "custom"} r={wp.radius_m:.0f}m '
+                f'clouds={len(wp.cloud_layers)} winds={len(wp.wind_layers)} ovr={ovr_s}')
         self._broadcast_weather_state()
 
     def activate_microburst(self, data: dict):
@@ -2614,7 +2631,13 @@ async def websocket_endpoint(websocket: WebSocket):
                     ros_node._fuel_load_pub.publish(fuel_msg)
 
                 elif msg.get('type') == 'set_weather' and ros_node:
-                    ros_node.publish_weather(msg.get('data', msg))
+                    d = msg.get('data', msg)
+                    ros_node.get_logger().info(
+                        f'[WS] set_weather vis={d.get("visibility_m", "?")} '
+                        f'T={d.get("temperature_sl_k", "?")}K '
+                        f'clouds={len(d.get("cloud_layers", []))} '
+                        f'winds={len(d.get("wind_layers", []))}')
+                    ros_node.publish_weather(d)
 
                 elif msg.get('type') == 'activate_microburst' and ros_node:
                     ros_node.activate_microburst(msg.get('data', {}))
@@ -2636,11 +2659,23 @@ async def websocket_endpoint(websocket: WebSocket):
                     _spawn(_handle_reserve_patch(websocket, msg.get('data', {})))
 
                 elif msg.get('type') == 'update_patch_identity' and ros_node:
-                    _spawn(_handle_update_patch_identity(websocket, msg.get('data', {})))
+                    d = msg.get('data', {})
+                    ros_node.get_logger().info(
+                        f'[WS] update_patch_identity id={d.get("patch_id", "?")} '
+                        f'fields={sorted(set(d.keys()) - {"patch_id"})}')
+                    _spawn(_handle_update_patch_identity(websocket, d))
 
                 elif msg.get('type') == 'update_patch_overrides' and ros_node:
+                    d = msg.get('data', {})
+                    ovr_active = [k.replace('override_', '') for k in d
+                                  if k.startswith('override_') and d.get(k)]
+                    ros_node.get_logger().info(
+                        f'[WS] update_patch_overrides id={d.get("patch_id", "?")} '
+                        f'override_on={ovr_active or "(none)"} '
+                        f'clouds={len(d.get("cloud_layers", []))} '
+                        f'winds={len(d.get("wind_layers", []))}')
                     try:
-                        ros_node.update_patch_overrides(msg.get('data', {}))
+                        ros_node.update_patch_overrides(d)
                     except ValueError as e:
                         await websocket.send_text(json.dumps({
                             'type': 'patch_error', 'operation': 'update_overrides',
