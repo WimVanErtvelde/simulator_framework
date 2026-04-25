@@ -109,7 +109,13 @@ WEATHER_BOUNDS = {
     'cloud_top_ft':        (   0.0,  50000.0),
     'cloud_coverage_pct':  (   0.0,    100.0),
     'scud_frequency_pct':  (   0.0,    100.0),
-    'cloud_type':          (   0,         3),
+    # cloud_type is the CIGI 3.3 4-bit field (range 0..15). The frontend
+    # authors with CIGI values directly (e.g. 7 = Cumulus) and the plugin
+    # remaps to X-Plane's narrower enum (0..3) at write time. The earlier
+    # 0..3 bound here was wrong: it silently rejected every patch cloud
+    # the user authored, with the ValueError eaten by the WS handler's
+    # patch_error response (see git log).
+    'cloud_type':          (   0,        15),
 
     # Precipitation
     'precipitation_rate':  (   0.0,      1.0),
@@ -2677,9 +2683,26 @@ async def websocket_endpoint(websocket: WebSocket):
                     try:
                         ros_node.update_patch_overrides(d)
                     except ValueError as e:
+                        ros_node.get_logger().error(
+                            f'[patch] overrides REJECTED id={d.get("patch_id", "?")}: '
+                            f'{e}')
                         await websocket.send_text(json.dumps({
                             'type': 'patch_error', 'operation': 'update_overrides',
                             'error': str(e),
+                        }))
+                    except Exception as e:
+                        # Anything other than ValueError used to be swallowed
+                        # silently; log explicitly + dump payload for forensics.
+                        import traceback
+                        ros_node.get_logger().error(
+                            f'[patch] overrides FAILED id={d.get("patch_id", "?")}: '
+                            f'{type(e).__name__}: {e}\n'
+                            f'  payload keys: {sorted(d.keys())}\n'
+                            f'  cloud_layers: {d.get("cloud_layers")}\n'
+                            f'{traceback.format_exc()}')
+                        await websocket.send_text(json.dumps({
+                            'type': 'patch_error', 'operation': 'update_overrides',
+                            'error': f'{type(e).__name__}: {e}',
                         }))
 
                 elif msg.get('type') == 'remove_patch' and ros_node:
