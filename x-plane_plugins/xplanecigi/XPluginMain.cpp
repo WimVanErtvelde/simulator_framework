@@ -337,6 +337,21 @@ static constexpr double REGEN_DEBOUNCE_S           = 2.0;
 
 static double g_last_regen_time = -1e9;
 
+// Cloud rate-limited walker (see docs/superpowers/specs/2026-04-25-
+// xplanecigi-cloud-walker-design.md). Per Laminar's docs, cloud datarefs
+// have a ~1 minute GPU-pipeline latency; spamming them every X-Plane frame
+// prevents convergence. In flight we throttle cloud writes to one step
+// every CLOUD_WALK_INTERVAL_S, walking g_rendered_cloud toward the
+// per-tick blend target by at most CLOUD_COVERAGE_STEP / CLOUD_ALT_STEP_M.
+// On ground / under freeze (apply_now_ok), we snap directly and let the
+// existing regen_weather rule materialise puffs immediately.
+static constexpr double CLOUD_WALK_INTERVAL_S = 30.0;
+static constexpr float  CLOUD_COVERAGE_STEP   = 0.10f;   // ~5 min for 0→1
+static constexpr float  CLOUD_ALT_STEP_M      = 200.0f;  // ~2.5 min for 1000m shift
+
+static PendingWeather::CloudLayer g_rendered_cloud[3] = {};
+static double g_last_cloud_write_time = -1e9;
+
 // Forward declaration — defined below near build_weather_info.
 static void cleanup_regional_weather();
 
@@ -1362,20 +1377,89 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     if (dr_rain_percent)
         XPLMSetDataf(dr_rain_percent, effective.rain_pct);
 
-    // Cloud layers [3]
-    float cloud_base[3] = {}, cloud_top[3] = {}, cloud_cov[3] = {}, cloud_tp[3] = {};
-    for (int i = 0; i < 3; i++) {
-        if (effective.cloud[i].valid) {
-            cloud_base[i] = effective.cloud[i].base_m;
-            cloud_top[i]  = effective.cloud[i].top_m;
-            cloud_cov[i]  = effective.cloud[i].coverage;
-            cloud_tp[i]   = effective.cloud[i].type_xp;
+    // Cloud layers [3] — rate-limited walker (see DECISIONS.md 2026-04-25
+    // and docs/superpowers/specs/2026-04-25-xplanecigi-cloud-walker-design.md).
+    //
+    // apply_now_ok branch: pre-flight or under freeze — snap g_rendered_cloud
+    //   directly to the target. Existing regen_weather rule fires, X-Plane
+    //   materialises puffs immediately. Instructor authoring feels instant.
+    //
+    // else branch: in flight — throttle cloud writes to one step per
+    //   CLOUD_WALK_INTERVAL_S, walking g_rendered_cloud toward the target by
+    //   at most CLOUD_COVERAGE_STEP / CLOUD_ALT_STEP_M. Skips writes
+    //   entirely if the interval hasn't elapsed.
+    {
+        const double now_cloud = XPLMGetElapsedTime();
+        bool do_write = false;
+
+        if (apply_now_ok) {
+            // Snap mode — target lands in g_rendered_cloud unchanged.
+            for (int i = 0; i < 3; i++) g_rendered_cloud[i] = effective.cloud[i];
+            do_write = true;
+        } else if ((now_cloud - g_last_cloud_write_time) >= CLOUD_WALK_INTERVAL_S) {
+            // Walk one step per slot toward target.
+            for (int i = 0; i < 3; i++) {
+                auto & dst       = g_rendered_cloud[i];
+                const auto & tgt = effective.cloud[i];
+
+                if (!tgt.valid && !dst.valid) continue;
+
+                if (tgt.valid && !dst.valid) {
+                    // Birth — snap geometry/type, start coverage at 0; walk
+                    // up next tick. Avoids spawning full coverage in one
+                    // frame which wastes XP's GPU pipeline.
+                    dst.valid    = true;
+                    dst.type_xp  = tgt.type_xp;
+                    dst.base_m   = tgt.base_m;
+                    dst.top_m    = tgt.top_m;
+                    dst.coverage = 0.0f;
+                    continue;
+                }
+
+                if (!tgt.valid && dst.valid) {
+                    // Death — walk coverage down. Flip valid=false when we
+                    // get within half a step of zero.
+                    dst.coverage = std::max(0.0f, dst.coverage - CLOUD_COVERAGE_STEP);
+                    if (dst.coverage <= CLOUD_COVERAGE_STEP * 0.5f) {
+                        dst = {};
+                    }
+                    continue;
+                }
+
+                // Both valid — walk toward target.
+                if (dst.type_xp != tgt.type_xp) dst.type_xp = tgt.type_xp;  // snap
+
+                auto step_to = [](float cur, float tgt_v, float step) {
+                    const float diff = tgt_v - cur;
+                    if (std::fabs(diff) <= step) return tgt_v;
+                    return cur + (diff > 0.0f ? step : -step);
+                };
+                dst.coverage = step_to(dst.coverage, tgt.coverage, CLOUD_COVERAGE_STEP);
+                dst.base_m   = step_to(dst.base_m,   tgt.base_m,   CLOUD_ALT_STEP_M);
+                dst.top_m    = step_to(dst.top_m,    tgt.top_m,    CLOUD_ALT_STEP_M);
+            }
+            do_write = true;
+        }
+        // else: < CLOUD_WALK_INTERVAL_S since last write — skip cloud datarefs
+        // entirely. X-Plane keeps rendering the previously-written values.
+
+        if (do_write) {
+            float cloud_base[3] = {}, cloud_top[3] = {}, cloud_cov[3] = {}, cloud_tp[3] = {};
+            for (int i = 0; i < 3; i++) {
+                if (g_rendered_cloud[i].valid) {
+                    cloud_base[i] = g_rendered_cloud[i].base_m;
+                    cloud_top[i]  = g_rendered_cloud[i].top_m;
+                    cloud_cov[i]  = g_rendered_cloud[i].coverage;
+                    cloud_tp[i]   = g_rendered_cloud[i].type_xp;
+                }
+            }
+            if (dr_cloud_base)     XPLMSetDatavf(dr_cloud_base,     cloud_base, 0, 3);
+            if (dr_cloud_tops)     XPLMSetDatavf(dr_cloud_tops,     cloud_top,  0, 3);
+            if (dr_cloud_coverage) XPLMSetDatavf(dr_cloud_coverage, cloud_cov,  0, 3);
+            if (dr_cloud_type)     XPLMSetDatavf(dr_cloud_type,     cloud_tp,   0, 3);
+            g_last_cloud_write_time = now_cloud;
         }
     }
-    if (dr_cloud_base)     XPLMSetDatavf(dr_cloud_base,     cloud_base, 0, 3);
-    if (dr_cloud_tops)     XPLMSetDatavf(dr_cloud_tops,     cloud_top,  0, 3);
-    if (dr_cloud_coverage) XPLMSetDatavf(dr_cloud_coverage, cloud_cov,  0, 3);
-    if (dr_cloud_type)     XPLMSetDatavf(dr_cloud_type,     cloud_tp,   0, 3);
 
     // Wind layers [13] — wind is intentionally global-only on the visual
     // path, so reading from pending_wx (== effective in non-blend mode) is
