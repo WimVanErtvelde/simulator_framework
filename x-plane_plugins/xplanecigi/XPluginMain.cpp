@@ -643,6 +643,14 @@ public:
 
         pending_wx.dirty = true;
         g_blend_dirty    = true;   // global changed → blend at ownship must re-evaluate
+
+        wx_log("CIGI Atmosphere temp=%.1fC pres=%.1fhPa vis=%.0fm "
+               "wind=%03.0f/%.1fm/s vert=%.1fm/s hum=%u%%\n",
+               pending_wx.temperature_c, pending_wx.pressure_hpa,
+               pending_wx.visibility_m,
+               pending_wx.wind_dir_deg, pending_wx.wind_speed_ms,
+               pending_wx.vert_wind_ms,
+               (unsigned)pending_wx.humidity_pct);
     }
 
     // ── Environmental Region Control (host → IG) ────────────────────────
@@ -660,10 +668,7 @@ public:
                 g_pending_patches.erase(it);
                 g_patch_last_zone.erase(f.region_id);
                 g_blend_dirty = true;
-                char msg[128];
-                snprintf(msg, sizeof msg,
-                    "xplanecigi: Region %u destroyed (pending erase)\n", f.region_id);
-                XPLMDebugString(msg);
+                wx_log("CIGI EnvRegion %u destroyed\n", f.region_id);
             }
         } else {
             // Active (or Inactive — treat Inactive as Active for now; cigi_bridge
@@ -681,12 +686,9 @@ public:
             p.dirty = true;
             g_blend_dirty = true;
 
-            char msg[192];
-            snprintf(msg, sizeof msg,
-                "xplanecigi: Region %u state=%u lat=%.6f lon=%.6f radius=%.1fm transition=%.1fm\n",
-                f.region_id, f.region_state, f.lat_deg, f.lon_deg,
-                f.corner_radius_m, f.transition_perimeter_m);
-            XPLMDebugString(msg);
+            wx_log("CIGI EnvRegion %u state=%u lat=%.6f lon=%.6f radius=%.1fm transition=%.1fm\n",
+                   f.region_id, f.region_state, f.lat_deg, f.lon_deg,
+                   f.corner_radius_m, f.transition_perimeter_m);
         }
     }
 
@@ -725,12 +727,11 @@ public:
                     [&](const PendingCloudLayer & x){ return x.layer_id == f.layer_id; });
                 if (it != p.cloud_layers.end()) *it = cl; else p.cloud_layers.push_back(cl);
 
-                char msg[192];
-                snprintf(msg, sizeof msg,
-                    "xplanecigi: Region %u cloud layer %u type=%u cov=%.1f%% base=%.0fm thick=%.0fm en=%d\n",
-                    f.region_id, f.layer_id, f.cloud_type,
-                    cl.coverage_pct, cl.base_elevation_m, cl.thickness_m, f.weather_enable);
-                XPLMDebugString(msg);
+                wx_log("CIGI Weather region=%u cloud layer=%u %s type=%u cov=%.1f%% "
+                       "base=%.0fm thick=%.0fm\n",
+                       f.region_id, f.layer_id, f.weather_enable ? "V" : "-",
+                       f.cloud_type, cl.coverage_pct,
+                       cl.base_elevation_m, cl.thickness_m);
             } else if (f.layer_id >= 10 && f.layer_id <= 12) {
                 // Wind layer slot
                 PendingWindLayer wl;
@@ -745,12 +746,10 @@ public:
                     [&](const PendingWindLayer & x){ return x.layer_id == f.layer_id; });
                 if (it != p.wind_layers.end()) *it = wl; else p.wind_layers.push_back(wl);
 
-                char msg[192];
-                snprintf(msg, sizeof msg,
-                    "xplanecigi: Region %u wind layer %u alt=%.0fm spd=%.1fm/s dir=%.0fdeg en=%d\n",
-                    f.region_id, f.layer_id, wl.altitude_msl_m,
-                    wl.wind_speed_ms, wl.wind_direction_deg, f.weather_enable);
-                XPLMDebugString(msg);
+                wx_log("CIGI Weather region=%u wind layer=%u %s alt=%.0fm "
+                       "spd=%.1fm/s dir=%.0fdeg\n",
+                       f.region_id, f.layer_id, f.weather_enable ? "V" : "-",
+                       wl.altitude_msl_m, wl.wind_speed_ms, wl.wind_direction_deg);
             } else if (f.layer_id == 20 || f.layer_id == 21) {
                 // Scalar override: vis+temp (20) or precipitation (21)
                 PendingScalarOverride ov;
@@ -765,11 +764,9 @@ public:
                     [&](const PendingScalarOverride & x){ return x.layer_id == f.layer_id; });
                 if (it != p.scalar_overrides.end()) *it = ov; else p.scalar_overrides.push_back(ov);
 
-                char msg[192];
-                snprintf(msg, sizeof msg,
-                    "xplanecigi: Region %u scalar override layer %u vis=%.0fm temp=%.1fC en=%d\n",
-                    f.region_id, f.layer_id, ov.visibility_m, ov.temperature_c, f.weather_enable);
-                XPLMDebugString(msg);
+                wx_log("CIGI Weather region=%u scalar layer=%u %s vis=%.0fm temp=%.1fC\n",
+                       f.region_id, f.layer_id, f.weather_enable ? "V" : "-",
+                       ov.visibility_m, ov.temperature_c);
             } else {
                 char msg[128];
                 snprintf(msg, sizeof msg,
@@ -810,6 +807,11 @@ public:
                     slot.top_m    = 0.0f;
                     slot.valid    = false;
                 }
+                wx_log("CIGI Weather global cloud[%d] %s type=%u cov=%.1f%% "
+                       "base=%.0fm thick=%.0fm\n",
+                       idx, f.weather_enable ? "V" : "-",
+                       f.cloud_type, f.coverage_pct,
+                       f.base_elevation_m, f.thickness_m);
             } else if (!f.weather_enable) {
                 return;  // precipitation/wind layers — legacy behavior
             } else if (f.layer_id == 4 || f.layer_id == 5) {
@@ -817,6 +819,9 @@ public:
                 float new_rain = f.coverage_pct / 100.0f;
                 if (new_rain != pending_wx.rain_pct) pending_wx.cloud_changed = true;
                 pending_wx.rain_pct = new_rain;
+                wx_log("CIGI Weather global precip layer=%u rate=%.0f%% type=%s\n",
+                       f.layer_id, f.coverage_pct,
+                       f.layer_id == 4 ? "rain" : "snow");
             } else if (f.layer_id >= 10) {
                 // Wind-only layer
                 int wind_idx = f.layer_id - 10;
@@ -827,6 +832,10 @@ public:
                     pending_wx.wind[wind_idx].vert_ms   = f.vert_wind_ms;
                     pending_wx.wind[wind_idx].turb      = f.severity / 5.0f;
                     pending_wx.wind[wind_idx].valid     = true;
+                    wx_log("CIGI Weather global wind[%d] alt=%.0fm dir=%.0f "
+                           "spd=%.1fm/s vert=%.1fm/s turb=%.2f\n",
+                           wind_idx, f.base_elevation_m, f.wind_direction_deg,
+                           f.horiz_wind_ms, f.vert_wind_ms, f.severity / 5.0f);
                 }
             }
             pending_wx.dirty = true;
@@ -865,6 +874,7 @@ public:
             pending_wx.runway_condition_idx = f.component_state;
             pending_wx.dirty = true;
             g_blend_dirty    = true;
+            wx_log("CIGI CompCtrl runway_condition=%u\n", (unsigned)f.component_state);
             return;
         }
 
@@ -876,9 +886,8 @@ public:
             if (new_frozen != g_sim_frozen) {
                 g_sim_frozen  = new_frozen;
                 g_blend_dirty = true;   // freeze flip can flush a deferred regen
-                XPLMDebugString(g_sim_frozen
-                    ? "xplanecigi: sim freeze → FROZEN\n"
-                    : "xplanecigi: sim freeze → RUNNING\n");
+                wx_log("CIGI CompCtrl sim freeze → %s\n",
+                       g_sim_frozen ? "FROZEN" : "RUNNING");
             }
             return;
         }
