@@ -355,11 +355,6 @@ static void wx_log(const char * fmt, ...)
     XPLMDebugString(line);
 }
 
-// 1Hz weather state snapshot — driven from WeatherFlightLoopCb, dumps the
-// effective values written to X-Plane this tick plus the mode flags so the
-// pipeline can be diagnosed from Log.txt alone.
-static double g_last_wx_snapshot = -1e9;
-
 // Forward declaration — defined below near build_weather_info.
 static void cleanup_regional_weather();
 
@@ -1357,11 +1352,9 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     }
 
     // Mode flags — hoisted outside the dirty block so the 1Hz snapshot
-    // below can read it even on idle ticks. Single condition for
-    // snap-mode writes and regen firing: the host reports STATE_FROZEN.
-    // Everything else uses the rate-limited walker. (in_overlap is no
-    // longer used for any gate; kept only for the snapshot diagnostic.)
-    const bool in_overlap = any_patch_in_transition_at_ownship();
+    // The single condition driving snap-mode writes and regen firing is
+    // g_sim_frozen (instructor freeze). Everything else uses the
+    // rate-limited walker.
 
     // Global weather writes — gated on pending_wx.dirty (existing behavior).
     if (pending_wx.dirty) {
@@ -1608,82 +1601,10 @@ static float WeatherFlightLoopCb(float, float, int, void *)
         }
     }
 
-    // ── 1 Hz weather snapshot (timestamped) ─────────────────────────────
-    // Always logs, even on ticks with no dirty writes — gives a heartbeat
-    // of "what is X-Plane being asked to render right now" so the
-    // pipeline can be debugged from Log.txt alone. Cloud values come from
-    // g_rendered_cloud (what was actually written, not the per-tick
-    // target) so the rate-limited walk and snap modes show their state
-    // honestly.
-    {
-        const double now_snap = XPLMGetElapsedTime();
-        if (now_snap - g_last_wx_snapshot >= 1.0) {
-            g_last_wx_snapshot = now_snap;
-
-            const double walk_age = now_snap - g_last_cloud_write_time;
-
-            wx_log("WX scal vis=%.0fm temp=%.1fC pres=%.1fhPa hum=%u%% "
-                   "rain=%.0f%% rwy=%u\n",
-                   pending_wx.visibility_m, pending_wx.temperature_c,
-                   pending_wx.pressure_hpa, (unsigned)pending_wx.humidity_pct,
-                   pending_wx.rain_pct * 100.0f,
-                   (unsigned)pending_wx.runway_condition_idx);
-
-            for (int i = 0; i < 3; i++) {
-                const auto & c = g_rendered_cloud[i];
-                if (c.valid) {
-                    wx_log("WX cloud[%d] V type=%.0f cov=%.2f base=%.0fm top=%.0fm\n",
-                           i, c.type_xp, c.coverage, c.base_m, c.top_m);
-                } else {
-                    wx_log("WX cloud[%d] -\n", i);
-                }
-            }
-
-            int wind_count = 0;
-            for (int i = 0; i < 13; i++) if (pending_wx.wind[i].valid) wind_count++;
-            wx_log("WX wind layers=%d (alt0/dir/spd m/s/turb)\n", wind_count);
-            for (int i = 0; i < 13; i++) {
-                const auto & w = pending_wx.wind[i];
-                if (!w.valid) continue;
-                wx_log("WX wind[%d] alt=%.0fm dir=%.0f spd=%.1fm/s vert=%.1fm/s turb=%.2f\n",
-                       i, w.alt_m, w.dir_deg, w.speed_ms, w.vert_ms, w.turb);
-            }
-
-            wx_log("WX mode frozen=%d overlap=%d walk_age=%.1fs "
-                   "patches=%zu blend_dirty=%d\n",
-                   g_sim_frozen ? 1 : 0,
-                   in_overlap ? 1 : 0,
-                   walk_age,
-                   g_pending_patches.size(),
-                   g_blend_dirty ? 1 : 0);
-
-            // Ownship position + per-patch geometry vs ownship — answers
-            // "is the aircraft actually inside the patch?" without having
-            // to cross-reference EnvRegion log lines and FDM lat/lon by
-            // hand. Distances in NM (1852 m).
-            wx_log("WX ownship lat=%.6f lon=%.6f\n",
-                   g_ownship_lat, g_ownship_lon);
-            for (const auto & kv : g_pending_patches) {
-                const auto & p = kv.second;
-                const double d_m = approx_distance_m(
-                    p.lat_deg, p.lon_deg, g_ownship_lat, g_ownship_lon);
-                const auto inf = patch_influence(p, g_ownship_lat, g_ownship_lon);
-                const char * zone =
-                    inf.zone == PatchZone::Inside     ? "INSIDE"  :
-                    inf.zone == PatchZone::Transition ? "TRANS"   : "OUTSIDE";
-                wx_log("WX patch[%u] zone=%s weight=%.2f lat=%.4f lon=%.4f "
-                       "r=%.1fNM trans=%.1fNM ownship_dist=%.1fNM "
-                       "cloud_layers=%zu scalar_overrides=%zu\n",
-                       kv.first, zone, inf.weight,
-                       p.lat_deg, p.lon_deg,
-                       p.corner_radius_m / 1852.0,
-                       p.transition_perimeter_m / 1852.0,
-                       d_m / 1852.0,
-                       p.cloud_layers.size(),
-                       p.scalar_overrides.size());
-            }
-        }
-    }
+    // (1Hz weather snapshot removed 2026-04-26 — system confirmed working
+    // end-to-end. Per-Accept decoder logs ['CIGI Atmosphere', 'CIGI
+    // Weather …', 'CIGI EnvRegion …', 'CIGI CompCtrl …'] and the
+    // 'regen_weather fired (frozen)' line stay in for diagnostic.)
 
     // ── Slice 3b: Regional weather patch apply / erase ──────────────────────
     // Only runs in PluginWeatherMode::SdkRegional. In BlendAtOwnship mode the
