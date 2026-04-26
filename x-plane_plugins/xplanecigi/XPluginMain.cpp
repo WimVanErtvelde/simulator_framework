@@ -1363,21 +1363,27 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     // them separate is what lets the visibility revert to global when the
     // ownship leaves a patch — the blend re-derives effective from the
     // intact global cache instead of the previous (patched) effective.
+    // Always recompute effective so the cloud writer (run unconditionally
+    // every tick further down) always has a fresh target. The blend is
+    // cheap (a few float ops + small map iteration) and decoupling it
+    // from the trigger-driven dirty flag means the walker can step the
+    // rendered cloud toward target even when the ownship is fully inside
+    // a stable patch (no zone change, no decoder fire — but we still
+    // need to walk up to the patch's cloud values).
     PendingWeather effective = pending_wx;
+    if (g_plugin_weather_mode == PluginWeatherMode::BlendAtOwnship) {
+        effective = blend_weather_at_ownship();
+    }
 
+    // Trigger-based pending_wx.dirty drives the vis / temp / wind writes
+    // below — those should still skip on idle ticks. Cloud writes have
+    // their own self-contained block and run regardless.
     if (g_plugin_weather_mode == PluginWeatherMode::BlendAtOwnship) {
         bool trigger = g_blend_dirty;
         if (!trigger && ownship_crossed_zone_boundary())    trigger = true;
-        // Continuous recompute while ownship is mid-transition — drives
-        // smooth vis/cloud interpolation. The flight loop now runs every
-        // frame (see XPLMScheduleFlightLoop below), so "every frame we're
-        // in transition" is the interpolation rate.
         if (!trigger && any_patch_in_transition_at_ownship()) trigger = true;
-
         if (trigger) {
-            effective = blend_weather_at_ownship();
             pending_wx.dirty = true;
-            if (effective.cloud_changed) pending_wx.cloud_changed = true;
             g_blend_dirty = false;
         }
     }
@@ -1439,97 +1445,10 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     if (dr_rain_percent)
         XPLMSetDataf(dr_rain_percent, effective.rain_pct);
 
-    // Cloud layers [3] — geometry-based rule (see DECISIONS.md 2026-04-25
-    // and docs/superpowers/specs/2026-04-25-xplanecigi-cloud-walker-design.md).
-    //
-    // Snap mode (default): the target isn't being shifted by ownship
-    //   movement, so write target directly to g_rendered_cloud. Used when:
-    //   - apply_now_ok (pre-flight under ground_only, or pre-flight /
-    //     frozen under ground_or_frozen) — existing regen_weather rule
-    //     also fires here so X-Plane materialises puffs.
-    //   - or in flight with no patch in transition at ownship — instructor
-    //     edits land instantly, X-Plane's own ~1-min GPU pipeline gates
-    //     visible result.
-    //
-    // Walk mode: ONLY when ownship is inside a patch transition zone
-    //   (any patch with 0 < weight < 1). The blend output moves
-    //   continuously with position; writing every frame would prevent
-    //   X-Plane's renderer from converging. Throttle to one step per
-    //   CLOUD_WALK_INTERVAL_S, stepping g_rendered_cloud toward target by
-    //   at most CLOUD_COVERAGE_STEP / CLOUD_ALT_STEP_M.
-    // (in_overlap and apply_now_ok are computed above the dirty block.)
-    {
-        const double now_cloud = XPLMGetElapsedTime();
-        bool do_write = false;
-
-        if (!in_overlap) {
-            // Snap to target.
-            for (int i = 0; i < 3; i++) g_rendered_cloud[i] = effective.cloud[i];
-            do_write = true;
-        } else if ((now_cloud - g_last_cloud_write_time) >= CLOUD_WALK_INTERVAL_S) {
-            // Walk one step per slot toward target.
-            for (int i = 0; i < 3; i++) {
-                auto & dst       = g_rendered_cloud[i];
-                const auto & tgt = effective.cloud[i];
-
-                if (!tgt.valid && !dst.valid) continue;
-
-                if (tgt.valid && !dst.valid) {
-                    // Birth — snap geometry/type, start coverage at 0; walk
-                    // up next tick. Avoids spawning full coverage in one
-                    // frame which wastes XP's GPU pipeline.
-                    dst.valid    = true;
-                    dst.type_xp  = tgt.type_xp;
-                    dst.base_m   = tgt.base_m;
-                    dst.top_m    = tgt.top_m;
-                    dst.coverage = 0.0f;
-                    continue;
-                }
-
-                if (!tgt.valid && dst.valid) {
-                    // Death — walk coverage down. Flip valid=false when we
-                    // get within half a step of zero.
-                    dst.coverage = std::max(0.0f, dst.coverage - CLOUD_COVERAGE_STEP);
-                    if (dst.coverage <= CLOUD_COVERAGE_STEP * 0.5f) {
-                        dst = {};
-                    }
-                    continue;
-                }
-
-                // Both valid — walk toward target.
-                if (dst.type_xp != tgt.type_xp) dst.type_xp = tgt.type_xp;  // snap
-
-                auto step_to = [](float cur, float tgt_v, float step) {
-                    const float diff = tgt_v - cur;
-                    if (std::fabs(diff) <= step) return tgt_v;
-                    return cur + (diff > 0.0f ? step : -step);
-                };
-                dst.coverage = step_to(dst.coverage, tgt.coverage, CLOUD_COVERAGE_STEP);
-                dst.base_m   = step_to(dst.base_m,   tgt.base_m,   CLOUD_ALT_STEP_M);
-                dst.top_m    = step_to(dst.top_m,    tgt.top_m,    CLOUD_ALT_STEP_M);
-            }
-            do_write = true;
-        }
-        // else: < CLOUD_WALK_INTERVAL_S since last write — skip cloud datarefs
-        // entirely. X-Plane keeps rendering the previously-written values.
-
-        if (do_write) {
-            float cloud_base[3] = {}, cloud_top[3] = {}, cloud_cov[3] = {}, cloud_tp[3] = {};
-            for (int i = 0; i < 3; i++) {
-                if (g_rendered_cloud[i].valid) {
-                    cloud_base[i] = g_rendered_cloud[i].base_m;
-                    cloud_top[i]  = g_rendered_cloud[i].top_m;
-                    cloud_cov[i]  = g_rendered_cloud[i].coverage;
-                    cloud_tp[i]   = g_rendered_cloud[i].type_xp;
-                }
-            }
-            if (dr_cloud_base)     XPLMSetDatavf(dr_cloud_base,     cloud_base, 0, 3);
-            if (dr_cloud_tops)     XPLMSetDatavf(dr_cloud_tops,     cloud_top,  0, 3);
-            if (dr_cloud_coverage) XPLMSetDatavf(dr_cloud_coverage, cloud_cov,  0, 3);
-            if (dr_cloud_type)     XPLMSetDatavf(dr_cloud_type,     cloud_tp,   0, 3);
-            g_last_cloud_write_time = now_cloud;
-        }
-    }
+    // (Cloud writes have moved to a self-contained block AFTER the dirty
+    // block — see "Cloud writer" further down. They run every frame, not
+    // gated on pending_wx.dirty, so the walker can step toward target
+    // even when nothing else changed this tick.)
 
     // Wind layers [13] — wind is intentionally global-only on the visual
     // path, so reading from pending_wx (== effective in non-blend mode) is
@@ -1590,52 +1509,159 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     if (dr_update_immediately)
         XPLMSetDatai(dr_update_immediately, 0);
 
-    // Regen_weather firing rule (per DECISIONS.md 2026-04-25 walker design).
-    // Fires only when:
-    //   1. pending_wx.cloud_changed (the blend or a decoder flagged a real
-    //      cloud delta this tick).
-    //   2. !in_overlap (we are NOT crossing a patch transition zone).
-    //      During transition the walker is intentionally writing slow
-    //      gradual steps; firing regen would force-reset the cloud field
-    //      X-Plane is mid-way through absorbing — defeats the walker's
-    //      purpose AND causes a hitch every REGEN_DEBOUNCE_S. The blend
-    //      sets cloud_changed every transition tick because the lerped
-    //      coverage value differs from the prior eff value, so without
-    //      this guard regen would fire continuously while crossing.
-    //   3. Existing apply_now_ok gate (g_regen_mode + ground/frozen).
-    //   4. ≥REGEN_DEBOUNCE_S since last regen.
-    //
-    // When (2) or (3) blocks, cloud_changed is KEPT — the next snap-mode
-    // tick under a satisfied gate will fire it.
-    if (pending_wx.cloud_changed && cmd_regen_weather && !in_overlap) {
-        bool gate_ok = false;
-        switch (g_regen_mode) {
-            case RegenMode::Always:         gate_ok = true;  break;
-            case RegenMode::Never:          gate_ok = false; break;
-            case RegenMode::GroundOnly:
-                gate_ok = dr_onground_any
-                    && XPLMGetDatai(dr_onground_any) != 0;
-                break;
-            case RegenMode::GroundOrFrozen:
-                gate_ok = (dr_onground_any && XPLMGetDatai(dr_onground_any) != 0)
-                       || g_sim_frozen;
-                break;
-        }
-        const double now = XPLMGetElapsedTime();
-        const bool debounced = (now - g_last_regen_time) >= REGEN_DEBOUNCE_S;
-        if (gate_ok && debounced) {
-            XPLMCommandOnce(cmd_regen_weather);
-            g_last_regen_time = now;
-            pending_wx.cloud_changed = false;   // fired; deferral cleared
-            wx_log("regen_weather fired (overlap=0 ground=%d frozen=%d)\n",
-                   on_ground ? 1 : 0, g_sim_frozen ? 1 : 0);
-        }
-        // else: keep cloud_changed=true; retried on the next tick that
-        // satisfies the gate.
-    }
+    // (Regen_weather firing has moved out of the dirty block — see the
+    // self-contained block AFTER the cloud writer below. It's tied to
+    // actual writes, not blend-output deltas, so a stable inside-patch
+    // tick never primes the regen check.)
 
     pending_wx.dirty = false;
     }  // end if (pending_wx.dirty)
+
+    // ── Cloud writer (runs every tick, independent of pending_wx.dirty) ──
+    // Flight-state-based rule:
+    //   apply_now_ok (on ground OR instructor-frozen) → SNAP. Write target
+    //     directly. Used for preflight authoring + commit-via-freeze.
+    //     Triggers cloud_changed → regen fires (after gate + debounce).
+    //   else (in flight)                              → WALK. Step rendered
+    //     toward target by at most CLOUD_COVERAGE_STEP / CLOUD_ALT_STEP_M
+    //     per CLOUD_WALK_INTERVAL_S. Once converged, no-op (no writes,
+    //     no cloud_changed thrash). Geometry doesn't matter — walks the
+    //     same way whether ownship is in transition or fully inside.
+    //     This is the difference from the previous overlap-based rule:
+    //     even when fully inside a patch, in-flight cloud changes ride
+    //     the walker so X-Plane can absorb them via its natural cadence
+    //     without a regen hitch.
+    //
+    // cloud_changed is tied to ACTUAL writes here (not blend-output deltas)
+    // so a stable inside-patch tick never trips it; regen only fires when
+    // X-Plane really has new dataref values to rebuild.
+    {
+        const double now_cloud = XPLMGetElapsedTime();
+        bool any_change = false;
+
+        if (apply_now_ok) {
+            // Snap mode — copy target wholesale, mark change if differs.
+            for (int i = 0; i < 3; i++) {
+                const auto & tgt = effective.cloud[i];
+                auto & dst = g_rendered_cloud[i];
+                if (dst.valid    != tgt.valid
+                 || dst.type_xp  != tgt.type_xp
+                 || dst.coverage != tgt.coverage
+                 || dst.base_m   != tgt.base_m
+                 || dst.top_m    != tgt.top_m) {
+                    dst = tgt;
+                    any_change = true;
+                }
+            }
+        } else if ((now_cloud - g_last_cloud_write_time) >= CLOUD_WALK_INTERVAL_S) {
+            // Walk mode — one step per slot toward target. Convergence
+            // detection per slot avoids writes when target == rendered.
+            for (int i = 0; i < 3; i++) {
+                auto & dst       = g_rendered_cloud[i];
+                const auto & tgt = effective.cloud[i];
+
+                if (!tgt.valid && !dst.valid) continue;
+
+                if (tgt.valid && !dst.valid) {
+                    // Birth — set geometry, start coverage at 0; walk up
+                    // next tick. Avoids spawning full coverage in one frame.
+                    dst.valid    = true;
+                    dst.type_xp  = tgt.type_xp;
+                    dst.base_m   = tgt.base_m;
+                    dst.top_m    = tgt.top_m;
+                    dst.coverage = 0.0f;
+                    any_change = true;
+                    continue;
+                }
+
+                if (!tgt.valid && dst.valid) {
+                    // Death — walk coverage down then flip valid=false.
+                    const float new_cov =
+                        std::max(0.0f, dst.coverage - CLOUD_COVERAGE_STEP);
+                    if (new_cov <= CLOUD_COVERAGE_STEP * 0.5f) {
+                        dst = {};
+                    } else {
+                        dst.coverage = new_cov;
+                    }
+                    any_change = true;
+                    continue;
+                }
+
+                // Both valid — walk toward target with per-field convergence.
+                if (dst.type_xp != tgt.type_xp) {
+                    dst.type_xp = tgt.type_xp;   // snap (cannot lerp type)
+                    any_change = true;
+                }
+                auto step_to = [](float cur, float tgt_v, float step,
+                                  bool & changed) {
+                    const float diff = tgt_v - cur;
+                    if (std::fabs(diff) < 1e-4f) return cur;     // converged
+                    changed = true;
+                    if (std::fabs(diff) <= step) return tgt_v;
+                    return cur + (diff > 0.0f ? step : -step);
+                };
+                dst.coverage = step_to(dst.coverage, tgt.coverage,
+                                       CLOUD_COVERAGE_STEP, any_change);
+                dst.base_m   = step_to(dst.base_m,   tgt.base_m,
+                                       CLOUD_ALT_STEP_M, any_change);
+                dst.top_m    = step_to(dst.top_m,    tgt.top_m,
+                                       CLOUD_ALT_STEP_M, any_change);
+            }
+        }
+        // else (walk interval not elapsed): skip cloud writes entirely.
+
+        if (any_change) {
+            // Wrap cloud writes in their own update_immediately transaction.
+            // apply_now_ok=true flushes immediately (snap mode, want instant
+            // visible result). apply_now_ok=false (walker in flight) leaves
+            // it at 0 so X-Plane absorbs the small step on natural cadence.
+            if (dr_update_immediately)
+                XPLMSetDatai(dr_update_immediately, apply_now_ok ? 1 : 0);
+
+            float cloud_base[3] = {}, cloud_top[3] = {};
+            float cloud_cov[3]  = {}, cloud_tp[3]  = {};
+            for (int i = 0; i < 3; i++) {
+                if (g_rendered_cloud[i].valid) {
+                    cloud_base[i] = g_rendered_cloud[i].base_m;
+                    cloud_top[i]  = g_rendered_cloud[i].top_m;
+                    cloud_cov[i]  = g_rendered_cloud[i].coverage;
+                    cloud_tp[i]   = g_rendered_cloud[i].type_xp;
+                }
+            }
+            if (dr_cloud_base)     XPLMSetDatavf(dr_cloud_base,     cloud_base, 0, 3);
+            if (dr_cloud_tops)     XPLMSetDatavf(dr_cloud_tops,     cloud_top,  0, 3);
+            if (dr_cloud_coverage) XPLMSetDatavf(dr_cloud_coverage, cloud_cov,  0, 3);
+            if (dr_cloud_type)     XPLMSetDatavf(dr_cloud_type,     cloud_tp,   0, 3);
+
+            if (dr_update_immediately)
+                XPLMSetDatai(dr_update_immediately, 0);
+
+            g_last_cloud_write_time = now_cloud;
+            // cloud_changed is the regen-eligibility flag. Only set it on
+            // ACTUAL writes here, not on every blend output. That way a
+            // stable inside-patch tick never primes the regen check.
+            pending_wx.cloud_changed = true;
+        }
+    }
+
+    // ── Regen_weather firing (was previously inside the dirty block) ────
+    // Fires only when:
+    //   1. cloud_changed (something was actually written by the cloud
+    //      writer above — not just a blend-output delta).
+    //   2. !in_overlap (avoids regen during transition zone traversal).
+    //   3. apply_now_ok gate is satisfied.
+    //   4. ≥REGEN_DEBOUNCE_S since last regen.
+    if (pending_wx.cloud_changed && cmd_regen_weather && !in_overlap) {
+        const double now = XPLMGetElapsedTime();
+        const bool debounced = (now - g_last_regen_time) >= REGEN_DEBOUNCE_S;
+        if (apply_now_ok && debounced) {
+            XPLMCommandOnce(cmd_regen_weather);
+            g_last_regen_time = now;
+            pending_wx.cloud_changed = false;
+            wx_log("regen_weather fired (overlap=0 ground=%d frozen=%d)\n",
+                   on_ground ? 1 : 0, g_sim_frozen ? 1 : 0);
+        }
+    }
 
     // ── 1 Hz weather snapshot (timestamped) ─────────────────────────────
     // Always logs, even on ticks with no dirty writes — gives a heartbeat
