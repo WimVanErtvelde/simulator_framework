@@ -69,6 +69,15 @@ static PluginWeatherMode g_plugin_weather_mode = PluginWeatherMode::BlendAtOwnsh
 // disruption.
 static bool g_sim_frozen = false;
 
+// Host aircraft on-ground state, driven by OnCompCtrl(class=System,
+// id=SimOnGround). True when any gear leg of the framework's ownship is
+// compressed. Sourced from FlightModelState.on_ground via cigi_host_node;
+// preferred over X-Plane's own sim/flightmodel/failures/onground_any
+// dataref, which reads XP's internal flight model (unreliable in CIGI mode
+// where the plugin teleports the visual aircraft via local_x/y/z while
+// XP's flight model has no idea where the ownship really is).
+static bool g_aircraft_on_ground = false;
+
 static const char * regen_mode_name(RegenMode m)
 {
     switch (m) {
@@ -892,6 +901,20 @@ public:
             return;
         }
 
+        if (f.component_class == CLASS_SYSTEM &&
+            f.component_id ==
+                static_cast<uint16_t>(SystemComponentId::SimOnGround))
+        {
+            bool new_ground = (f.component_state != 0);
+            if (new_ground != g_aircraft_on_ground) {
+                g_aircraft_on_ground = new_ground;
+                g_blend_dirty = true;   // gate flip can flush a deferred regen
+                wx_log("CIGI CompCtrl on-ground → %s\n",
+                       g_aircraft_on_ground ? "GROUND" : "AIR");
+            }
+            return;
+        }
+
         char msg[128];
         snprintf(msg, sizeof msg,
             "xplanecigi: Component Control class=%u id=%u state=%u — ignored\n",
@@ -1360,29 +1383,21 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     }
 
     // Mode flags — hoisted outside the dirty block so the 1Hz snapshot
-    // below can read them even on idle ticks.
-    const bool on_ground_now = dr_onground_any
-        && XPLMGetDatai(dr_onground_any) != 0;
-
-    // Edge-log on-ground transitions so a "regen fired but I wasn't on
-    // ground" can be cross-checked against XP's WoW signal in real time.
-    static bool g_last_on_ground = false;
-    if (on_ground_now != g_last_on_ground) {
-        wx_log("XP onground edge: %s → %s\n",
-               g_last_on_ground ? "GROUND" : "AIR",
-               on_ground_now    ? "GROUND" : "AIR");
-        g_last_on_ground = on_ground_now;
-    }
+    // below can read them even on idle ticks. Authoritative on-ground
+    // comes from g_aircraft_on_ground (host CompCtrl, derived from
+    // FlightModelState.on_ground). XP's own onground_any dataref is
+    // captured separately for diagnostic comparison only — see snapshot.
+    const bool on_ground = g_aircraft_on_ground;
 
     bool apply_now_ok = false;
     switch (g_regen_mode) {
         case RegenMode::Always:         apply_now_ok = true;  break;
         case RegenMode::Never:          apply_now_ok = false; break;
         case RegenMode::GroundOnly:
-            apply_now_ok = on_ground_now;
+            apply_now_ok = on_ground;
             break;
         case RegenMode::GroundOrFrozen:
-            apply_now_ok = on_ground_now || g_sim_frozen;
+            apply_now_ok = on_ground || g_sim_frozen;
             break;
     }
     const bool in_overlap = any_patch_in_transition_at_ownship();
@@ -1613,7 +1628,7 @@ static float WeatherFlightLoopCb(float, float, int, void *)
             g_last_regen_time = now;
             pending_wx.cloud_changed = false;   // fired; deferral cleared
             wx_log("regen_weather fired (overlap=0 ground=%d frozen=%d)\n",
-                   on_ground_now ? 1 : 0, g_sim_frozen ? 1 : 0);
+                   on_ground ? 1 : 0, g_sim_frozen ? 1 : 0);
         }
         // else: keep cloud_changed=true; retried on the next tick that
         // satisfies the gate.
@@ -1663,12 +1678,22 @@ static float WeatherFlightLoopCb(float, float, int, void *)
                        i, w.alt_m, w.dir_deg, w.speed_ms, w.vert_ms, w.turb);
             }
 
+            // 'ground' is authoritative (host CompCtrl from
+            // FlightModelState.on_ground). 'xp_ground' is X-Plane's own
+            // onground_any dataref — kept for diagnostic comparison only,
+            // since it reflects XP's internal flight model and is unreliable
+            // in CIGI mode. They should usually agree on the actual ground
+            // state but xp_ground may lag or diverge if XP's flight model
+            // doesn't track our teleported ownship.
+            const bool xp_ground = dr_onground_any
+                && XPLMGetDatai(dr_onground_any) != 0;
             wx_log("WX mode overlap=%d apply_now=%d frozen=%d ground=%d "
-                   "walk_age=%.1fs patches=%zu blend_dirty=%d\n",
+                   "xp_ground=%d walk_age=%.1fs patches=%zu blend_dirty=%d\n",
                    in_overlap ? 1 : 0,
                    apply_now_ok ? 1 : 0,
                    g_sim_frozen ? 1 : 0,
-                   on_ground_now ? 1 : 0,
+                   on_ground ? 1 : 0,
+                   xp_ground ? 1 : 0,
                    walk_age,
                    g_pending_patches.size(),
                    g_blend_dirty ? 1 : 0);

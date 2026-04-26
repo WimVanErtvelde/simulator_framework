@@ -117,6 +117,13 @@ private:
     bool       sim_frozen_    = false;      // derived: STATE_FROZEN || reposition_active_.
                                             // Emitted to IG as Component Control
                                             // (System, SimFreezeState) every frame.
+    bool       aircraft_on_ground_ = false; // from FlightModelState.on_ground.
+                                            // Emitted to IG as Component Control
+                                            // (System, SimOnGround) every frame.
+                                            // Plugin uses this instead of XP's
+                                            // own onground_any dataref (which
+                                            // reflects XP's internal flight model
+                                            // and is unreliable in CIGI mode).
     bool       sent_reset_    = false;      // true after Reset sent, cleared on next frame
     bool       startup_reset_pending_ = false;  // send IG Mode=Reset once on first frame after activate
 

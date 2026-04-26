@@ -21,7 +21,14 @@ enum class SystemComponentId : std::uint16_t {
     SimFreezeState = 200,   // Component State: 0 = RUNNING, 1 = FROZEN.
                             // Emitted every frame (idempotent) to survive
                             // UDP packet loss.
-    // 201-299 reserved for future system-level flags.
+    SimOnGround    = 201,   // Component State: 0 = AIRBORNE, 1 = ON GROUND.
+                            // Sourced from FlightModelState.on_ground in
+                            // the host. Plugin uses this rather than
+                            // X-Plane's sim/flightmodel/failures/onground_any,
+                            // which reflects X-Plane's internal flight
+                            // model (often stuck at the loaded position)
+                            // not our framework's actual ownship.
+    // 202-299 reserved for future system-level flags.
 };
 
 }  // namespace cigi_session
