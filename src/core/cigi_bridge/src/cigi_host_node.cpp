@@ -98,14 +98,6 @@ CallbackReturn CigiHostNode::on_activate(const rclcpp_lifecycle::State &)
         [this](sim_msgs::msg::FlightModelState::SharedPtr msg) {
             std::lock_guard<std::mutex> lk(fms_mutex_);
             latest_fms_ = msg;
-            // Track on-ground for the SimOnGround Component Control emission
-            // (see send_cigi_frame). FlightModelState.on_ground is true when
-            // any gear leg is compressed.
-            if (msg->on_ground != aircraft_on_ground_) {
-                aircraft_on_ground_ = msg->on_ground;
-                RCLCPP_INFO(get_logger(), "Aircraft on-ground state → %s",
-                            aircraft_on_ground_ ? "GROUND" : "AIR");
-            }
         });
 
     state_sub_ = create_subscription<sim_msgs::msg::SimState>(
@@ -549,17 +541,6 @@ void CigiHostNode::send_cigi_frame()
         /*instance_id=*/0,
         static_cast<std::uint16_t>(cigi_session::SystemComponentId::SimFreezeState),
         /*component_state=*/sim_frozen_ ? 1 : 0);
-
-    // Aircraft on-ground state → IG, every frame (same idempotent pattern).
-    // Sourced from FlightModelState.on_ground (any-gear-WoW). Plugin uses
-    // this for regen gating because XP's own onground_any dataref reads
-    // XP's internal flight model — unreliable when CIGI drives ownship
-    // position via local_x/y/z teleports.
-    session_.AppendComponentControl(
-        cigi_session::HostSession::ComponentClass::System,
-        /*instance_id=*/0,
-        static_cast<std::uint16_t>(cigi_session::SystemComponentId::SimOnGround),
-        /*component_state=*/aircraft_on_ground_ ? 1 : 0);
 
     if (weather_dirty_) {
         append_global_weather(latest_weather_);

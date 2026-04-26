@@ -49,10 +49,6 @@ static char     g_host_ip[64] = "127.0.0.1";
 static uint16_t g_ig_port     = 8002;
 static uint16_t g_host_port   = 8001;
 
-// regen_weather gating: "always" | "ground_only" | "ground_or_frozen" | "never"
-enum class RegenMode { Always, GroundOnly, GroundOrFrozen, Never };
-static RegenMode g_regen_mode = RegenMode::GroundOnly;
-
 // Regional weather application mode. blend_at_ownship works around the
 // XPLMSetWeatherAtLocation visible-rendering limitation (DECISIONS.md
 // 2026-04-20) by computing the effective weather at ownship from global +
@@ -64,30 +60,12 @@ static PluginWeatherMode g_plugin_weather_mode = PluginWeatherMode::BlendAtOwnsh
 
 // Host sim freeze state, driven by OnCompCtrl(class=System, id=SimFreezeState).
 // True whenever the host isn't advancing the scene (instructor freeze or
-// pending reposition). Used to gate regen_weather in ground_or_frozen mode —
-// when frozen, the sim is already paused so a cloud regen isn't visible
-// disruption.
+// pending reposition). The single condition under which:
+//   - the cloud writer SNAPS to target instead of walking
+//   - regen_weather is allowed to fire
+// In every other state the walker handles cloud transitions gradually so
+// X-Plane's natural cadence absorbs them without a visible hitch.
 static bool g_sim_frozen = false;
-
-// Host aircraft on-ground state, driven by OnCompCtrl(class=System,
-// id=SimOnGround). True when any gear leg of the framework's ownship is
-// compressed. Sourced from FlightModelState.on_ground via cigi_host_node;
-// preferred over X-Plane's own sim/flightmodel/failures/onground_any
-// dataref, which reads XP's internal flight model (unreliable in CIGI mode
-// where the plugin teleports the visual aircraft via local_x/y/z while
-// XP's flight model has no idea where the ownship really is).
-static bool g_aircraft_on_ground = false;
-
-static const char * regen_mode_name(RegenMode m)
-{
-    switch (m) {
-        case RegenMode::Always:         return "always";
-        case RegenMode::GroundOnly:     return "ground_only";
-        case RegenMode::GroundOrFrozen: return "ground_or_frozen";
-        case RegenMode::Never:          return "never";
-    }
-    return "unknown";
-}
 
 static const char * plugin_weather_mode_name(PluginWeatherMode m)
 {
@@ -103,8 +81,11 @@ static const char * plugin_weather_mode_name(PluginWeatherMode m)
 //   host_ip=192.168.1.100
 //   ig_port=8002
 //   host_port=8001
-//   regen_weather=ground_or_frozen   (always | ground_only | ground_or_frozen | never)
 //   plugin_weather_mode=blend_at_ownship  (blend_at_ownship | sdk_regional)
+//
+// The regen_weather config option was removed (2026-04-26 simplification).
+// regen now fires only when the host reports STATE_FROZEN; everything else
+// uses the rate-limited walker. No mode choice needed.
 static void load_config()
 {
     char plugin_path[512] = {};
@@ -121,9 +102,8 @@ static void load_config()
         char msg[384];
         std::snprintf(msg, sizeof(msg),
             "xplanecigi: config not found at %s — using defaults "
-            "(127.0.0.1:%u, regen_weather=%s, plugin_weather_mode=%s)\n",
+            "(127.0.0.1:%u, plugin_weather_mode=%s)\n",
             config_path.c_str(), g_ig_port,
-            regen_mode_name(g_regen_mode),
             plugin_weather_mode_name(g_plugin_weather_mode));
         XPLMDebugString(msg);
         return;
@@ -140,10 +120,8 @@ static void load_config()
         else if (key == "ig_port")   { g_ig_port   = (uint16_t)std::stoi(val); }
         else if (key == "host_port") { g_host_port = (uint16_t)std::stoi(val); }
         else if (key == "regen_weather") {
-            if      (val == "always")           g_regen_mode = RegenMode::Always;
-            else if (val == "ground_only")      g_regen_mode = RegenMode::GroundOnly;
-            else if (val == "ground_or_frozen") g_regen_mode = RegenMode::GroundOrFrozen;
-            else if (val == "never")            g_regen_mode = RegenMode::Never;
+            // Obsolete — kept as a soft no-op so older xplanecigi.ini files
+            // don't error. regen now fires only on instructor freeze.
         }
         else if (key == "plugin_weather_mode") {
             if      (val == "blend_at_ownship") g_plugin_weather_mode = PluginWeatherMode::BlendAtOwnship;
@@ -153,8 +131,8 @@ static void load_config()
 
     char msg[256];
     std::snprintf(msg, sizeof(msg),
-        "xplanecigi: config loaded from %s (regen_weather=%s, plugin_weather_mode=%s)\n",
-        config_path.c_str(), regen_mode_name(g_regen_mode),
+        "xplanecigi: config loaded from %s (plugin_weather_mode=%s)\n",
+        config_path.c_str(),
         plugin_weather_mode_name(g_plugin_weather_mode));
     XPLMDebugString(msg);
 }
@@ -191,7 +169,6 @@ static XPLMDataRef dr_wind_spd              = nullptr;
 static XPLMDataRef dr_wind_turb             = nullptr;
 static XPLMDataRef dr_runway_friction       = nullptr;
 static XPLMDataRef dr_update_immediately    = nullptr;
-static XPLMDataRef dr_onground_any          = nullptr;
 static XPLMCommandRef cmd_regen_weather     = nullptr;
 
 // ── Weather state (decoded from CIGI packets, written to XP by flight loop) ──
@@ -347,14 +324,13 @@ static constexpr double REGEN_DEBOUNCE_S           = 2.0;
 
 static double g_last_regen_time = -1e9;
 
-// Cloud rate-limited walker (see docs/superpowers/specs/2026-04-25-
-// xplanecigi-cloud-walker-design.md). Per Laminar's docs, cloud datarefs
-// have a ~1 minute GPU-pipeline latency; spamming them every X-Plane frame
-// prevents convergence. In flight we throttle cloud writes to one step
-// every CLOUD_WALK_INTERVAL_S, walking g_rendered_cloud toward the
-// per-tick blend target by at most CLOUD_COVERAGE_STEP / CLOUD_ALT_STEP_M.
-// On ground / under freeze (apply_now_ok), we snap directly and let the
-// existing regen_weather rule materialise puffs immediately.
+// Cloud rate-limited walker. Per Laminar's docs, cloud datarefs have a
+// ~1 minute GPU-pipeline latency; spamming them every X-Plane frame
+// prevents convergence. In any state other than instructor freeze we
+// throttle cloud writes to one step every CLOUD_WALK_INTERVAL_S, walking
+// g_rendered_cloud toward the per-tick blend target by at most
+// CLOUD_COVERAGE_STEP / CLOUD_ALT_STEP_M. Under freeze we snap and let
+// regen_weather materialise puffs immediately.
 static constexpr double CLOUD_WALK_INTERVAL_S = 30.0;
 static constexpr float  CLOUD_COVERAGE_STEP   = 0.10f;   // ~5 min for 0→1
 static constexpr float  CLOUD_ALT_STEP_M      = 200.0f;  // ~2.5 min for 1000m shift
@@ -901,19 +877,9 @@ public:
             return;
         }
 
-        if (f.component_class == CLASS_SYSTEM &&
-            f.component_id ==
-                static_cast<uint16_t>(SystemComponentId::SimOnGround))
-        {
-            bool new_ground = (f.component_state != 0);
-            if (new_ground != g_aircraft_on_ground) {
-                g_aircraft_on_ground = new_ground;
-                g_blend_dirty = true;   // gate flip can flush a deferred regen
-                wx_log("CIGI CompCtrl on-ground → %s\n",
-                       g_aircraft_on_ground ? "GROUND" : "AIR");
-            }
-            return;
-        }
+        // (SimOnGround formerly handled here; removed 2026-04-26 with the
+        // freeze-only regen rule — on-ground state is no longer used by
+        // any gate. Host stopped emitting it in the same commit.)
 
         char msg[128];
         snprintf(msg, sizeof msg,
@@ -1344,7 +1310,9 @@ static void cleanup_regional_weather()
     g_xp_applied.clear();
     g_pending_patches.clear();
 
-    // Visual refresh — bypasses g_regen_mode gating
+    // Visual refresh — unconditional, called only on cleanup paths
+    // (reposition + plugin disable). Walker / regen-on-freeze rules don't
+    // apply here; cleanup wants the IG to drop stale state immediately.
     if (cmd_regen_weather) {
         XPLMCommandOnce(cmd_regen_weather);
         XPLMDebugString("xplanecigi: cleanup fired regen_weather\n");
@@ -1389,23 +1357,10 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     }
 
     // Mode flags — hoisted outside the dirty block so the 1Hz snapshot
-    // below can read them even on idle ticks. Authoritative on-ground
-    // comes from g_aircraft_on_ground (host CompCtrl, derived from
-    // FlightModelState.on_ground). XP's own onground_any dataref is
-    // captured separately for diagnostic comparison only — see snapshot.
-    const bool on_ground = g_aircraft_on_ground;
-
-    bool apply_now_ok = false;
-    switch (g_regen_mode) {
-        case RegenMode::Always:         apply_now_ok = true;  break;
-        case RegenMode::Never:          apply_now_ok = false; break;
-        case RegenMode::GroundOnly:
-            apply_now_ok = on_ground;
-            break;
-        case RegenMode::GroundOrFrozen:
-            apply_now_ok = on_ground || g_sim_frozen;
-            break;
-    }
+    // below can read it even on idle ticks. Single condition for
+    // snap-mode writes and regen firing: the host reports STATE_FROZEN.
+    // Everything else uses the rate-limited walker. (in_overlap is no
+    // longer used for any gate; kept only for the snapshot diagnostic.)
     const bool in_overlap = any_patch_in_transition_at_ownship();
 
     // Global weather writes — gated on pending_wx.dirty (existing behavior).
@@ -1425,15 +1380,14 @@ static float WeatherFlightLoopCb(float, float, int, void *)
         XPLMSetDataf(dr_visibility_sm, effective.visibility_m / 1609.34f);
     }
 
-    // ── Pass 2: everything else — gated on apply_now_ok (computed above)
+    // ── Pass 2: everything else — update_immediately gated on g_sim_frozen.
     // Setting sim/weather/region/update_immediately=1 forces X-Plane to
     // rebuild the weather region in the next frame — multi-second freeze
-    // when cloud layers regenerate. In flight under ground_only /
-    // ground_or_frozen, skip the immediate flag so X-Plane applies the
-    // new dataref values on its natural cadence (~5-30s smooth fade)
-    // instead of one frozen frame.
+    // when cloud layers regenerate. Outside of freeze, skip the immediate
+    // flag so X-Plane applies the new dataref values on its natural
+    // ~5-30s cadence instead of one frozen frame.
     if (dr_update_immediately)
-        XPLMSetDatai(dr_update_immediately, apply_now_ok ? 1 : 0);
+        XPLMSetDatai(dr_update_immediately, g_sim_frozen ? 1 : 0);
 
     // Global atmosphere — written from 'effective' so blended values reach
     // X-Plane in BlendAtOwnship mode; in SdkRegional mode effective ==
@@ -1504,7 +1458,7 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     if (dr_runway_friction)
         XPLMSetDataf(dr_runway_friction, static_cast<float>(pending_wx.runway_condition_idx));
 
-    // Always flip back to 0 after the writes, regardless of apply_now_ok —
+    // Always flip back to 0 after the writes, regardless of g_sim_frozen —
     // this is the "I'm done writing for now" handshake. Idempotent.
     if (dr_update_immediately)
         XPLMSetDatai(dr_update_immediately, 0);
@@ -1518,28 +1472,21 @@ static float WeatherFlightLoopCb(float, float, int, void *)
     }  // end if (pending_wx.dirty)
 
     // ── Cloud writer (runs every tick, independent of pending_wx.dirty) ──
-    // Flight-state-based rule:
-    //   apply_now_ok (on ground OR instructor-frozen) → SNAP. Write target
-    //     directly. Used for preflight authoring + commit-via-freeze.
-    //     Triggers cloud_changed → regen fires (after gate + debounce).
-    //   else (in flight)                              → WALK. Step rendered
-    //     toward target by at most CLOUD_COVERAGE_STEP / CLOUD_ALT_STEP_M
-    //     per CLOUD_WALK_INTERVAL_S. Once converged, no-op (no writes,
-    //     no cloud_changed thrash). Geometry doesn't matter — walks the
-    //     same way whether ownship is in transition or fully inside.
-    //     This is the difference from the previous overlap-based rule:
-    //     even when fully inside a patch, in-flight cloud changes ride
-    //     the walker so X-Plane can absorb them via its natural cadence
-    //     without a regen hitch.
-    //
-    // cloud_changed is tied to ACTUAL writes here (not blend-output deltas)
-    // so a stable inside-patch tick never trips it; regen only fires when
-    // X-Plane really has new dataref values to rebuild.
+    // Single rule:
+    //   g_sim_frozen (instructor freeze)  → SNAP target wholesale, regen fires
+    //                                    after the write (debounced).
+    //   else                           → WALK one step per slot per
+    //                                    CLOUD_WALK_INTERVAL_S. Converged
+    //                                    target → no-op, no writes, no
+    //                                    cloud_changed.
+    // cloud_changed is tied to actual writes only. A stable tick never
+    // primes the regen check; it fires only when X-Plane really has new
+    // dataref values to rebuild and the user is frozen.
     {
         const double now_cloud = XPLMGetElapsedTime();
         bool any_change = false;
 
-        if (apply_now_ok) {
+        if (g_sim_frozen) {
             // Snap mode — copy target wholesale, mark change if differs.
             for (int i = 0; i < 3; i++) {
                 const auto & tgt = effective.cloud[i];
@@ -1612,11 +1559,11 @@ static float WeatherFlightLoopCb(float, float, int, void *)
 
         if (any_change) {
             // Wrap cloud writes in their own update_immediately transaction.
-            // apply_now_ok=true flushes immediately (snap mode, want instant
-            // visible result). apply_now_ok=false (walker in flight) leaves
+            // g_sim_frozen=true flushes immediately (snap mode, want instant
+            // visible result). g_sim_frozen=false (walker in flight) leaves
             // it at 0 so X-Plane absorbs the small step on natural cadence.
             if (dr_update_immediately)
-                XPLMSetDatai(dr_update_immediately, apply_now_ok ? 1 : 0);
+                XPLMSetDatai(dr_update_immediately, g_sim_frozen ? 1 : 0);
 
             float cloud_base[3] = {}, cloud_top[3] = {};
             float cloud_cov[3]  = {}, cloud_tp[3]  = {};
@@ -1644,22 +1591,20 @@ static float WeatherFlightLoopCb(float, float, int, void *)
         }
     }
 
-    // ── Regen_weather firing (was previously inside the dirty block) ────
-    // Fires only when:
-    //   1. cloud_changed (something was actually written by the cloud
-    //      writer above — not just a blend-output delta).
-    //   2. !in_overlap (avoids regen during transition zone traversal).
-    //   3. apply_now_ok gate is satisfied.
-    //   4. ≥REGEN_DEBOUNCE_S since last regen.
-    if (pending_wx.cloud_changed && cmd_regen_weather && !in_overlap) {
+    // ── Regen_weather firing — single gate: g_sim_frozen ───────────────
+    // Fires when:
+    //   1. cloud_changed (cloud writer actually wrote new values)
+    //   2. g_sim_frozen (instructor freeze — sim isn't moving, hitch is
+    //      acceptable). The walker handles all other states.
+    //   3. ≥REGEN_DEBOUNCE_S since last regen (coalesces a burst of
+    //      authored edits into one regen).
+    if (pending_wx.cloud_changed && cmd_regen_weather && g_sim_frozen) {
         const double now = XPLMGetElapsedTime();
-        const bool debounced = (now - g_last_regen_time) >= REGEN_DEBOUNCE_S;
-        if (apply_now_ok && debounced) {
+        if (now - g_last_regen_time >= REGEN_DEBOUNCE_S) {
             XPLMCommandOnce(cmd_regen_weather);
             g_last_regen_time = now;
             pending_wx.cloud_changed = false;
-            wx_log("regen_weather fired (overlap=0 ground=%d frozen=%d)\n",
-                   on_ground ? 1 : 0, g_sim_frozen ? 1 : 0);
+            wx_log("regen_weather fired (frozen)\n");
         }
     }
 
@@ -1704,22 +1649,10 @@ static float WeatherFlightLoopCb(float, float, int, void *)
                        i, w.alt_m, w.dir_deg, w.speed_ms, w.vert_ms, w.turb);
             }
 
-            // 'ground' is authoritative (host CompCtrl from
-            // FlightModelState.on_ground). 'xp_ground' is X-Plane's own
-            // onground_any dataref — kept for diagnostic comparison only,
-            // since it reflects XP's internal flight model and is unreliable
-            // in CIGI mode. They should usually agree on the actual ground
-            // state but xp_ground may lag or diverge if XP's flight model
-            // doesn't track our teleported ownship.
-            const bool xp_ground = dr_onground_any
-                && XPLMGetDatai(dr_onground_any) != 0;
-            wx_log("WX mode overlap=%d apply_now=%d frozen=%d ground=%d "
-                   "xp_ground=%d walk_age=%.1fs patches=%zu blend_dirty=%d\n",
-                   in_overlap ? 1 : 0,
-                   apply_now_ok ? 1 : 0,
+            wx_log("WX mode frozen=%d overlap=%d walk_age=%.1fs "
+                   "patches=%zu blend_dirty=%d\n",
                    g_sim_frozen ? 1 : 0,
-                   on_ground ? 1 : 0,
-                   xp_ground ? 1 : 0,
+                   in_overlap ? 1 : 0,
                    walk_age,
                    g_pending_patches.size(),
                    g_blend_dirty ? 1 : 0);
@@ -1987,15 +1920,7 @@ PLUGIN_API int XPluginStart(char * outName, char * outSig, char * outDesc)
     dr_wind_turb             = XPLMFindDataRef("sim/weather/region/turbulence");
     dr_runway_friction       = XPLMFindDataRef("sim/weather/region/runway_friction");
     dr_update_immediately    = XPLMFindDataRef("sim/weather/region/update_immediately");
-    dr_onground_any          = XPLMFindDataRef("sim/flightmodel/failures/onground_any");
     cmd_regen_weather        = XPLMFindCommand("sim/operation/regen_weather");
-
-    {
-        char msg[128];
-        std::snprintf(msg, sizeof(msg),
-            "xplanecigi: regen_weather = %s\n", regen_mode_name(g_regen_mode));
-        XPLMDebugString(msg);
-    }
 
     // ── Wire inbound processors ──────────────────────────────────────────
     g_ig_session.SetIgCtrlProcessor     (&g_ig_proc);

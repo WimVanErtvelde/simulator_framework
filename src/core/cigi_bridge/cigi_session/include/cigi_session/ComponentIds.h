@@ -21,13 +21,11 @@ enum class SystemComponentId : std::uint16_t {
     SimFreezeState = 200,   // Component State: 0 = RUNNING, 1 = FROZEN.
                             // Emitted every frame (idempotent) to survive
                             // UDP packet loss.
-    SimOnGround    = 201,   // Component State: 0 = AIRBORNE, 1 = ON GROUND.
-                            // Sourced from FlightModelState.on_ground in
-                            // the host. Plugin uses this rather than
-                            // X-Plane's sim/flightmodel/failures/onground_any,
-                            // which reflects X-Plane's internal flight
-                            // model (often stuck at the loaded position)
-                            // not our framework's actual ownship.
+    // 201 was SimOnGround (2026-04-25–2026-04-26). Removed when regen
+    // semantics simplified to "regen only on freeze". On-ground is no
+    // longer used by any gate. Reserve the slot — a future use may need
+    // a different signal here, but pick another ID to avoid wire-format
+    // ambiguity with old plugins still expecting on-ground at 201.
     // 202-299 reserved for future system-level flags.
 };
 
