@@ -78,6 +78,7 @@ export default function PatchScalarsPanel({ patch }) {
         onToggleOverride={(en) => toggleOverride(cid, 'precipitation', en)}
       />
       <RunwayField
+        label="Runway Condition (FDM only)"
         value={patch.runway_condition_idx}
         onChange={(v) => updatePatch(cid, { runway_condition_idx: v })}
         showOverrideToggle

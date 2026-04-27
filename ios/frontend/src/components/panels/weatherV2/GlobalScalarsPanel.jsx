@@ -65,6 +65,7 @@ export default function GlobalScalarsPanel() {
         onChangeType={(v) => updateDraft(['global', 'precipitation_type'], v)}
       />
       <RunwayField
+        label="Runway Condition (IG + FDM)"
         value={runway_condition_idx}
         onChange={setRunwayConditionIdx}
       />

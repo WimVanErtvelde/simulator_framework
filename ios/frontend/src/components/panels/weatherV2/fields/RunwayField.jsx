@@ -42,6 +42,7 @@ function runwayDescribe(index) {
 export default function RunwayField({
   value,
   onChange,
+  label              = 'Runway Condition',
   showOverrideToggle = false,
   overrideEnabled    = true,
   onToggleOverride   = () => {},
@@ -74,7 +75,7 @@ export default function RunwayField({
     <div style={fieldBox}>
       <div style={fieldHeader}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={fieldLabel}>Runway Condition</span>
+          <span style={fieldLabel}>{label}</span>
           {showOverrideToggle && (
             <OverridePill enabled={overrideEnabled} onToggle={onToggleOverride} />
           )}
