@@ -3759,3 +3759,59 @@ Frontend state-machine bugs discovered during end-to-end validation of 5b-iv —
     is the local that gets dataref-written
   - `214847e` plugin: gate update_immediately the same as regen_weather
   - `23e4227` plugin: visibility always immediate, others gated
+
+## 2026-04-27 — Claude Code (patch transition: inward convention, FDM ↔ visual aligned)
+
+- DECIDED: patch transition geometry is now **asymmetric INWARD** by a
+  fixed fraction of the authored radius, applied identically on the
+  FDM-side weather_solver, the host-side CIGI emitter, and the X-Plane
+  plugin. Single source of truth:
+  `sim_interfaces/weather_convention.hpp::PATCH_TRANSITION_PERIMETER_FRACTION = 0.25`.
+  Geometric rule:
+  ```
+  tp    = radius * 0.25
+  inner = radius - tp
+  d ≤ inner   → w = 1.0
+  d <  radius → w = (radius - d) / tp     (linear 1 → 0)
+  d ≥ radius  → w = 0.0
+  ```
+  The authored radius is the hard outer boundary of all patch effect —
+  nothing patch-related leaks past it. Defensive: `tp ≥ radius`
+  (degenerate small patch) collapses to a hard switch at radius.
+  weather_solver also smooth-blends temperature SL, pressure SL (qnh),
+  and wind across the transition zone (wind in NED component space; gust
+  + Dryden single-pass on blended ambient + blended turbulence). Runway
+  condition stays a hard switch on `weight ≥ 1.0`.
+- REASON: the prior outward-10% convention had two issues. First, the
+  solver was set up to switch hard at radius while the plugin blended
+  outward — meaning wind/temp/pressure changed *before* crossing radius
+  and visibility/clouds changed *after*; same patch, two different
+  geographic edges. Inward on both sides aligns the band: blending
+  happens on the same disk of geography on both the FDM and visual
+  paths. Second, outward meant a "10 NM patch" actually had effect out
+  to 11 NM; inward makes the authored radius the outer boundary the
+  instructor sees on the IOS map. Bumping the fraction from 10% → 25%
+  widens the ramp so it feels smooth at training airspeeds (10 NM patch
+  now ramps over 2.5 NM ≈ 90 s at 100 kt instead of 1 NM ≈ 36 s).
+- AFFECTS:
+  - `core/sim_interfaces/include/sim_interfaces/weather_convention.hpp`
+    — new shared constant header.
+  - `world/weather_solver` — `find_active_patch` →
+    `find_dominant_patch_and_weight`; lerp branches in `compute()`;
+    4 new tests for transition-midpoint blending + multi-patch
+    highest-weight wins. 21 WeatherSolver tests pass.
+  - `core/cigi_bridge/src/weather_sync.cpp` — emits
+    `transition_perimeter_m = radius × constant` on the wire.
+    15/15 cigi_session tests pass.
+  - `x-plane_plugins/xplanecigi/XPluginMain.cpp::patch_influence` —
+    flipped to inward; `PatchZone` (Inside/Transition/Outside) classifier
+    semantics preserved so the existing cloud-walker zone-boundary
+    tracker keeps firing on entry/exit transitions.
+  - No `WeatherPatch.msg` field added — perimeter is a framework
+    convention, not per-patch instructor data.
+- COMMITS (this work, on `main`):
+  - `33bef5c` feat(weather_solver): smooth-blend wind/temp/pressure
+    inward across patch transition
+  - `b79d9fa` chore(cigi_bridge): emit transition_perimeter from shared
+    convention constant
+  - `4cec1bf` fix(xplanecigi): flip patch_influence to inward convention
