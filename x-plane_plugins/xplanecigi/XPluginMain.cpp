@@ -1057,15 +1057,19 @@ static XPLMWeatherInfo_t build_weather_info(const PendingPatch & p)
 // See DECISIONS.md 2026-04-23 for the rationale (X-Plane SDK regional-
 // weather rendering limitation workaround).
 //
-// Algorithm:
+// Algorithm (asymmetric INWARD — authored radius is the hard outer
+// boundary; the transition perimeter is carved INWARD from radius):
 //   For each patch, compute great-circle distance from ownship to patch
 //   centre (equirectangular approximation, error < 1% at 50 NM):
-//     - distance ≤ corner_radius_m            → weight = 1.0 (Inside)
-//     - distance ≤ corner_radius_m + transition_perimeter_m
-//           → weight = 1 - (d - corner_radius_m) / transition_perimeter_m
-//             (Transition)
-//     - else                                  → weight = 0   (Outside)
+//     - inner = corner_radius_m - transition_perimeter_m
+//     - distance ≤ inner             → weight = 1.0 (Inside)
+//     - distance < corner_radius_m   → weight = (corner_radius_m - d)
+//                                              / transition_perimeter_m
+//                                      (Transition)
+//     - else                         → weight = 0   (Outside)
 //   Multi-patch overlap: highest-weight patch wins (deterministic).
+//   Defensive: if transition_perimeter ≥ corner_radius (degenerate small
+//   patch), hard switch at corner_radius — no ramp.
 //
 // Blended fields (lerp by weight): visibility, cloud layers 1-3, precip rate.
 // Global-only on the visual path: temperature, pressure, wind, humidity,
@@ -1090,16 +1094,22 @@ static PatchInfluence patch_influence(const PendingPatch & p,
                                        double lat, double lon)
 {
     const double d = approx_distance_m(p.lat_deg, p.lon_deg, lat, lon);
-    if (d <= p.corner_radius_m) {
+    // Authored corner_radius_m is the hard outer boundary — no leak past it.
+    if (d >= p.corner_radius_m) {
+        return { 0.0f, PatchZone::Outside };
+    }
+    const double inner = p.corner_radius_m - p.transition_perimeter_m;
+    // Degenerate patch: tp ≥ radius would invert the inner boundary.
+    // Hard switch at corner_radius (no ramp), w = 1 throughout the disk.
+    if (inner <= 0.0 || p.transition_perimeter_m <= 1e-3) {
         return { 1.0f, PatchZone::Inside };
     }
-    const double transition_end = p.corner_radius_m + p.transition_perimeter_m;
-    if (d <= transition_end && p.transition_perimeter_m > 1e-3) {
-        const float w = static_cast<float>(
-            1.0 - (d - p.corner_radius_m) / p.transition_perimeter_m);
-        return { std::clamp(w, 0.0f, 1.0f), PatchZone::Transition };
+    if (d <= inner) {
+        return { 1.0f, PatchZone::Inside };
     }
-    return { 0.0f, PatchZone::Outside };
+    const float w = static_cast<float>(
+        (p.corner_radius_m - d) / p.transition_perimeter_m);
+    return { std::clamp(w, 0.0f, 1.0f), PatchZone::Transition };
 }
 
 // Cheap zone-state check vs g_patch_last_zone; does not run the full blend.
