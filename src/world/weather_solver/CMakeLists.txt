@@ -9,6 +9,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 find_package(lifecycle_msgs REQUIRED)
+find_package(sim_interfaces REQUIRED)
 find_package(sim_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 
@@ -34,7 +35,7 @@ target_include_directories(weather_solver_lib PUBLIC
   $<INSTALL_INTERFACE:include>)
 target_link_libraries(weather_solver_lib PUBLIC
   dryden_turbulence microburst_model gust_modulator)
-ament_target_dependencies(weather_solver_lib PUBLIC sim_msgs)
+ament_target_dependencies(weather_solver_lib PUBLIC sim_interfaces sim_msgs)
 
 # ── ROS2 node executable ────────────────────────────────────────────────────
 add_executable(weather_solver_node src/weather_solver_node.cpp)

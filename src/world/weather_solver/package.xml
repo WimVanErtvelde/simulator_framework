@@ -11,6 +11,7 @@
   <depend>rclcpp</depend>
   <depend>rclcpp_lifecycle</depend>
   <depend>lifecycle_msgs</depend>
+  <depend>sim_interfaces</depend>
   <depend>sim_msgs</depend>
   <depend>std_msgs</depend>
 

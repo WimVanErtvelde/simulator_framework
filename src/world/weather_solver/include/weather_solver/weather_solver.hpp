@@ -94,12 +94,26 @@ private:
       double lat1_deg, double lon1_deg,
       double lat2_deg, double lon2_deg);
 
-  /// Smallest-radius patch containing the aircraft, or nullptr if the
-  /// aircraft is outside all patches. Pointer is only valid for the
-  /// current compute() call — weather_.patches may be replaced by the
-  /// next set_weather().
-  const sim_msgs::msg::WeatherPatch * find_active_patch(
-      double aircraft_lat_deg, double aircraft_lon_deg) const;
+  /// Patch with the highest blend influence at the given ownship position,
+  /// or nullptr if no patch has non-zero influence. Weight in [0,1] is
+  /// returned via out_weight.
+  ///
+  /// Influence convention (asymmetric inward — see
+  /// sim_interfaces/weather_convention.hpp). The authored radius is the hard
+  /// outer boundary; the transition perimeter is carved INWARD from radius:
+  ///   tp    = radius * sim_interfaces::PATCH_TRANSITION_PERIMETER_FRACTION
+  ///   inner = radius - tp
+  ///   d ≤ inner   → w = 1.0
+  ///   d <  radius → w = (radius - d) / tp     (linear 1 → 0)
+  ///   d ≥ radius  → w = 0.0
+  /// Tie on weight resolves to the smallest-radius patch (the more specific
+  /// of co-located overlaps).
+  ///
+  /// Pointer is only valid for the current compute() call — weather_.patches
+  /// may be replaced by the next set_weather().
+  const sim_msgs::msg::WeatherPatch * find_dominant_patch_and_weight(
+      double aircraft_lat_deg, double aircraft_lon_deg,
+      double & out_weight) const;
 
   sim_msgs::msg::WeatherState weather_;
   DrydenTurbulence dryden_;

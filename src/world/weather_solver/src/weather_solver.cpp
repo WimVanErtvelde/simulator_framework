@@ -1,5 +1,7 @@
 #include "weather_solver/weather_solver.hpp"
 
+#include "sim_interfaces/weather_convention.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -41,19 +43,42 @@ double WeatherSolver::haversine_distance_m(
     return EARTH_RADIUS_M * c;
 }
 
-const sim_msgs::msg::WeatherPatch * WeatherSolver::find_active_patch(
-    double aircraft_lat_deg, double aircraft_lon_deg) const
+const sim_msgs::msg::WeatherPatch * WeatherSolver::find_dominant_patch_and_weight(
+    double aircraft_lat_deg, double aircraft_lon_deg,
+    double & out_weight) const
 {
+    out_weight = 0.0;
     const sim_msgs::msg::WeatherPatch * best = nullptr;
-    float best_radius_m = std::numeric_limits<float>::max();
+    double best_radius_m = std::numeric_limits<double>::max();
 
     for (const auto & p : weather_.patches) {
-        double dist = haversine_distance_m(
-            aircraft_lat_deg, aircraft_lon_deg,
-            p.lat_deg, p.lon_deg);
-        if (dist <= static_cast<double>(p.radius_m) && p.radius_m < best_radius_m) {
-            best = &p;
-            best_radius_m = p.radius_m;
+        const double radius = static_cast<double>(p.radius_m);
+        if (radius <= 0.0) continue;
+        const double transition =
+            radius * sim_interfaces::PATCH_TRANSITION_PERIMETER_FRACTION;
+        const double inner = radius - transition;
+        const double d = haversine_distance_m(
+            aircraft_lat_deg, aircraft_lon_deg, p.lat_deg, p.lon_deg);
+        double w;
+        if (d >= radius) {
+            // Authored radius is the hard outer boundary — no leak past it.
+            continue;
+        } else if (inner <= 0.0 || transition <= 1e-3) {
+            // Degenerate patch (transition would consume the whole disk):
+            // hard switch at radius, no ramp.
+            w = 1.0;
+        } else if (d <= inner) {
+            w = 1.0;
+        } else {
+            w = (radius - d) / transition;  // 1 → 0 across [inner, radius)
+        }
+        // Highest weight wins; on tie, smallest radius (more specific).
+        const bool better = (w > out_weight)
+                         || (w == out_weight && radius < best_radius_m);
+        if (better) {
+            out_weight    = w;
+            best          = &p;
+            best_radius_m = radius;
         }
     }
     return best;
@@ -180,9 +205,14 @@ WeatherSolver::AtmoResult WeatherSolver::compute(
     double alt = std::clamp(altitude_msl_m, -610.0, 20000.0);
 
     // ── Patch lookup ────────────────────────────────────────────────────────
-    // Smallest-radius containing patch wins when the aircraft is inside
-    // multiple overlapping patches. Pointer is only valid for this call.
-    const auto * active_patch = find_active_patch(lat_deg, lon_deg);
+    // Highest-influence patch wins (smallest radius on weight tie). Weight
+    // ramps inward from the authored radius — see
+    // sim_interfaces/weather_convention.hpp for the geometric rule. The
+    // authored radius is the hard outer boundary of all patch effect.
+    // Pointer is only valid for this call.
+    double patch_weight = 0.0;
+    const auto * active_patch =
+        find_dominant_patch_and_weight(lat_deg, lon_deg, patch_weight);
 
     // ── ISA computation ─────────────────────────────────────────────────────
     double T_isa, P_isa;
@@ -195,23 +225,27 @@ WeatherSolver::AtmoResult WeatherSolver::compute(
     }
 
     // ── Apply weather deviations ────────────────────────────────────────────
-    // Temperature and pressure overrides come from the active patch when the
-    // corresponding override flag is set; otherwise global SL values apply.
-    // Pressure override is altimeter-only (qnh_pa) — it does NOT shift P_isa
-    // or density (field QNH exercise, not density physics). Slice 5b-iv.
+    // Temperature and pressure SL values blend smoothly between global and
+    // patch by patch_weight when the corresponding override flag is set,
+    // eliminating the kinematic step (altimeter jump, OAT jump) at the patch
+    // radius boundary. Override flag false → patch contributes 0 (global wins
+    // unblended). Pressure override is altimeter-only (qnh_pa) — does NOT
+    // shift P_isa or density (field QNH exercise, not density physics).
     double oat_deviation_k = 0.0;
     double qnh_pa = ISA_P0;
 
     if (weather_received_) {
         double temperature_sl_k = weather_.temperature_sl_k;
-        if (active_patch && active_patch->override_temperature) {
-            temperature_sl_k = active_patch->temperature_k;
+        if (active_patch && active_patch->override_temperature && patch_weight > 0.0) {
+            temperature_sl_k = (1.0 - patch_weight) * weather_.temperature_sl_k
+                             + patch_weight * active_patch->temperature_k;
         }
         oat_deviation_k = temperature_sl_k - ISA_T0;
 
         double pressure_sl_pa = weather_.pressure_sl_pa;
-        if (active_patch && active_patch->override_pressure) {
-            pressure_sl_pa = active_patch->pressure_sl_pa;
+        if (active_patch && active_patch->override_pressure && patch_weight > 0.0) {
+            pressure_sl_pa = (1.0 - patch_weight) * weather_.pressure_sl_pa
+                           + patch_weight * active_patch->pressure_sl_pa;
         }
         qnh_pa = pressure_sl_pa;
     }
@@ -232,46 +266,86 @@ WeatherSolver::AtmoResult WeatherSolver::compute(
     r.density_altitude_m  = density_altitude;
     r.pressure_altitude_m = pressure_altitude;
 
-    // ── Wind interpolation ──────────────────────────────────────────────────
-    // Patch wind override: non-empty patch.wind_layers REPLACES global
-    // (not merge) — matches "empty array = inherit" convention in
-    // WeatherPatch.msg documentation.
-    const auto & wind_source =
-        (active_patch && !active_patch->wind_layers.empty())
-            ? active_patch->wind_layers
-            : weather_.wind_layers;
-    InterpolatedWind iw = interpolate_wind_from(altitude_msl_m, wind_source);
+    // ── Wind interpolation with NED blend ───────────────────────────────────
+    // Patch wind override is gated by non-empty wind_layers (the "empty array
+    // = inherit" convention in WeatherPatch.msg). When a patch contributes,
+    // global and patch winds are interpolated independently from their own
+    // layer stacks, converted to NED ambient, and blended component-wise by
+    // patch_weight. Blending in NED avoids polar-direction wraparound when
+    // opposing winds cancel through a transition zone.
+    //
+    // Gust and Dryden run a single pass on the blended ambient: the gust
+    // delta is computed from blended_gust_speed - blended_sustained_speed,
+    // and Dryden uses the blended turbulence intensity. This preserves
+    // determinism (the modulator + Dryden are stateful) while keeping the
+    // modelled phenomenon spatially consistent.
+    const bool patch_wind_active = active_patch && patch_weight > 0.0
+                                && !active_patch->wind_layers.empty();
+    const double w_wind = patch_wind_active ? patch_weight : 0.0;
+
+    InterpolatedWind iw_global = interpolate_wind_from(altitude_msl_m, weather_.wind_layers);
+    InterpolatedWind iw_patch{};
+    if (patch_wind_active) {
+        iw_patch = interpolate_wind_from(altitude_msl_m, active_patch->wind_layers);
+    }
+
+    auto polar_to_ned_ambient = [](const InterpolatedWind & iw,
+                                   double & N, double & E, double & D) {
+        const double dr = iw.direction_deg * M_PI / 180.0;
+        N = -iw.speed_ms * std::cos(dr);
+        E = -iw.speed_ms * std::sin(dr);
+        D = -iw.vertical_ms;  // positive vertical_ms = updraft
+    };
+    double gN, gE, gD; polar_to_ned_ambient(iw_global, gN, gE, gD);
+    double pN = 0.0, pE = 0.0, pD = 0.0;
+    if (patch_wind_active) polar_to_ned_ambient(iw_patch, pN, pE, pD);
+
+    double ambient_north = (1.0 - w_wind) * gN + w_wind * pN;
+    double ambient_east  = (1.0 - w_wind) * gE + w_wind * pE;
+    double ambient_down  = (1.0 - w_wind) * gD + w_wind * pD;
+
+    const double blended_gust_speed = (1.0 - w_wind) * iw_global.gust_speed_ms
+                                    + w_wind * iw_patch.gust_speed_ms;
+    const double blended_turbulence = (1.0 - w_wind) * iw_global.turbulence
+                                    + w_wind * iw_patch.turbulence;
+    const double blended_sustained = std::sqrt(ambient_north * ambient_north
+                                             + ambient_east  * ambient_east);
+
+    // Direction for gust + Dryden body→NED rotation: derived from blended
+    // ambient NED. When opposing winds cancel through the transition zone the
+    // blended magnitude can fall below the noise floor — fall back to the
+    // global layer direction so gust/turbulence rotation stays defined.
+    double dir_rad;
+    if (blended_sustained > 1e-3) {
+        dir_rad = std::atan2(-ambient_east, -ambient_north);  // FROM convention
+    } else {
+        dir_rad = iw_global.direction_deg * M_PI / 180.0;
+    }
 
     // ── Gust modulation ─────────────────────────────────────────────────────
-    // Gusts only apply when authored peak > sustained. The modulator always
-    // steps to keep its state machine temporally coherent; the applied delta
-    // is zero when gust_speed_ms <= speed_ms.
+    // Modulator steps every tick to keep its state machine temporally
+    // coherent; delta is zero unless blended_gust_speed > blended_sustained.
     double gust_factor = gust_.step(dt_sec);   // 0-1
     double gust_delta = 0.0;
-    if (iw.gust_speed_ms > iw.speed_ms) {
-        gust_delta = (iw.gust_speed_ms - iw.speed_ms) * gust_factor;
+    if (blended_gust_speed > blended_sustained) {
+        gust_delta = (blended_gust_speed - blended_sustained) * gust_factor;
     }
-    double effective_speed_ms = iw.speed_ms + gust_delta;
-
-    // Convert polar → NED (FROM convention)
-    double dir_rad = iw.direction_deg * M_PI / 180.0;
-    double ambient_north = -effective_speed_ms * std::cos(dir_rad);
-    double ambient_east  = -effective_speed_ms * std::sin(dir_rad);
-    double ambient_down  = -iw.vertical_ms;  // positive vertical_ms = updraft
+    const double gust_north = -gust_delta * std::cos(dir_rad);
+    const double gust_east  = -gust_delta * std::sin(dir_rad);
 
     // ── Dryden turbulence ───────────────────────────────────────────────────
     // Dryden uses tas_ms (aircraft airspeed, not the gust-modified ambient)
     // — gusts are a separate phenomenon, not a shift in the statistical
     // model's anchor. See Slice 5a-v design note.
-    auto turb = dryden_.update(dt_sec, iw.turbulence, altitude_agl_m, tas_ms);
+    auto turb = dryden_.update(dt_sec, blended_turbulence, altitude_agl_m, tas_ms);
 
     // Rotate body-axis perturbation (u along wind, v lateral) to NED
     double dN = -turb.u_ms * std::cos(dir_rad) + turb.v_ms * std::sin(dir_rad);
     double dE = -turb.u_ms * std::sin(dir_rad) - turb.v_ms * std::cos(dir_rad);
     double dD = -turb.w_ms;
 
-    r.wind_north_ms = ambient_north + dN;
-    r.wind_east_ms  = ambient_east  + dE;
+    r.wind_north_ms = ambient_north + gust_north + dN;
+    r.wind_east_ms  = ambient_east  + gust_east  + dE;
     r.wind_down_ms  = ambient_down  + dD;
 
     // ── Microburst contributions ────────────────────────────────────────────
@@ -294,16 +368,18 @@ WeatherSolver::AtmoResult WeatherSolver::compute(
     }
 
     r.visible_moisture     = false;  // proper computation deferred
-    r.turbulence_intensity = static_cast<float>(std::clamp(iw.turbulence, 0.0, 1.0));
+    r.turbulence_intensity = static_cast<float>(std::clamp(blended_turbulence, 0.0, 1.0));
 
     // ── Runway condition index ──────────────────────────────────────────────
-    // Patch override replaces global when inside a patch with override_runway.
-    // "Apply only on ground" is enforced downstream in the writeback (uses
-    // aircraft on_ground state); here we just publish the regional value.
+    // Hard switch (no blend): runway contamination is a discrete category and
+    // only meaningful while on ground. Patch override applies when ownship is
+    // strictly inside the patch radius (weight == 1.0); the transition zone
+    // does NOT partially apply a runway contamination index. "Apply only on
+    // ground" is enforced downstream in the writeback.
     uint8_t condition_idx = 0;
     if (weather_received_) {
         condition_idx = weather_.runway_condition_idx;
-        if (active_patch && active_patch->override_runway) {
+        if (active_patch && active_patch->override_runway && patch_weight >= 1.0) {
             condition_idx = active_patch->runway_condition_idx;
         }
     }

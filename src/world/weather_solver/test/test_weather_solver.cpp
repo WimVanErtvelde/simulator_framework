@@ -321,7 +321,7 @@ TEST(WeatherSolver, PatchTemperatureOverrideWhenInside)
     EXPECT_NEAR(r_outside.oat_k, 288.15, 0.5);
 }
 
-TEST(WeatherSolver, PatchWindOverrideReplacesLayers)
+TEST(WeatherSolver, PatchWindOverrideBlendsAtTransition)
 {
     WeatherSolver s;
     s.configure({});
@@ -338,7 +338,9 @@ TEST(WeatherSolver, PatchWindOverrideReplacesLayers)
     gl.wind_speed_ms      = 10.0f;
     w.wind_layers.push_back(gl);
 
-    // Patch wind: FROM 090° at 20 m/s → blows west, -wind_east_ms
+    // Patch wind: FROM 090° at 20 m/s → blows west, -wind_east_ms.
+    // Radius 10 km → transition perimeter 2.5 km (25% inward: w=1 inside
+    // 7.5 km, decays 1→0 across [7.5 km, 10 km), 0 at and past radius).
     sim_msgs::msg::WeatherPatch p;
     p.patch_id = 1;
     p.lat_deg  = 50.9014;
@@ -357,9 +359,107 @@ TEST(WeatherSolver, PatchWindOverrideReplacesLayers)
     auto r_inside = s.compute(0.02, 0.0, 0.0, 60.0, 50.9014, 4.4844, 0.0);
     EXPECT_NEAR(r_inside.wind_east_ms, -20.0, 0.5);
 
-    // Outside — global wind applies, ~ +10 m/s east
+    // Outside (well past transition) — global wind applies, ~ +10 m/s east
     auto r_outside = s.compute(0.02, 0.0, 0.0, 60.0, 51.4, 4.4844, 0.0);
     EXPECT_NEAR(r_outside.wind_east_ms, 10.0, 0.5);
+
+    // Mid-transition (d ≈ 8.75 km, w ≈ 0.5): blended_E ≈ 0.5*10 + 0.5*-20 = -5.
+    // 8750 m ≈ 0.0787° latitude offset at any longitude.
+    auto r_mid = s.compute(0.02, 0.0, 0.0, 60.0, 50.9014 + 0.0787, 4.4844, 0.0);
+    EXPECT_NEAR(r_mid.wind_east_ms, -5.0, 0.7);
+}
+
+TEST(WeatherSolver, PatchTemperatureBlendsAtTransition)
+{
+    WeatherSolver s;
+    s.configure({});
+
+    sim_msgs::msg::WeatherState w;
+    w.temperature_sl_k = 288.15f;   // ISA
+    w.pressure_sl_pa   = 101325.0f;
+    w.turbulence_model = 0;
+
+    sim_msgs::msg::WeatherPatch p;
+    p.patch_id = 1;
+    p.lat_deg  = 50.9014;
+    p.lon_deg  = 4.4844;
+    p.radius_m = 10000.0f;          // 10 km, tp 2.5 km, inner 7.5 km
+    p.override_temperature = true;
+    p.temperature_k = 313.15f;      // 40 °C
+    w.patches.push_back(p);
+
+    s.set_weather(w);
+
+    // Mid-transition (d ≈ 8.75 km, w ≈ 0.5): oat ≈ 0.5*288.15 + 0.5*313.15
+    auto r_mid = s.compute(0.02, 0.0, 0.0, 60.0, 50.9014 + 0.0787, 4.4844, 0.0);
+    EXPECT_NEAR(r_mid.oat_k, 300.65, 0.6);
+}
+
+TEST(WeatherSolver, PatchPressureBlendsAtTransition)
+{
+    WeatherSolver s;
+    s.configure({});
+
+    sim_msgs::msg::WeatherState w;
+    w.temperature_sl_k = 288.15f;
+    w.pressure_sl_pa   = 101325.0f;
+    w.turbulence_model = 0;
+
+    sim_msgs::msg::WeatherPatch p;
+    p.patch_id = 1;
+    p.lat_deg  = 50.9014;
+    p.lon_deg  = 4.4844;
+    p.radius_m = 10000.0f;
+    p.override_pressure = true;
+    p.pressure_sl_pa    = 99000.0f;  // 990 hPa
+    w.patches.push_back(p);
+
+    s.set_weather(w);
+
+    // Mid-transition (d ≈ 8.75 km, w ≈ 0.5): qnh ≈ 0.5*101325 + 0.5*99000
+    auto r_mid = s.compute(0.02, 0.0, 0.0, 60.0, 50.9014 + 0.0787, 4.4844, 0.0);
+    EXPECT_NEAR(r_mid.qnh_pa, 100162.5, 80.0);
+    // Density physics still untouched (altimeter-only override)
+    EXPECT_NEAR(r_mid.density_kgm3, 1.225, 0.001);
+}
+
+TEST(WeatherSolver, PatchOverlapHighestWeightWins)
+{
+    WeatherSolver s;
+    s.configure({});
+
+    sim_msgs::msg::WeatherState w;
+    w.temperature_sl_k = 288.15f;
+    w.pressure_sl_pa   = 101325.0f;
+    w.turbulence_model = 0;
+
+    // Small patch: radius 5 km, tp 1.25 km, inner 3.75 km, 30 °C
+    sim_msgs::msg::WeatherPatch small;
+    small.patch_id = 1;
+    small.lat_deg  = 50.9;
+    small.lon_deg  = 4.5;
+    small.radius_m = 5000.0f;
+    small.override_temperature = true;
+    small.temperature_k = 303.15f;
+    w.patches.push_back(small);
+
+    // Large patch: radius 10 km, tp 2.5 km, inner 7.5 km, 20 °C, same center
+    sim_msgs::msg::WeatherPatch big;
+    big.patch_id = 2;
+    big.lat_deg  = 50.9;
+    big.lon_deg  = 4.5;
+    big.radius_m = 10000.0f;
+    big.override_temperature = true;
+    big.temperature_k = 293.15f;
+    w.patches.push_back(big);
+
+    s.set_weather(w);
+
+    // At d ≈ 4.5 km (lat offset ≈ 0.0405°): small in transition w≈0.4
+    // (4500 in [3750, 5000)), big fully inside w=1.0 (4500 < 7500). Highest
+    // weight wins → big → oat ≈ 293.15 K.
+    auto r_far = s.compute(0.02, 0.0, 0.0, 60.0, 50.9 + 0.0405, 4.5, 0.0);
+    EXPECT_NEAR(r_far.oat_k, 293.15, 0.5);
 }
 
 TEST(WeatherSolver, SmallestPatchWinsWhenOverlapping)
