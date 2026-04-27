@@ -1,5 +1,7 @@
 #include "cigi_bridge/weather_sync.hpp"
 
+#include "sim_interfaces/weather_convention.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <sstream>
@@ -77,7 +79,11 @@ void WeatherSync::emit_patch_active(
     cigi_session::HostSession & session) const
 {
     // Circular region: SizeX=SizeY=0, CornerRadius=radius_m.
-    // Transition perimeter = 10% of radius (framework convention).
+    // Transition perimeter is derived inward from the authored radius —
+    // see sim_interfaces/weather_convention.hpp for the geometric rule
+    // shared with the FDM-side weather_solver.
+    const float tp_m = static_cast<float>(
+        patch.radius_m * sim_interfaces::PATCH_TRANSITION_PERIMETER_FRACTION);
     session.AppendEnvRegionControl(
         patch.patch_id,
         cigi_session::HostSession::RegionState::Active,
@@ -86,7 +92,7 @@ void WeatherSync::emit_patch_active(
         /*size_x_m=*/0.0f, /*size_y_m=*/0.0f,
         /*corner_radius_m=*/patch.radius_m,
         /*rotation_deg=*/0.0f,
-        /*transition_perimeter_m=*/patch.radius_m * 0.10f);
+        /*transition_perimeter_m=*/tp_m);
 
     // ── Cloud layers (regional Scope, layer IDs 1..3) ────────────────────
     size_t n_cloud = std::min<size_t>(patch.cloud_layers.size(), MAX_CLOUD_LAYERS);

@@ -10,6 +10,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 find_package(lifecycle_msgs REQUIRED)
+find_package(sim_interfaces REQUIRED)
 find_package(sim_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 
@@ -72,6 +73,7 @@ ament_target_dependencies(cigi_bridge_node
   rclcpp
   rclcpp_lifecycle
   lifecycle_msgs
+  sim_interfaces
   sim_msgs
   std_msgs
 )
